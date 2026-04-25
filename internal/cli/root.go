@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -32,12 +33,26 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("k8s client: %w", err)
 		}
 		app.KubeClient = kc
+
+		if destructiveCmds[cmd.Name()] {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			if err := RunPreFlight(ctx, app.Config, app.KubeClient, dryRun); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	},
 }
 
 func init() {
+	rootCmd.PersistentFlags().Bool("dry-run", false, "Print planned actions without executing")
 	rootCmd.AddCommand(newStatusCmd(app))
+	rootCmd.AddCommand(newBurstCmd(app))
 }
 
 func Execute() {

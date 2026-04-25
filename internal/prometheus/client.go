@@ -25,8 +25,9 @@ const (
 )
 
 type Client struct {
-	api    v1.API
-	stopCh chan struct{}
+	api     v1.API
+	baseURL string
+	stopCh  chan struct{}
 }
 
 func NewClientFromAPI(api v1.API) *Client {
@@ -104,8 +105,9 @@ func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, 
 		return nil, fmt.Errorf("prometheus port-forward: timed out waiting for ready")
 	}
 
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", localPort)
 	apiClient, err := promapi.NewClient(promapi.Config{
-		Address: fmt.Sprintf("http://127.0.0.1:%d", localPort),
+		Address: baseURL,
 	})
 	if err != nil {
 		close(stopCh)
@@ -113,8 +115,9 @@ func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, 
 	}
 
 	return &Client{
-		api:    v1.NewAPI(apiClient),
-		stopCh: stopCh,
+		api:     v1.NewAPI(apiClient),
+		baseURL: baseURL,
+		stopCh:  stopCh,
 	}, nil
 }
 
@@ -123,6 +126,25 @@ func (c *Client) Close() {
 		close(c.stopCh)
 		c.stopCh = nil
 	}
+}
+
+func (c *Client) IsHealthy(ctx context.Context) error {
+	if c.baseURL == "" {
+		return fmt.Errorf("prometheus: no base URL (client created without port-forward)")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/-/healthy", nil)
+	if err != nil {
+		return fmt.Errorf("prometheus health request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("prometheus health: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("prometheus health returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (c *Client) QueryInstant(ctx context.Context, query string) (model.Vector, error) {
