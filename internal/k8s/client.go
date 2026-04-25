@@ -1,0 +1,20 @@
+package k8s
+
+import (
+	"fmt"
+
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+func NewClient(kubeconfigPath string) (kubernetes.Interface, error) {
+	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("kubeconfig %q: %w", kubeconfigPath, err)
+	}
+	clientset, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("k8s clientset: %w", err)
+	}
+	return clientset, nil
+}
