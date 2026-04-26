@@ -7,6 +7,7 @@ import (
 	"os/exec"
 
 	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/prometheus"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
@@ -25,7 +26,13 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 		return fmt.Errorf("pre-flight: terraform binary: not found in PATH")
 	}
 
-	restCfg, err := clientcmd.BuildConfigFromFlags("", cfg.Kubeconfig)
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if cfg.Kubeconfig != "" {
+		rules.ExplicitPath = cfg.Kubeconfig
+	}
+	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		rules, &clientcmd.ConfigOverrides{},
+	).ClientConfig()
 	if err != nil {
 		return fmt.Errorf("pre-flight: kubeconfig: %w", err)
 	}
@@ -37,7 +44,14 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 		return fmt.Errorf("pre-flight: velero: %w", err)
 	}
 
-	pc, err := prometheus.NewClient(clientset, cfg.Kubeconfig)
+	cs := clientset
+	if cs == nil {
+		cs, err = k8s.NewClient(cfg.Kubeconfig)
+		if err != nil {
+			return fmt.Errorf("pre-flight: k8s client: %w", err)
+		}
+	}
+	pc, err := prometheus.NewClient(cs, cfg.Kubeconfig)
 	if err != nil {
 		return fmt.Errorf("pre-flight: prometheus: %w", err)
 	}

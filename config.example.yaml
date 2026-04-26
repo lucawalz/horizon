@@ -1,0 +1,14 @@
+provider: hetzner
+infra_path: ""
+kubeconfig: ""
+
+thresholds:
+  burst: 0.80
+  scale_down: 0.30
+  window: 5
+  cooldown_minutes: 10
+
+hetzner:
+  api_token_env: HCLOUD_TOKEN
+  server_type: cx22
+  location: fsn1

@@ -53,7 +53,13 @@ func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, 
 	}
 	podName := targetRef.Name
 
-	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		rules.ExplicitPath = kubeconfigPath
+	}
+	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		rules, &clientcmd.ConfigOverrides{},
+	).ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig for port-forward: %w", err)
 	}

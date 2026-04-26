@@ -8,7 +8,13 @@ import (
 )
 
 func NewClient(kubeconfigPath string) (kubernetes.Interface, error) {
-	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		rules.ExplicitPath = kubeconfigPath
+	}
+	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		rules, &clientcmd.ConfigOverrides{},
+	).ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig %q: %w", kubeconfigPath, err)
 	}
