@@ -53,6 +53,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("dry-run", false, "Print planned actions without executing")
 	rootCmd.AddCommand(newStatusCmd(app))
 	rootCmd.AddCommand(newBurstCmd(app))
+	rootCmd.AddCommand(newUpCmd(app))
 }
 
 func Execute() {
