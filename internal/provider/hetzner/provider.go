@@ -114,7 +114,15 @@ func (p *Provider) Destroy(ctx context.Context) error {
 	}
 	tctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	if err := tf.Destroy(tctx, tfexec.LockTimeout("30s")); err != nil {
+	vars, err := p.GenerateTFVars()
+	if err != nil {
+		return fmt.Errorf("hetzner: destroy: vars: %w", err)
+	}
+	destroyOpts := []tfexec.DestroyOption{tfexec.LockTimeout("30s")}
+	for k, v := range vars {
+		destroyOpts = append(destroyOpts, tfexec.Var(k+"="+v))
+	}
+	if err := tf.Destroy(tctx, destroyOpts...); err != nil {
 		return fmt.Errorf("hetzner: destroy: %w", err)
 	}
 	return nil
