@@ -157,6 +157,7 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 			}
 			nodeID, err := deps.hs.FindNodeByHostname(ctx, deps.prov.Hostname())
 			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not resolve headscale node id for %s: %v\n", deps.prov.Hostname(), err)
 				nodeID = ""
 			}
 			st := BurstState{
