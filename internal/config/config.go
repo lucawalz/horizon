@@ -21,6 +21,12 @@ type HetznerConfig struct {
 	Location    string `mapstructure:"location"`
 }
 
+type HeadscaleConfig struct {
+	APIURL    string `mapstructure:"api_url"`
+	APIKeyEnv string `mapstructure:"api_key_env"`
+	ServerURL string `mapstructure:"server_url"`
+}
+
 type AWSConfig struct {
 	Region string `mapstructure:"region"`
 }
@@ -31,6 +37,7 @@ type Config struct {
 	Kubeconfig string          `mapstructure:"kubeconfig"`
 	Thresholds ThresholdConfig `mapstructure:"thresholds"`
 	Hetzner    HetznerConfig   `mapstructure:"hetzner"`
+	Headscale  HeadscaleConfig `mapstructure:"headscale"`
 	AWS        AWSConfig       `mapstructure:"aws"`
 }
 
