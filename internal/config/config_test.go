@@ -112,3 +112,63 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatal("expected error when config file is missing, got nil")
 	}
 }
+
+func TestHeadscaleConfig(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+infra_path: ` + dir + `
+headscale:
+  api_url: https://headscale.example.com
+  api_key_env: HEADSCALE_API_KEY
+  server_url: https://headscale.example.com
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(orig) }()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Headscale.APIURL != "https://headscale.example.com" {
+		t.Errorf("APIURL: got %q, want %q", cfg.Headscale.APIURL, "https://headscale.example.com")
+	}
+	if cfg.Headscale.APIKeyEnv != "HEADSCALE_API_KEY" {
+		t.Errorf("APIKeyEnv: got %q, want %q", cfg.Headscale.APIKeyEnv, "HEADSCALE_API_KEY")
+	}
+	if cfg.Headscale.ServerURL != "https://headscale.example.com" {
+		t.Errorf("ServerURL: got %q, want %q", cfg.Headscale.ServerURL, "https://headscale.example.com")
+	}
+}
+
+func TestHeadscaleConfigDefaults(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+infra_path: ` + dir + `
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(orig) }()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Headscale.APIURL != "" {
+		t.Errorf("APIURL: got %q, want empty", cfg.Headscale.APIURL)
+	}
+	if cfg.Headscale.APIKeyEnv != "" {
+		t.Errorf("APIKeyEnv: got %q, want empty", cfg.Headscale.APIKeyEnv)
+	}
+	if cfg.Headscale.ServerURL != "" {
+		t.Errorf("ServerURL: got %q, want empty", cfg.Headscale.ServerURL)
+	}
+}
