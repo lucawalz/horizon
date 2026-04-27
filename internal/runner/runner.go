@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"os"
 )
 
 type Step struct {
@@ -33,7 +34,9 @@ func (r *Runner) rollback(ctx context.Context) {
 	for i := len(r.done) - 1; i >= 0; i-- {
 		s := r.steps[r.done[i]]
 		if s.Rollback != nil {
-			_ = s.Rollback(ctx)
+			if rbErr := s.Rollback(ctx); rbErr != nil {
+				fmt.Fprintf(os.Stderr, "rollback %s: %v\n", s.Name, rbErr)
+			}
 		}
 	}
 }
