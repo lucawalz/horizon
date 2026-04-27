@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -166,7 +167,10 @@ func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname strin
 	}
 	n, err := kc.CoreV1().Nodes().Get(ctx, hostname, metav1.GetOptions{})
 	if err != nil {
-		return nil
+		if k8serrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("cordon %s: %w", hostname, err)
 	}
 	if !n.Spec.Unschedulable {
 		n.Spec.Unschedulable = true
