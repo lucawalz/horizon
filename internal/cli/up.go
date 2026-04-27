@@ -23,8 +23,8 @@ type headscaler interface {
 type hetznerProvider interface {
 	SetRuntimeSecrets(preAuthKey, sshPublicKey, k3sURL, k3sToken string)
 	GenerateTFVars() (map[string]string, error)
-	Apply(vars map[string]string) error
-	Destroy() error
+	Apply(ctx context.Context, vars map[string]string) error
+	Destroy(ctx context.Context) error
 	Hostname() string
 	BurstID() string
 	ServerID() string
@@ -134,10 +134,10 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 			if err != nil {
 				return err
 			}
-			return deps.prov.Apply(vars)
+			return deps.prov.Apply(ctx, vars)
 		},
 		Rollback: func(ctx context.Context) error {
-			return deps.prov.Destroy()
+			return deps.prov.Destroy(ctx)
 		},
 	})
 

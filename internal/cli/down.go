@@ -118,7 +118,7 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 	r.Add(runner.Step{
 		Name: "terraform-destroy",
 		Run: func(ctx context.Context) error {
-			return deps.prov.Destroy()
+			return deps.prov.Destroy(ctx)
 		},
 	})
 

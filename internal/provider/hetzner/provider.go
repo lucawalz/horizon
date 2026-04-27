@@ -64,7 +64,7 @@ func (p *Provider) GenerateTFVars() (map[string]string, error) {
 	}, nil
 }
 
-func (p *Provider) Apply(vars map[string]string) error {
+func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	tf, err := tfexec.NewTerraform(p.workDir, "terraform")
 	if err != nil {
 		return fmt.Errorf("hetzner: apply: new terraform: %w", err)
@@ -72,15 +72,15 @@ func (p *Provider) Apply(vars map[string]string) error {
 	if err := p.setTFEnv(tf, vars); err != nil {
 		return fmt.Errorf("hetzner: apply: set env: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	tctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	if err := tf.Init(ctx, tfexec.Upgrade(false)); err != nil {
+	if err := tf.Init(tctx, tfexec.Upgrade(false)); err != nil {
 		return fmt.Errorf("hetzner: apply: init: %w", err)
 	}
-	if err := tf.Apply(ctx, tfexec.LockTimeout("30s")); err != nil {
+	if err := tf.Apply(tctx, tfexec.LockTimeout("30s")); err != nil {
 		return fmt.Errorf("hetzner: apply: %w", err)
 	}
-	outputs, err := tf.Output(ctx)
+	outputs, err := tf.Output(tctx)
 	if err != nil {
 		return fmt.Errorf("hetzner: apply: output: %w", err)
 	}
@@ -94,7 +94,7 @@ func (p *Provider) Apply(vars map[string]string) error {
 	return nil
 }
 
-func (p *Provider) Destroy() error {
+func (p *Provider) Destroy(ctx context.Context) error {
 	tf, err := tfexec.NewTerraform(p.workDir, "terraform")
 	if err != nil {
 		return fmt.Errorf("hetzner: destroy: new terraform: %w", err)
@@ -102,22 +102,22 @@ func (p *Provider) Destroy() error {
 	if err := p.setTFEnv(tf, nil); err != nil {
 		return fmt.Errorf("hetzner: destroy: set env: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	tctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	if err := tf.Destroy(ctx, tfexec.LockTimeout("30s")); err != nil {
+	if err := tf.Destroy(tctx, tfexec.LockTimeout("30s")); err != nil {
 		return fmt.Errorf("hetzner: destroy: %w", err)
 	}
 	return nil
 }
 
-func (p *Provider) Status() (string, error) {
+func (p *Provider) Status(ctx context.Context) (string, error) {
 	tf, err := tfexec.NewTerraform(p.workDir, "terraform")
 	if err != nil {
 		return "", fmt.Errorf("hetzner: status: new terraform: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	tctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	outputs, err := tf.Output(ctx)
+	outputs, err := tf.Output(tctx)
 	if err != nil {
 		return "", fmt.Errorf("hetzner: status: output: %w", err)
 	}

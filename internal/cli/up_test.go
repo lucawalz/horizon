@@ -65,9 +65,11 @@ func (m *mockHetznerProvider) GenerateTFVars() (map[string]string, error) {
 	return map[string]string{"burst_id": m.burstID}, nil
 }
 
-func (m *mockHetznerProvider) Apply(_ map[string]string) error { return m.applyErr }
+func (m *mockHetznerProvider) Apply(_ context.Context, _ map[string]string) error {
+	return m.applyErr
+}
 
-func (m *mockHetznerProvider) Destroy() error {
+func (m *mockHetznerProvider) Destroy(_ context.Context) error {
 	m.destroyCalls++
 	return m.destroyErr
 }

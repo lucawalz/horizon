@@ -1,9 +1,10 @@
 package provider
 
-// Provider defines the interface for cloud providers.
+import "context"
+
 type Provider interface {
-	Apply(vars map[string]string) error
-	Destroy() error
-	Status() (string, error)
+	Apply(ctx context.Context, vars map[string]string) error
+	Destroy(ctx context.Context) error
+	Status(ctx context.Context) (string, error)
 	GenerateTFVars() (map[string]string, error)
 }
