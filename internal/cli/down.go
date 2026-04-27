@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lucawalz/horizon/internal/headscale"
+	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -69,7 +70,8 @@ func newDownDeps(app *App) (*downDeps, error) {
 		return nil, fmt.Errorf("down: headscale api key env %q is empty", app.Config.Headscale.APIKeyEnv)
 	}
 	hs := headscale.NewClient(app.Config.Headscale.APIURL, apiKey)
-	return &downDeps{hs: hs, kc: app.KubeClient}, nil
+	prov := hetzner.New(app.Config, app.Config.InfraPath)
+	return &downDeps{hs: hs, prov: prov, kc: app.KubeClient}, nil
 }
 
 func resolveBurstID(stateDir, flag string) (string, error) {
