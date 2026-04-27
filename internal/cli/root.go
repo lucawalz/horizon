@@ -54,6 +54,7 @@ func init() {
 	rootCmd.AddCommand(newStatusCmd(app))
 	rootCmd.AddCommand(newBurstCmd(app))
 	rootCmd.AddCommand(newUpCmd(app))
+	rootCmd.AddCommand(newDownCmd(app))
 }
 
 func Execute() {
