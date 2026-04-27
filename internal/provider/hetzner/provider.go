@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-exec/tfexec"
@@ -69,7 +70,12 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("hetzner: apply: new terraform: %w", err)
 	}
-	if err := p.setTFEnv(tf, vars); err != nil {
+	if err := p.setBaseEnv(tf, map[string]string{
+		"HORIZON_HEADSCALE_PREAUTHKEY": vars["headscale_preauthkey"],
+		"HORIZON_HEADSCALE_SERVER_URL": vars["headscale_server_url"],
+		"HORIZON_K3S_URL":              vars["k3s_url"],
+		"HORIZON_K3S_TOKEN":            vars["k3s_token"],
+	}); err != nil {
 		return fmt.Errorf("hetzner: apply: set env: %w", err)
 	}
 	tctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
@@ -77,7 +83,11 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	if err := tf.Init(tctx, tfexec.Upgrade(false)); err != nil {
 		return fmt.Errorf("hetzner: apply: init: %w", err)
 	}
-	if err := tf.Apply(tctx, tfexec.LockTimeout("30s")); err != nil {
+	applyOpts := []tfexec.ApplyOption{tfexec.LockTimeout("30s")}
+	for k, v := range vars {
+		applyOpts = append(applyOpts, tfexec.Var(k+"="+v))
+	}
+	if err := tf.Apply(tctx, applyOpts...); err != nil {
 		return fmt.Errorf("hetzner: apply: %w", err)
 	}
 	outputs, err := tf.Output(tctx)
@@ -99,7 +109,7 @@ func (p *Provider) Destroy(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("hetzner: destroy: new terraform: %w", err)
 	}
-	if err := p.setTFEnv(tf, nil); err != nil {
+	if err := p.setBaseEnv(tf, nil); err != nil {
 		return fmt.Errorf("hetzner: destroy: set env: %w", err)
 	}
 	tctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
@@ -114,6 +124,9 @@ func (p *Provider) Status(ctx context.Context) (string, error) {
 	tf, err := tfexec.NewTerraform(p.workDir, "terraform")
 	if err != nil {
 		return "", fmt.Errorf("hetzner: status: new terraform: %w", err)
+	}
+	if err := p.setBaseEnv(tf, nil); err != nil {
+		return "", fmt.Errorf("hetzner: status: set env: %w", err)
 	}
 	tctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -138,19 +151,25 @@ func (p *Provider) Hostname() string { return "horizon-burst-" + p.burstID }
 
 func (p *Provider) ServerID() string { return p.serverID }
 
-func (p *Provider) setTFEnv(tf *tfexec.Terraform, vars map[string]string) error {
+func (p *Provider) setBaseEnv(tf *tfexec.Terraform, extras map[string]string) error {
 	env := make(map[string]string)
 	for _, kv := range os.Environ() {
 		for i := range kv {
 			if kv[i] == '=' {
-				env[kv[:i]] = kv[i+1:]
+				k, v := kv[:i], kv[i+1:]
+				if !strings.HasPrefix(k, "TF_VAR_") {
+					env[k] = v
+				}
 				break
 			}
 		}
 	}
 	env["HCLOUD_TOKEN"] = os.Getenv(p.cfg.Hetzner.APITokenEnv)
-	for k, v := range vars {
-		env["TF_VAR_"+k] = v
+	if path, ok := env["PATH"]; ok {
+		env["PATH"] = "/opt/homebrew/bin:" + path
+	}
+	for k, v := range extras {
+		env[k] = v
 	}
 	return tf.SetEnv(env)
 }
