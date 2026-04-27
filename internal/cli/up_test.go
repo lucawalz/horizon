@@ -12,18 +12,20 @@ import (
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/headscale"
-	"k8s.io/client-go/kubernetes"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 type mockHeadscaler struct {
-	createKey    headscale.PreAuthKey
-	createErr    error
-	revokeErr    error
-	findNodeID   string
-	findErr      error
-	deleteErr    error
-	revokeCalls  []string
-	deleteCalls  []string
+	createKey   headscale.PreAuthKey
+	createErr   error
+	revokeErr   error
+	findNodeID  string
+	findErr     error
+	deleteErr   error
+	revokeCalls []string
+	deleteCalls []string
 }
 
 func (m *mockHeadscaler) CreatePreAuthKey(_ context.Context, user string) (headscale.PreAuthKey, error) {
@@ -45,19 +47,16 @@ func (m *mockHeadscaler) DeleteNode(_ context.Context, nodeID string) error {
 }
 
 type mockHetznerProvider struct {
-	burstID   string
-	hostname  string
-	serverID  string
-	applyErr  error
+	burstID      string
+	hostname     string
+	serverID     string
+	applyErr     error
 	destroyCalls int
 	destroyErr   error
 	generateErr  error
-	secretsSet   bool
 }
 
-func (m *mockHetznerProvider) SetRuntimeSecrets(preAuthKey, sshPublicKey, k3sURL, k3sToken string) {
-	m.secretsSet = true
-}
+func (m *mockHetznerProvider) SetRuntimeSecrets(preAuthKey, sshPublicKey, k3sURL, k3sToken string) {}
 
 func (m *mockHetznerProvider) GenerateTFVars() (map[string]string, error) {
 	if m.generateErr != nil {
@@ -66,9 +65,7 @@ func (m *mockHetznerProvider) GenerateTFVars() (map[string]string, error) {
 	return map[string]string{"burst_id": m.burstID}, nil
 }
 
-func (m *mockHetznerProvider) Apply(_ map[string]string) error {
-	return m.applyErr
-}
+func (m *mockHetznerProvider) Apply(_ map[string]string) error { return m.applyErr }
 
 func (m *mockHetznerProvider) Destroy() error {
 	m.destroyCalls++
@@ -102,6 +99,29 @@ func captureStdout(fn func()) string {
 	return buf.String()
 }
 
+func readyNode(name string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			},
+		},
+	}
+}
+
+func flannelPodOnNode(nodeName string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "flannel-" + nodeName,
+			Namespace: "kube-system",
+			Labels:    map[string]string{"k8s-app": "flannel"},
+		},
+		Spec:   corev1.PodSpec{NodeName: nodeName},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+}
+
 func TestUpDryRun(t *testing.T) {
 	app := newTestApp()
 	out := captureStdout(func() {
@@ -123,21 +143,22 @@ func TestUpStepOrder(t *testing.T) {
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
+	hostname := "horizon-burst-aabb1122"
 	hs := &mockHeadscaler{
 		createKey: headscale.PreAuthKey{ID: "1", Key: "key-abc", User: "burst-nodes"},
 	}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1122",
-		hostname: "horizon-burst-aabb1122",
+		hostname: hostname,
 		serverID: "99",
 	}
+	kc := fake.NewSimpleClientset(readyNode(hostname), flannelPodOnNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, nil)
-	if err != nil {
+	if err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, kc); err != nil {
 		t.Fatalf("RunUpForTest: %v", err)
 	}
 }
@@ -161,7 +182,7 @@ func TestUpRollbackOnTerraformFailure(t *testing.T) {
 	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, nil)
+	err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, fake.NewSimpleClientset())
 	if err == nil {
 		t.Fatal("expected error from terraform failure")
 	}
@@ -179,21 +200,25 @@ func TestUpRollbackOnWaitNodeReadyTimeout(t *testing.T) {
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
+	hostname := "horizon-burst-eeff5566"
 	hs := &mockHeadscaler{
 		createKey: headscale.PreAuthKey{ID: "3", Key: "key-wait", User: "burst-nodes"},
 	}
 	prov := &mockHetznerProvider{
 		burstID:  "eeff5566",
-		hostname: "horizon-burst-eeff5566",
+		hostname: hostname,
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := cli.RunUpForTest(ctx, newTestApp(), hs, prov, fake.NewSimpleClientset())
 	if err == nil {
-		t.Fatal("expected error from wait-node-ready timeout (nil kc)")
+		t.Fatal("expected error from wait-node-ready with cancelled context")
 	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("destroy calls = %d, want 1", prov.destroyCalls)
@@ -212,25 +237,24 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
+	hostname := "horizon-burst-aabb1234"
 	hs := &mockHeadscaler{
 		createKey:  headscale.PreAuthKey{ID: "4", Key: "key-ok", User: "burst-nodes"},
 		findNodeID: "42",
 	}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1234",
-		hostname: "horizon-burst-aabb1234",
+		hostname: hostname,
 		serverID: "99",
 	}
+	kc := fake.NewSimpleClientset(readyNode(hostname), flannelPodOnNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	var kc kubernetes.Interface
-	_ = kc
-
 	out := captureStdout(func() {
-		if err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, nil); err != nil {
+		if err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, kc); err != nil {
 			t.Errorf("RunUpForTest: %v", err)
 		}
 	})
