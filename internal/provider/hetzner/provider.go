@@ -75,6 +75,7 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 		"HORIZON_HEADSCALE_SERVER_URL": vars["headscale_server_url"],
 		"HORIZON_K3S_URL":              vars["k3s_url"],
 		"HORIZON_K3S_TOKEN":            vars["k3s_token"],
+		"HORIZON_SSH_PUBLIC_KEY":       vars["ssh_public_key"],
 	}); err != nil {
 		return fmt.Errorf("hetzner: apply: set env: %w", err)
 	}
