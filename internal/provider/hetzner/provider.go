@@ -70,6 +70,8 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("hetzner: apply: new terraform: %w", err)
 	}
+	tf.SetStdout(os.Stderr)
+	tf.SetStderr(os.Stderr)
 	if err := p.setBaseEnv(tf, map[string]string{
 		"HORIZON_HEADSCALE_PREAUTHKEY": vars["headscale_preauthkey"],
 		"HORIZON_HEADSCALE_SERVER_URL": vars["headscale_server_url"],
