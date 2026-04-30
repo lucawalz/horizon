@@ -22,11 +22,11 @@ type HetznerConfig struct {
 	Location    string `mapstructure:"location"`
 }
 
-type HeadscaleConfig struct {
-	APIURL    string `mapstructure:"api_url"`
-	APIKey    string `mapstructure:"api_key"`
-	APIKeyEnv string `mapstructure:"api_key_env"`
-	ServerURL string `mapstructure:"server_url"`
+type ZeroTierConfig struct {
+	NetworkID   string `mapstructure:"network_id"`
+	APITokenEnv string `mapstructure:"api_token_env"`
+	APIToken    string `mapstructure:"api_token"`
+	MasterIP    string `mapstructure:"master_ip"`
 }
 
 type AWSConfig struct {
@@ -55,7 +55,7 @@ type Config struct {
 	Kubeconfig string          `mapstructure:"kubeconfig"`
 	Thresholds ThresholdConfig `mapstructure:"thresholds"`
 	Hetzner    HetznerConfig   `mapstructure:"hetzner"`
-	Headscale  HeadscaleConfig `mapstructure:"headscale"`
+	ZeroTier   ZeroTierConfig  `mapstructure:"zerotier"`
 	K3s        K3sConfig       `mapstructure:"k3s"`
 	AWS        AWSConfig       `mapstructure:"aws"`
 }
