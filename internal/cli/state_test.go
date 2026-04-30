@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/cli"
@@ -12,11 +13,10 @@ import (
 func TestStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	st := cli.BurstState{
-		BurstID:             "abc1234",
-		Hostname:            "horizon-burst-abc1234",
-		HeadscaleNodeID:     "7",
-		HeadscalePreAuthKey: "tskey-x",
-		HetznerServerID:     "42",
+		BurstID:          "abc1234",
+		Hostname:         "horizon-burst-abc1234",
+		ZeroTierMemberID: "7",
+		HetznerServerID:  "42",
 	}
 	if err := cli.WriteState(dir, st); err != nil {
 		t.Fatalf("WriteState: %v", err)
@@ -27,6 +27,25 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 	if got != st {
 		t.Errorf("ReadState = %+v, want %+v", got, st)
+	}
+}
+
+func TestStateJSONFieldNames(t *testing.T) {
+	dir := t.TempDir()
+	st := cli.BurstState{BurstID: "aabb1122", Hostname: "h", ZeroTierMemberID: "m99", HetznerServerID: "42"}
+	if err := cli.WriteState(dir, st); err != nil {
+		t.Fatalf("WriteState: %v", err)
+	}
+	buf, err := os.ReadFile(filepath.Join(dir, "aabb1122.json"))
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	got := string(buf)
+	if !strings.Contains(got, `"zerotier_member_id": "m99"`) {
+		t.Errorf("missing zerotier_member_id: %s", got)
+	}
+	if strings.Contains(got, "headscale_node_id") || strings.Contains(got, "headscale_preauth_key") {
+		t.Errorf("legacy headscale field present: %s", got)
 	}
 }
 
