@@ -1,0 +1,23 @@
+# Binary
+horizon
+
+# Build output
+dist/
+*.exe
+*.test
+
+# Config — contains API keys, never commit
+config.yaml
+
+# Environment
+.env
+*.env.local
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
