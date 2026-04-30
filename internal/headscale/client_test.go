@@ -13,20 +13,27 @@ import (
 
 func TestCreatePreAuthKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			t.Errorf("missing Bearer auth header")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/user" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"users": []map[string]string{{"id": "42", "name": "default"}},
+			})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/preauthkey" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			http.Error(w, "bad", http.StatusBadRequest)
 			return
 		}
-		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
-			t.Errorf("missing Bearer auth header")
-		}
 		var body map[string]interface{}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
-		if body["user"] != "default" {
-			t.Errorf("user = %v, want default", body["user"])
+		if body["user"] != "42" {
+			t.Errorf("user = %v, want 42 (numeric id)", body["user"])
 		}
 		if body["reusable"] != false {
 			t.Errorf("reusable = %v, want false", body["reusable"])
@@ -37,9 +44,12 @@ func TestCreatePreAuthKey(t *testing.T) {
 		if body["expiration"] == "" {
 			t.Error("expiration must not be empty")
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"preAuthKey": map[string]string{"id": "key-id", "key": "key-secret", "user": "default"},
+			"preAuthKey": map[string]interface{}{
+				"id":   "key-id",
+				"key":  "key-secret",
+				"user": map[string]string{"name": "default"},
+			},
 		})
 	}))
 	defer srv.Close()
@@ -64,11 +74,18 @@ func TestRevokePreAuthKey(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			t.Errorf("missing Bearer auth header")
 		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/user" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"users": []map[string]string{{"id": "42", "name": "default"}},
+			})
+			return
+		}
+		gotMethod = r.Method
+		gotPath = r.URL.Path
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -84,8 +101,8 @@ func TestRevokePreAuthKey(t *testing.T) {
 	if gotPath != "/api/v1/preauthkey" {
 		t.Errorf("path = %s, want /api/v1/preauthkey", gotPath)
 	}
-	if gotBody["user"] != "default" {
-		t.Errorf("body user = %q, want default", gotBody["user"])
+	if gotBody["user"] != "42" {
+		t.Errorf("body user = %q, want 42 (numeric id)", gotBody["user"])
 	}
 	if gotBody["key"] != "key-secret" {
 		t.Errorf("body key = %q, want key-secret", gotBody["key"])
@@ -197,11 +214,19 @@ func TestClientAuthHeader(t *testing.T) {
 		headers = append(headers, r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.URL.Path == "/api/v1/user" && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"users": []map[string]string{{"id": "42", "name": "default"}},
+			})
 		case r.URL.Path == "/api/v1/preauthkey" && r.Method == http.MethodGet:
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"preAuthKeys": []interface{}{}})
 		case r.URL.Path == "/api/v1/preauthkey" && r.Method == http.MethodPost:
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"preAuthKey": map[string]string{"id": "x", "key": "y", "user": "default"},
+				"preAuthKey": map[string]interface{}{
+					"id":   "x",
+					"key":  "y",
+					"user": map[string]string{"name": "default"},
+				},
 			})
 		case r.URL.Path == "/api/v1/machine":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"machines": []interface{}{}})

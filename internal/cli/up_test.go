@@ -85,6 +85,11 @@ func newTestApp() *cli.App {
 				APIURL:    "http://headscale.test",
 				APIKeyEnv: "TEST_HEADSCALE_KEY",
 			},
+			K3s: config.K3sConfig{
+				URLEnv:    "HORIZON_K3S_URL",
+				TokenEnv:  "HORIZON_K3S_TOKEN",
+				SSHKeyEnv: "HORIZON_SSH_PUBLIC_KEY",
+			},
 		},
 	}
 }

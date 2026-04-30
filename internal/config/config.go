@@ -16,6 +16,7 @@ type ThresholdConfig struct {
 }
 
 type HetznerConfig struct {
+	APIToken    string `mapstructure:"api_token"`
 	APITokenEnv string `mapstructure:"api_token_env"`
 	ServerType  string `mapstructure:"server_type"`
 	Location    string `mapstructure:"location"`
@@ -23,12 +24,29 @@ type HetznerConfig struct {
 
 type HeadscaleConfig struct {
 	APIURL    string `mapstructure:"api_url"`
+	APIKey    string `mapstructure:"api_key"`
 	APIKeyEnv string `mapstructure:"api_key_env"`
 	ServerURL string `mapstructure:"server_url"`
 }
 
 type AWSConfig struct {
 	Region string `mapstructure:"region"`
+}
+
+type K3sConfig struct {
+	URL         string `mapstructure:"url"`
+	URLEnv      string `mapstructure:"url_env"`
+	Token       string `mapstructure:"token"`
+	TokenEnv    string `mapstructure:"token_env"`
+	SSHPublicKey string `mapstructure:"ssh_public_key"`
+	SSHKeyEnv   string `mapstructure:"ssh_public_key_env"`
+}
+
+func Resolve(envName, inline string) string {
+	if inline != "" {
+		return inline
+	}
+	return os.Getenv(envName)
 }
 
 type Config struct {
@@ -38,6 +56,7 @@ type Config struct {
 	Thresholds ThresholdConfig `mapstructure:"thresholds"`
 	Hetzner    HetznerConfig   `mapstructure:"hetzner"`
 	Headscale  HeadscaleConfig `mapstructure:"headscale"`
+	K3s        K3sConfig       `mapstructure:"k3s"`
 	AWS        AWSConfig       `mapstructure:"aws"`
 }
 
@@ -46,8 +65,8 @@ func Load() (*Config, error) {
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 	home, _ := os.UserHomeDir()
-	v.AddConfigPath(filepath.Join(home, ".config", "horizon"))
 	v.AddConfigPath(".")
+	v.AddConfigPath(filepath.Join(home, ".config", "horizon"))
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config: %w", err)

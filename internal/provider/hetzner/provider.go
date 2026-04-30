@@ -175,7 +175,7 @@ func (p *Provider) setBaseEnv(tf *tfexec.Terraform, extras map[string]string) er
 			}
 		}
 	}
-	env["HCLOUD_TOKEN"] = os.Getenv(p.cfg.Hetzner.APITokenEnv)
+	env["HCLOUD_TOKEN"] = config.Resolve(p.cfg.Hetzner.APITokenEnv, p.cfg.Hetzner.APIToken)
 	if path, ok := env["PATH"]; ok {
 		env["PATH"] = "/opt/homebrew/bin:" + path
 	}

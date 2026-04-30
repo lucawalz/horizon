@@ -3,9 +3,9 @@ package prometheus
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
-	"os"
 	"time"
 
 	promapi "github.com/prometheus/client_golang/api"
@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/common/model"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
@@ -63,6 +64,7 @@ func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, 
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig for port-forward: %w", err)
 	}
+	restCfg.WarningHandler = rest.NoWarnings{}
 
 	localPort, err := getFreePort()
 	if err != nil {
@@ -90,8 +92,8 @@ func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, 
 		[]string{fmt.Sprintf("%d:%d", localPort, prometheusPort)},
 		stopCh,
 		readyCh,
-		os.Stdout,
-		os.Stderr,
+		io.Discard,
+		io.Discard,
 	)
 	if err != nil {
 		close(stopCh)

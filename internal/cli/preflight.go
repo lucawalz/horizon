@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"os/exec"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/lucawalz/horizon/internal/prometheus"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -38,6 +38,7 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 	if err != nil {
 		return fmt.Errorf("pre-flight: kubeconfig: %w", err)
 	}
+	restCfg.WarningHandler = rest.NoWarnings{}
 	dc, err := discovery.NewDiscoveryClientForConfig(restCfg)
 	if err != nil {
 		return fmt.Errorf("pre-flight: velero: discovery client: %w", err)
@@ -63,10 +64,10 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 	}
 
 	if !dryRun {
-		if len(os.Getenv("HCLOUD_TOKEN")) == 0 {
+		if config.Resolve(cfg.Hetzner.APITokenEnv, cfg.Hetzner.APIToken) == "" {
 			return fmt.Errorf("pre-flight: hetzner: HCLOUD_TOKEN environment variable is not set")
 		}
-		apiKey := os.Getenv(cfg.Headscale.APIKeyEnv)
+		apiKey := config.Resolve(cfg.Headscale.APIKeyEnv, cfg.Headscale.APIKey)
 		if apiKey == "" {
 			return fmt.Errorf("pre-flight: headscale: %s is not set", cfg.Headscale.APIKeyEnv)
 		}

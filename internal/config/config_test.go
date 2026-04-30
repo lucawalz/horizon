@@ -103,6 +103,7 @@ infra_path: /nonexistent/path/that/does/not/exist
 
 func TestLoadMissingFile(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("HOME", dir)
 	orig, _ := os.Getwd()
 	_ = os.Chdir(dir)
 	defer func() { _ = os.Chdir(orig) }()

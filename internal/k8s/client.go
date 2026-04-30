@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -18,6 +19,7 @@ func NewClient(kubeconfigPath string) (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig %q: %w", kubeconfigPath, err)
 	}
+	restCfg.WarningHandler = rest.NoWarnings{}
 	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		return nil, fmt.Errorf("k8s clientset: %w", err)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/headscale"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
@@ -66,7 +67,7 @@ func newUpCmd(app *App) *cobra.Command {
 }
 
 func newUpDeps(app *App) (*upDeps, error) {
-	apiKey := os.Getenv(app.Config.Headscale.APIKeyEnv)
+	apiKey := config.Resolve(app.Config.Headscale.APIKeyEnv, app.Config.Headscale.APIKey)
 	if apiKey == "" {
 		return nil, fmt.Errorf("up: headscale api key env %q is empty", app.Config.Headscale.APIKeyEnv)
 	}
@@ -123,11 +124,12 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 	r.Add(runner.Step{
 		Name: "terraform-apply",
 		Run: func(ctx context.Context) error {
-			sshPub := os.Getenv("HORIZON_SSH_PUBLIC_KEY")
-			k3sURL := os.Getenv("HORIZON_K3S_URL")
-			k3sToken := os.Getenv("HORIZON_K3S_TOKEN")
+			sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
+			k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
+			k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
 			if sshPub == "" || k3sURL == "" || k3sToken == "" {
-				return fmt.Errorf("terraform-apply: missing HORIZON_SSH_PUBLIC_KEY, HORIZON_K3S_URL, or HORIZON_K3S_TOKEN")
+				return fmt.Errorf("terraform-apply: missing %s, %s, or %s",
+					app.Config.K3s.SSHKeyEnv, app.Config.K3s.URLEnv, app.Config.K3s.TokenEnv)
 			}
 			deps.prov.SetRuntimeSecrets(preAuthKey.Key, sshPub, k3sURL, k3sToken)
 			vars, err := deps.prov.GenerateTFVars()

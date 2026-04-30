@@ -50,10 +50,41 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (*htt
 	return resp, nil
 }
 
+func (c *Client) getUserID(ctx context.Context, name string) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/api/v1/user", nil)
+	if err != nil {
+		return "", fmt.Errorf("headscale: user list: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("headscale: user list: status %d: %s", resp.StatusCode, bytes.TrimSpace(body))
+	}
+	var raw struct {
+		Users []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"users"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return "", fmt.Errorf("headscale: user list decode: %w", err)
+	}
+	for _, u := range raw.Users {
+		if u.Name == name {
+			return u.ID, nil
+		}
+	}
+	return "", fmt.Errorf("headscale: user %s not found", name)
+}
+
 func (c *Client) CreatePreAuthKey(ctx context.Context, user string) (PreAuthKey, error) {
+	userID, err := c.getUserID(ctx, user)
+	if err != nil {
+		return PreAuthKey{}, fmt.Errorf("headscale: pre-auth-key create: %w", err)
+	}
 	expiration := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	payload, err := json.Marshal(map[string]interface{}{
-		"user":       user,
+		"user":       userID,
 		"reusable":   false,
 		"ephemeral":  true,
 		"expiration": expiration,
@@ -67,24 +98,31 @@ func (c *Client) CreatePreAuthKey(ctx context.Context, user string) (PreAuthKey,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return PreAuthKey{}, fmt.Errorf("headscale: pre-auth-key create: status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return PreAuthKey{}, fmt.Errorf("headscale: pre-auth-key create: status %d: %s", resp.StatusCode, bytes.TrimSpace(body))
 	}
 	var raw struct {
 		PreAuthKey struct {
 			ID   string `json:"id"`
 			Key  string `json:"key"`
-			User string `json:"user"`
+			User struct {
+				Name string `json:"name"`
+			} `json:"user"`
 		} `json:"preAuthKey"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return PreAuthKey{}, fmt.Errorf("headscale: pre-auth-key create decode: %w", err)
 	}
-	return PreAuthKey{ID: raw.PreAuthKey.ID, Key: raw.PreAuthKey.Key, User: raw.PreAuthKey.User}, nil
+	return PreAuthKey{ID: raw.PreAuthKey.ID, Key: raw.PreAuthKey.Key, User: raw.PreAuthKey.User.Name}, nil
 }
 
 func (c *Client) RevokePreAuthKey(ctx context.Context, user, key string) error {
+	userID, err := c.getUserID(ctx, user)
+	if err != nil {
+		return fmt.Errorf("headscale: pre-auth-key revoke: %w", err)
+	}
 	payload, err := json.Marshal(map[string]string{
-		"user": user,
+		"user": userID,
 		"key":  key,
 	})
 	if err != nil {
