@@ -114,15 +114,15 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-func TestHeadscaleConfig(t *testing.T) {
+func TestZeroTierConfig(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
 infra_path: ` + dir + `
-headscale:
-  api_url: https://headscale.example.com
-  api_key_env: HEADSCALE_API_KEY
-  server_url: https://headscale.example.com
+zerotier:
+  network_id: abc123
+  api_token_env: ZEROTIER_API_TOKEN
+  master_ip: 10.147.20.1
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -135,18 +135,18 @@ headscale:
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.Headscale.APIURL != "https://headscale.example.com" {
-		t.Errorf("APIURL: got %q, want %q", cfg.Headscale.APIURL, "https://headscale.example.com")
+	if cfg.ZeroTier.NetworkID != "abc123" {
+		t.Errorf("NetworkID: got %q, want %q", cfg.ZeroTier.NetworkID, "abc123")
 	}
-	if cfg.Headscale.APIKeyEnv != "HEADSCALE_API_KEY" {
-		t.Errorf("APIKeyEnv: got %q, want %q", cfg.Headscale.APIKeyEnv, "HEADSCALE_API_KEY")
+	if cfg.ZeroTier.APITokenEnv != "ZEROTIER_API_TOKEN" {
+		t.Errorf("APITokenEnv: got %q, want %q", cfg.ZeroTier.APITokenEnv, "ZEROTIER_API_TOKEN")
 	}
-	if cfg.Headscale.ServerURL != "https://headscale.example.com" {
-		t.Errorf("ServerURL: got %q, want %q", cfg.Headscale.ServerURL, "https://headscale.example.com")
+	if cfg.ZeroTier.MasterIP != "10.147.20.1" {
+		t.Errorf("MasterIP: got %q, want %q", cfg.ZeroTier.MasterIP, "10.147.20.1")
 	}
 }
 
-func TestHeadscaleConfigDefaults(t *testing.T) {
+func TestZeroTierConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
@@ -163,13 +163,45 @@ infra_path: ` + dir + `
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.Headscale.APIURL != "" {
-		t.Errorf("APIURL: got %q, want empty", cfg.Headscale.APIURL)
+	if cfg.ZeroTier.NetworkID != "" {
+		t.Errorf("NetworkID: got %q, want empty", cfg.ZeroTier.NetworkID)
 	}
-	if cfg.Headscale.APIKeyEnv != "" {
-		t.Errorf("APIKeyEnv: got %q, want empty", cfg.Headscale.APIKeyEnv)
+	if cfg.ZeroTier.APITokenEnv != "" {
+		t.Errorf("APITokenEnv: got %q, want empty", cfg.ZeroTier.APITokenEnv)
 	}
-	if cfg.Headscale.ServerURL != "" {
-		t.Errorf("ServerURL: got %q, want empty", cfg.Headscale.ServerURL)
+	if cfg.ZeroTier.MasterIP != "" {
+		t.Errorf("MasterIP: got %q, want empty", cfg.ZeroTier.MasterIP)
+	}
+}
+
+func TestK3sConfig(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+infra_path: ` + dir + `
+k3s:
+  url: "https://10.147.20.1:6443"
+  token: tok
+  url_env: HORIZON_K3S_URL
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(orig) }()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.K3s.URL != "https://10.147.20.1:6443" {
+		t.Errorf("K3s.URL: got %q, want %q", cfg.K3s.URL, "https://10.147.20.1:6443")
+	}
+	if cfg.K3s.Token != "tok" {
+		t.Errorf("K3s.Token: got %q, want %q", cfg.K3s.Token, "tok")
+	}
+	if cfg.K3s.URLEnv != "HORIZON_K3S_URL" {
+		t.Errorf("K3s.URLEnv: got %q, want %q", cfg.K3s.URLEnv, "HORIZON_K3S_URL")
 	}
 }
