@@ -10,11 +10,10 @@ import (
 )
 
 type BurstState struct {
-	BurstID             string `json:"burst_id"`
-	Hostname            string `json:"hostname"`
-	HeadscaleNodeID     string `json:"headscale_node_id"`
-	HeadscalePreAuthKey string `json:"headscale_preauth_key"`
-	HetznerServerID     string `json:"hetzner_server_id"`
+	BurstID          string `json:"burst_id"`
+	Hostname         string `json:"hostname"`
+	ZeroTierMemberID string `json:"zerotier_member_id"`
+	HetznerServerID  string `json:"hetzner_server_id"`
 }
 
 var burstIDPattern = regexp.MustCompile(`^[a-f0-9]{4,16}$`)
