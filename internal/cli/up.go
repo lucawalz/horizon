@@ -32,10 +32,11 @@ type hetznerProvider interface {
 }
 
 type upDeps struct {
-	zt            zerotierAuthorizer
-	prov          hetznerProvider
-	kc            kubernetes.Interface
-	skipPreflight bool
+	zt               zerotierAuthorizer
+	prov             hetznerProvider
+	kc               kubernetes.Interface
+	skipPreflight    bool
+	preExistingNodes map[string]bool
 }
 
 var upSteps = []string{
@@ -89,8 +90,17 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 		ctx = context.Background()
 	}
 
+	if deps.preExistingNodes == nil {
+		names, err := hetzner.ListNodeNames(ctx, deps.kc)
+		if err != nil {
+			return fmt.Errorf("up: snapshot existing nodes: %w", err)
+		}
+		deps.preExistingNodes = names
+	}
+
 	var memberID string
 	var authorized bool
+	var burstNodeName string
 	networkID := app.Config.ZeroTier.NetworkID
 
 	r := &runner.Runner{}
@@ -157,7 +167,15 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 	r.Add(runner.Step{
 		Name: "wait-node-ready",
 		Run: func(ctx context.Context) error {
-			return hetzner.WaitNodeReady(ctx, deps.kc, deps.prov.Hostname(), 5*time.Minute, 5*time.Second)
+			name, err := hetzner.WaitNewNodeReady(ctx, deps.kc, deps.preExistingNodes, 5*time.Minute, 5*time.Second)
+			burstNodeName = name
+			return err
+		},
+		Rollback: func(ctx context.Context) error {
+			if burstNodeName == "" {
+				return nil
+			}
+			return hetzner.DeleteNode(ctx, deps.kc, burstNodeName)
 		},
 	})
 
@@ -170,7 +188,7 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 			}
 			st := BurstState{
 				BurstID:          deps.prov.BurstID(),
-				Hostname:         deps.prov.Hostname(),
+				Hostname:         burstNodeName,
 				ZeroTierMemberID: memberID,
 				HetznerServerID:  deps.prov.ServerID(),
 			}
@@ -205,7 +223,7 @@ func RunUpDryRunForTest(app *App) error {
 }
 
 func RunUpForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface) error {
-	return runUp(ctx, app, &upDeps{zt: zt, prov: prov, kc: kc, skipPreflight: true})
+	return runUp(ctx, app, &upDeps{zt: zt, prov: prov, kc: kc, skipPreflight: true, preExistingNodes: map[string]bool{}})
 }
 
 func SetStateDirForTest(dir string) (restore func()) {
