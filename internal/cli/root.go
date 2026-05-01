@@ -55,6 +55,7 @@ func init() {
 	rootCmd.AddCommand(newBurstCmd(app))
 	rootCmd.AddCommand(newUpCmd(app))
 	rootCmd.AddCommand(newDownCmd(app))
+	rootCmd.AddCommand(newDrainCmd(app))
 }
 
 func Execute() {

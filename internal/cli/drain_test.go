@@ -15,8 +15,6 @@ import (
 )
 
 func TestDrainCommand(t *testing.T) {
-	t.Skip("Plan 04 implements internal/cli/drain.go")
-
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	kc := fake.NewSimpleClientset(node)
 
@@ -33,14 +31,21 @@ func TestDrainCommand(t *testing.T) {
 }
 
 func TestDrainCommand_Timeout(t *testing.T) {
-	t.Skip("Plan 04 implements internal/cli/drain.go")
-
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	appPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
 		Spec:       corev1.PodSpec{NodeName: "burst-node"},
 	}
 	kc := fake.NewSimpleClientset(node, appPod)
+	kc.Resources = append(kc.Resources, &metav1.APIResourceList{
+		GroupVersion: "v1",
+		APIResources: []metav1.APIResource{{
+			Name:    "pods/eviction",
+			Kind:    "Eviction",
+			Group:   "policy",
+			Version: "v1",
+		}},
+	})
 	kc.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		if action.GetSubresource() == "eviction" {
 			return true, nil, apierrors.NewTooManyRequests("pdb blocks eviction", 1)
