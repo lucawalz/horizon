@@ -21,6 +21,7 @@ func (r *Runner) Add(s Step) { r.steps = append(r.steps, s) }
 
 func (r *Runner) Run(ctx context.Context) error {
 	for i, s := range r.steps {
+		fmt.Fprintf(os.Stderr, "==> %s\n", s.Name)
 		if err := s.Run(ctx); err != nil {
 			r.rollback(ctx)
 			return fmt.Errorf("%s: %w", s.Name, err)
