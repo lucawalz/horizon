@@ -124,6 +124,81 @@ func TestWaitForMemberByNameTimeout(t *testing.T) {
 	}
 }
 
+func TestFindMemberByIP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":"m1","nodeId":"n1","physicalAddress":"1.2.3.4/9993","config":{}},{"id":"m2","nodeId":"n2","physicalAddress":"5.6.7.8/9993","config":{}}]`))
+	}))
+	defer srv.Close()
+
+	c := zerotier.NewClient(srv.URL, "tok")
+
+	id, err := c.FindMemberByIP(context.Background(), "nw", "5.6.7.8")
+	if err != nil {
+		t.Fatalf("FindMemberByIP: %v", err)
+	}
+	if id != "m2" {
+		t.Errorf("id = %q, want m2", id)
+	}
+
+	id, err = c.FindMemberByIP(context.Background(), "nw", "9.9.9.9")
+	if err != nil {
+		t.Fatalf("FindMemberByIP missing: %v", err)
+	}
+	if id != "" {
+		t.Errorf("id = %q, want empty", id)
+	}
+}
+
+func TestFindMemberByIPBareAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[{"id":"m1","nodeId":"n1","physicalAddress":"1.2.3.4","config":{}}]`))
+	}))
+	defer srv.Close()
+
+	c := zerotier.NewClient(srv.URL, "tok")
+	id, err := c.FindMemberByIP(context.Background(), "nw", "1.2.3.4")
+	if err != nil {
+		t.Fatalf("FindMemberByIP bare: %v", err)
+	}
+	if id != "m1" {
+		t.Errorf("id = %q, want m1", id)
+	}
+}
+
+func TestWaitForMemberByIP(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n < 3 {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":"mz","nodeId":"nz","physicalAddress":"10.0.0.1/9993","config":{}}]`))
+	}))
+	defer srv.Close()
+
+	c := zerotier.NewClient(srv.URL, "tok")
+	id, err := c.WaitForMemberByIP(context.Background(), "nw", "10.0.0.1", 500*time.Millisecond, 25*time.Millisecond)
+	if err != nil {
+		t.Fatalf("WaitForMemberByIP: %v", err)
+	}
+	if id != "mz" {
+		t.Errorf("id = %q, want mz", id)
+	}
+}
+
+func TestWaitForMemberByIPTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	c := zerotier.NewClient(srv.URL, "tok")
+	_, err := c.WaitForMemberByIP(context.Background(), "nw", "1.2.3.4", 80*time.Millisecond, 20*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("expected timeout error, got %v", err)
+	}
+}
+
 func TestNon2xxReturnsError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusUnauthorized)

@@ -26,7 +26,7 @@ type mockZeroTier struct {
 	deauthCalls    []string
 }
 
-func (m *mockZeroTier) WaitForMemberByName(_ context.Context, _, _ string, _, _ time.Duration) (string, error) {
+func (m *mockZeroTier) WaitForMemberByIP(_ context.Context, _, _ string, _, _ time.Duration) (string, error) {
 	return m.waitID, m.waitErr
 }
 
@@ -44,6 +44,7 @@ type mockHetznerProvider struct {
 	burstID      string
 	hostname     string
 	serverID     string
+	serverIP     string
 	applyErr     error
 	destroyCalls int
 	destroyErr   error
@@ -72,6 +73,7 @@ func (m *mockHetznerProvider) Destroy(_ context.Context) error {
 func (m *mockHetznerProvider) Hostname() string { return m.hostname }
 func (m *mockHetznerProvider) BurstID() string  { return m.burstID }
 func (m *mockHetznerProvider) ServerID() string { return m.serverID }
+func (m *mockHetznerProvider) ServerIP() string { return m.serverIP }
 
 func newTestApp() *cli.App {
 	return &cli.App{

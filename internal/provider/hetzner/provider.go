@@ -23,6 +23,7 @@ type Provider struct {
 	k3sURL            string
 	k3sToken          string
 	serverID          string
+	serverIP          string
 }
 
 func New(cfg *config.Config, workDir string) *Provider {
@@ -102,6 +103,13 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 		}
 		p.serverID = id
 	}
+	if out, ok := outputs["server_ipv4"]; ok {
+		var ip string
+		if err := json.Unmarshal(out.Value, &ip); err != nil {
+			return fmt.Errorf("hetzner: apply: parse server_ipv4: %w", err)
+		}
+		p.serverIP = ip
+	}
 	return nil
 }
 
@@ -159,6 +167,8 @@ func (p *Provider) BurstID() string { return p.burstID }
 func (p *Provider) Hostname() string { return "horizon-burst-" + p.burstID }
 
 func (p *Provider) ServerID() string { return p.serverID }
+
+func (p *Provider) ServerIP() string { return p.serverIP }
 
 func (p *Provider) setBaseEnv(tf *tfexec.Terraform, extras map[string]string) error {
 	env := make(map[string]string)
