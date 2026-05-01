@@ -17,6 +17,7 @@ import (
 type zerotierAuthorizer interface {
 	Authorize(ctx context.Context, networkID, memberID string) error
 	Deauthorize(ctx context.Context, networkID, memberID string) error
+	DeleteMember(ctx context.Context, networkID, memberID string) error
 	WaitForMemberByIP(ctx context.Context, networkID, ip string, timeout, poll time.Duration) (string, error)
 }
 
@@ -157,10 +158,13 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 			return nil
 		},
 		Rollback: func(ctx context.Context) error {
-			if !authorized || memberID == "" {
+			if memberID == "" {
 				return nil
 			}
-			return deps.zt.Deauthorize(ctx, networkID, memberID)
+			if authorized {
+				_ = deps.zt.Deauthorize(ctx, networkID, memberID)
+			}
+			return deps.zt.DeleteMember(ctx, networkID, memberID)
 		},
 	})
 

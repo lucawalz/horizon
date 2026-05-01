@@ -34,25 +34,9 @@ func nodeNotReady(name string) *corev1.Node {
 	}
 }
 
-func flannelPod(nodeName, podName string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: "kube-system",
-			Labels:    map[string]string{"k8s-app": "flannel"},
-		},
-		Spec: corev1.PodSpec{
-			NodeName: nodeName,
-		},
-		Status: corev1.PodStatus{
-			Phase: corev1.PodRunning,
-		},
-	}
-}
-
 func TestWaitNodeReadySuccess(t *testing.T) {
 	name := "horizon-burst-abc1"
-	kc := fake.NewSimpleClientset(nodeReady(name), flannelPod(name, "flannel-x"))
+	kc := fake.NewSimpleClientset(nodeReady(name))
 	err := hetzner.WaitNodeReady(context.Background(), kc, name, 100*time.Millisecond, 25*time.Millisecond)
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
@@ -72,17 +56,6 @@ func TestWaitNodeReadyTimeout(t *testing.T) {
 	}
 }
 
-func TestWaitNodeReadyNoFlannelPod(t *testing.T) {
-	name := "horizon-burst-abc3"
-	kc := fake.NewSimpleClientset(nodeReady(name))
-	err := hetzner.WaitNodeReady(context.Background(), kc, name, 100*time.Millisecond, 25*time.Millisecond)
-	if err == nil {
-		t.Fatal("expected flannel error, got nil")
-	}
-	if !containsAll(err.Error(), "flannel") {
-		t.Errorf("error %q must contain 'flannel'", err.Error())
-	}
-}
 
 func TestWaitNodeReadyContextCancelled(t *testing.T) {
 	name := "horizon-burst-abc4"

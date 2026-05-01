@@ -6,6 +6,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -73,7 +74,11 @@ func ListNodeNames(ctx context.Context, kc kubernetes.Interface) (map[string]boo
 }
 
 func DeleteNode(ctx context.Context, kc kubernetes.Interface, name string) error {
-	return kc.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{})
+	err := kc.CoreV1().Nodes().Delete(ctx, name, metav1.DeleteOptions{})
+	if k8serrors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 func WaitNewNodeReady(ctx context.Context, kc kubernetes.Interface, exclude map[string]bool, timeout, poll time.Duration) (string, error) {

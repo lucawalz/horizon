@@ -25,7 +25,7 @@ func TestDownDryRun(t *testing.T) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "Deauthorize burst node from ZeroTier network") {
+	if !strings.Contains(out, "Remove burst node from ZeroTier network") {
 		t.Errorf("dry-run output missing zerotier-deauth label:\n%s", out)
 	}
 	if !strings.Contains(out, "[dry-run] No actions executed.") {
@@ -67,6 +67,9 @@ func TestDownStepOrder(t *testing.T) {
 	if len(zt.deauthCalls) != 1 || zt.deauthCalls[0] != "member-7" {
 		t.Errorf("Deauthorize calls = %v, want [member-7]", zt.deauthCalls)
 	}
+	if len(zt.deleteCalls) != 1 || zt.deleteCalls[0] != "member-7" {
+		t.Errorf("DeleteMember calls = %v, want [member-7]", zt.deleteCalls)
+	}
 	if _, err := cli.ReadState(stateDir, "aabb1122"); err == nil {
 		t.Error("state file still exists after down")
 	}
@@ -94,6 +97,9 @@ func TestDownContinuesOnEmptyMemberID(t *testing.T) {
 	}
 	if len(zt.deauthCalls) != 0 {
 		t.Errorf("Deauthorize called unexpectedly: %v", zt.deauthCalls)
+	}
+	if len(zt.deleteCalls) != 0 {
+		t.Errorf("DeleteMember called unexpectedly: %v", zt.deleteCalls)
 	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("Destroy still must run, got %d", prov.destroyCalls)

@@ -217,6 +217,27 @@ func TestNon2xxReturnsError(t *testing.T) {
 	}
 }
 
+func TestDeleteMember(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := zerotier.NewClient(srv.URL, "tok")
+	if err := c.DeleteMember(context.Background(), "nw123", "m456"); err != nil {
+		t.Fatalf("DeleteMember: %v", err)
+	}
+	if gotMethod != http.MethodDelete {
+		t.Errorf("method = %s, want DELETE", gotMethod)
+	}
+	if gotPath != "/api/v1/network/nw123/member/m456" {
+		t.Errorf("path = %s", gotPath)
+	}
+}
+
 func TestAuthHeaderFormat(t *testing.T) {
 	var seen []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

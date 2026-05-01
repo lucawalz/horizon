@@ -110,6 +110,19 @@ func (c *Client) ListMembers(ctx context.Context, networkID string) ([]Member, e
 	return out, nil
 }
 
+func (c *Client) DeleteMember(ctx context.Context, networkID, memberID string) error {
+	resp, err := c.do(ctx, http.MethodDelete, "/api/v1/network/"+networkID+"/member/"+memberID, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("zerotier: delete-member %s/%s: status %d: %s", networkID, memberID, resp.StatusCode, bytes.TrimSpace(body))
+	}
+	return nil
+}
+
 func (c *Client) FindMemberByName(ctx context.Context, networkID, name string) (string, error) {
 	members, err := c.ListMembers(ctx, networkID)
 	if err != nil {

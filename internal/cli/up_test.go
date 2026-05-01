@@ -22,8 +22,10 @@ type mockZeroTier struct {
 	waitErr        error
 	authorizeErr   error
 	deauthorizeErr error
+	deleteErr      error
 	authorizeCalls []string
 	deauthCalls    []string
+	deleteCalls    []string
 }
 
 func (m *mockZeroTier) WaitForMemberByIP(_ context.Context, _, _ string, _, _ time.Duration) (string, error) {
@@ -38,6 +40,11 @@ func (m *mockZeroTier) Authorize(_ context.Context, _, memberID string) error {
 func (m *mockZeroTier) Deauthorize(_ context.Context, _, memberID string) error {
 	m.deauthCalls = append(m.deauthCalls, memberID)
 	return m.deauthorizeErr
+}
+
+func (m *mockZeroTier) DeleteMember(_ context.Context, _, memberID string) error {
+	m.deleteCalls = append(m.deleteCalls, memberID)
+	return m.deleteErr
 }
 
 type mockHetznerProvider struct {
@@ -260,6 +267,9 @@ func TestUpRollbackOnWaitNodeReadyTimeout(t *testing.T) {
 	}
 	if len(zt.deauthCalls) != 1 || zt.deauthCalls[0] != "member-late" {
 		t.Errorf("deauth calls = %v, want [member-late]", zt.deauthCalls)
+	}
+	if len(zt.deleteCalls) != 1 || zt.deleteCalls[0] != "member-late" {
+		t.Errorf("delete calls = %v, want [member-late]", zt.deleteCalls)
 	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("destroy calls = %d, want 1", prov.destroyCalls)

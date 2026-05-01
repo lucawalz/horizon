@@ -26,7 +26,7 @@ type downDeps struct {
 var downSteps = []string{
 	"Cordon node and evict non-DaemonSet pods",
 	"Delete K3s node object from cluster",
-	"Deauthorize burst node from ZeroTier network",
+	"Remove burst node from ZeroTier network",
 	"Run terraform destroy (provider: hetzner)",
 	"Delete burst state file",
 }
@@ -133,7 +133,8 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 			if networkID == "" {
 				return fmt.Errorf("zerotier-deauth: zerotier.network_id is empty in config")
 			}
-			return deps.zt.Deauthorize(ctx, networkID, st.ZeroTierMemberID)
+			_ = deps.zt.Deauthorize(ctx, networkID, st.ZeroTierMemberID)
+			return deps.zt.DeleteMember(ctx, networkID, st.ZeroTierMemberID)
 		},
 	})
 
