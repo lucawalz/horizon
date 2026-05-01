@@ -35,8 +35,8 @@ func TestAuthorize(t *testing.T) {
 	if gotPath != "/api/v1/network/nw123/member/m456" {
 		t.Errorf("path = %s", gotPath)
 	}
-	if gotAuth != "token test-tok" {
-		t.Errorf("auth = %q, want %q", gotAuth, "token test-tok")
+	if gotAuth != "Bearer test-tok" {
+		t.Errorf("auth = %q, want %q", gotAuth, "Bearer test-tok")
 	}
 	cfg, _ := gotBody["config"].(map[string]any)
 	if cfg == nil || cfg["authorized"] != true {
@@ -163,8 +163,8 @@ func TestAuthHeaderFormat(t *testing.T) {
 		t.Fatal("no headers captured")
 	}
 	for _, h := range seen {
-		if h != "token abc" {
-			t.Errorf("header = %q, want %q", h, "token abc")
+		if h != "Bearer abc" {
+			t.Errorf("header = %q, want %q", h, "Bearer abc")
 		}
 	}
 }

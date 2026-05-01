@@ -43,7 +43,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (*htt
 	if err != nil {
 		return nil, fmt.Errorf("zerotier: build %s %s: %w", method, path, err)
 	}
-	req.Header.Set("Authorization", "token "+c.token)
+	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
