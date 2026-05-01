@@ -9,16 +9,17 @@ thresholds:
   cooldown_minutes: 10
 
 hetzner:
-  api_token_env: HCLOUD_TOKEN    # Hetzner Cloud API token
+  api_token_env: HCLOUD_TOKEN
   server_type: cx23
   location: fsn1
 
-headscale:
-  api_url: https://headscale.example.com
-  api_key_env: HEADSCALE_API_KEY  # Headscale API key (Bearer token)
-  server_url: https://headscale.example.com
+zerotier:
+  network_id: ""
+  api_token_env: ZEROTIER_API_TOKEN
+  master_ip: ""
 
 k3s:
-  url_env: HORIZON_K3S_URL              # e.g. https://192.168.2.191:6443
-  token_env: HORIZON_K3S_TOKEN          # /var/lib/rancher/k3s/server/node-token on master
-  ssh_public_key_env: HORIZON_SSH_PUBLIC_KEY  # public key provisioned onto burst nodes
+  url: ""
+  url_env: HORIZON_K3S_URL
+  token_env: HORIZON_K3S_TOKEN
+  ssh_public_key_env: HORIZON_SSH_PUBLIC_KEY
