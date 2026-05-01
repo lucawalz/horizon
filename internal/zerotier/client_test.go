@@ -77,8 +77,8 @@ func TestFindMemberByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindMemberByName: %v", err)
 	}
-	if id != "m2" {
-		t.Errorf("id = %q, want m2", id)
+	if id != "n2" {
+		t.Errorf("id = %q, want n2", id)
 	}
 
 	id, err = c.FindMemberByName(context.Background(), "nw", "missing")
@@ -107,8 +107,8 @@ func TestWaitForMemberByName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitForMemberByName: %v", err)
 	}
-	if id != "mz" {
-		t.Errorf("id = %q, want mz", id)
+	if id != "nz" {
+		t.Errorf("id = %q, want nz", id)
 	}
 }
 
@@ -136,8 +136,8 @@ func TestFindMemberByIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindMemberByIP: %v", err)
 	}
-	if id != "m2" {
-		t.Errorf("id = %q, want m2", id)
+	if id != "n2" {
+		t.Errorf("id = %q, want n2", id)
 	}
 
 	id, err = c.FindMemberByIP(context.Background(), "nw", "9.9.9.9")
@@ -160,8 +160,8 @@ func TestFindMemberByIPBareAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindMemberByIP bare: %v", err)
 	}
-	if id != "m1" {
-		t.Errorf("id = %q, want m1", id)
+	if id != "n1" {
+		t.Errorf("id = %q, want n1", id)
 	}
 }
 
@@ -182,8 +182,8 @@ func TestWaitForMemberByIP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WaitForMemberByIP: %v", err)
 	}
-	if id != "mz" {
-		t.Errorf("id = %q, want mz", id)
+	if id != "nz" {
+		t.Errorf("id = %q, want nz", id)
 	}
 }
 

@@ -117,7 +117,7 @@ func (c *Client) FindMemberByName(ctx context.Context, networkID, name string) (
 	}
 	for _, m := range members {
 		if m.Name == name {
-			return m.ID, nil
+			return m.NodeID, nil
 		}
 	}
 	return "", nil
@@ -165,7 +165,7 @@ func (c *Client) FindMemberByIP(ctx context.Context, networkID, ip string) (stri
 			host = m.PhysicalAddress
 		}
 		if host == ip {
-			return m.ID, nil
+			return m.NodeID, nil
 		}
 	}
 	return "", nil
