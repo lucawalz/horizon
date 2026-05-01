@@ -15,14 +15,14 @@ import (
 )
 
 type Provider struct {
-	cfg          *config.Config
-	workDir      string
-	burstID      string
-	preAuthKey   string
-	sshPublicKey string
-	k3sURL       string
-	k3sToken     string
-	serverID     string
+	cfg               *config.Config
+	workDir           string
+	burstID           string
+	zerotierNetworkID string
+	sshPublicKey      string
+	k3sURL            string
+	k3sToken          string
+	serverID          string
 }
 
 func New(cfg *config.Config, workDir string) *Provider {
@@ -35,16 +35,16 @@ func newBurstID() string {
 	return hex.EncodeToString(buf)
 }
 
-func (p *Provider) SetRuntimeSecrets(preAuthKey, sshPublicKey, k3sURL, k3sToken string) {
-	p.preAuthKey = preAuthKey
+func (p *Provider) SetRuntimeSecrets(zerotierNetworkID, sshPublicKey, k3sURL, k3sToken string) {
+	p.zerotierNetworkID = zerotierNetworkID
 	p.sshPublicKey = sshPublicKey
 	p.k3sURL = k3sURL
 	p.k3sToken = k3sToken
 }
 
 func (p *Provider) GenerateTFVars() (map[string]string, error) {
-	if p.preAuthKey == "" {
-		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing headscale preauth key (call SetRuntimeSecrets first)")
+	if p.zerotierNetworkID == "" {
+		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing zerotier network_id (call SetRuntimeSecrets first)")
 	}
 	if p.sshPublicKey == "" {
 		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing ssh public key")
@@ -53,15 +53,14 @@ func (p *Provider) GenerateTFVars() (map[string]string, error) {
 		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing k3s url or token")
 	}
 	return map[string]string{
-		"burst_id":             p.burstID,
-		"server_type":          p.cfg.Hetzner.ServerType,
-		"location":             p.cfg.Hetzner.Location,
-		"flake_ref":            "main",
-		"ssh_public_key":       p.sshPublicKey,
-		"headscale_preauthkey": p.preAuthKey,
-		"headscale_server_url": p.cfg.Headscale.ServerURL,
-		"k3s_url":              p.k3sURL,
-		"k3s_token":            p.k3sToken,
+		"burst_id":            p.burstID,
+		"server_type":         p.cfg.Hetzner.ServerType,
+		"location":            p.cfg.Hetzner.Location,
+		"flake_ref":           "main",
+		"ssh_public_key":      p.sshPublicKey,
+		"zerotier_network_id": p.zerotierNetworkID,
+		"k3s_url":             p.k3sURL,
+		"k3s_token":           p.k3sToken,
 	}, nil
 }
 
@@ -73,11 +72,10 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	tf.SetStdout(os.Stderr)
 	tf.SetStderr(os.Stderr)
 	if err := p.setBaseEnv(tf, map[string]string{
-		"HORIZON_HEADSCALE_PREAUTHKEY": vars["headscale_preauthkey"],
-		"HORIZON_HEADSCALE_SERVER_URL": vars["headscale_server_url"],
-		"HORIZON_K3S_URL":              vars["k3s_url"],
-		"HORIZON_K3S_TOKEN":            vars["k3s_token"],
-		"HORIZON_SSH_PUBLIC_KEY":       vars["ssh_public_key"],
+		"HORIZON_ZEROTIER_NETWORK_ID": vars["zerotier_network_id"],
+		"HORIZON_K3S_URL":             vars["k3s_url"],
+		"HORIZON_K3S_TOKEN":           vars["k3s_token"],
+		"HORIZON_SSH_PUBLIC_KEY":      vars["ssh_public_key"],
 	}); err != nil {
 		return fmt.Errorf("hetzner: apply: set env: %w", err)
 	}

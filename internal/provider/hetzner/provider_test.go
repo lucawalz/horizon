@@ -21,40 +21,35 @@ func newTestConfig() *config.Config {
 			ServerType:  "cx22",
 			Location:    "fsn1",
 		},
-		Headscale: config.HeadscaleConfig{
-			ServerURL: "https://headscale.example.com",
+		ZeroTier: config.ZeroTierConfig{
+			NetworkID:   "nw-abc",
+			APITokenEnv: "ZEROTIER_API_TOKEN",
 		},
 	}
 }
 
 func TestGenerateTFVars(t *testing.T) {
 	t.Setenv("HCLOUD_TOKEN", "test-token")
-	t.Setenv("HEADSCALE_PREAUTHKEY", "ts-key-abc")
-	t.Setenv("K3S_URL", "https://master:6443")
-	t.Setenv("K3S_TOKEN", "k3s-token-xyz")
-	t.Setenv("SSH_PUBLIC_KEY", "ssh-rsa AAAA")
 
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
-	p.SetRuntimeSecrets("ts-key-abc", "ssh-rsa AAAA", "https://master:6443", "k3s-token-xyz")
+	p.SetRuntimeSecrets("nw-abc", "ssh-rsa AAAA", "https://10.147.20.1:6443", "k3s-token-xyz")
 
 	vars, err := p.GenerateTFVars()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(vars) != 9 {
-		t.Fatalf("expected 9 keys, got %d: %v", len(vars), vars)
+	if len(vars) != 8 {
+		t.Fatalf("expected 8 keys, got %d: %v", len(vars), vars)
 	}
-
 	required := map[string]string{
-		"server_type":          "cx22",
-		"location":             "fsn1",
-		"flake_ref":            "main",
-		"ssh_public_key":       "ssh-rsa AAAA",
-		"headscale_preauthkey": "ts-key-abc",
-		"headscale_server_url": "https://headscale.example.com",
-		"k3s_url":              "https://master:6443",
-		"k3s_token":            "k3s-token-xyz",
+		"server_type":         "cx22",
+		"location":            "fsn1",
+		"flake_ref":           "main",
+		"ssh_public_key":      "ssh-rsa AAAA",
+		"zerotier_network_id": "nw-abc",
+		"k3s_url":             "https://10.147.20.1:6443",
+		"k3s_token":           "k3s-token-xyz",
 	}
 	for k, want := range required {
 		if got := vars[k]; got != want {
@@ -64,26 +59,29 @@ func TestGenerateTFVars(t *testing.T) {
 	if vars["burst_id"] == "" {
 		t.Error("burst_id must be non-empty")
 	}
+	for _, forbidden := range []string{"headscale_preauthkey", "headscale_server_url"} {
+		if _, ok := vars[forbidden]; ok {
+			t.Errorf("forbidden legacy key %q present in TFVars", forbidden)
+		}
+	}
 }
 
-func TestGenerateTFVarsMissingPreAuthKey(t *testing.T) {
+func TestGenerateTFVarsMissingNetworkID(t *testing.T) {
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
-
 	_, err := p.GenerateTFVars()
 	if err == nil {
-		t.Fatal("expected error when preauth key is missing")
+		t.Fatal("expected error when zerotier network_id missing")
 	}
-	errStr := err.Error()
-	if !containsAll(errStr, "headscale", "preauth") {
-		t.Errorf("error %q must contain 'headscale' and 'preauth'", errStr)
+	if !containsAll(err.Error(), "zerotier", "network_id") {
+		t.Errorf("error %q must contain 'zerotier' and 'network_id'", err.Error())
 	}
 }
 
 func TestGenerateTFVarsBurstIDStable(t *testing.T) {
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
-	p.SetRuntimeSecrets("key", "ssh-rsa AAAA", "https://master:6443", "token")
+	p.SetRuntimeSecrets("nw-abc", "ssh-rsa AAAA", "https://10.147.20.1:6443", "tok")
 
 	v1, err := p.GenerateTFVars()
 	if err != nil {
