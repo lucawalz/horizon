@@ -14,8 +14,6 @@ import (
 )
 
 func TestTriggerBackup(t *testing.T) {
-	t.Skip("Plan 03 implements internal/velero/client.go")
-
 	scheme := runtime.NewScheme()
 	if err := velerov1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -53,8 +51,6 @@ func TestTriggerBackup(t *testing.T) {
 }
 
 func TestTriggerBackup_Errors(t *testing.T) {
-	t.Skip("Plan 03 implements internal/velero/client.go")
-
 	scheme := runtime.NewScheme()
 	if err := velerov1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -93,8 +89,6 @@ func TestTriggerBackup_Errors(t *testing.T) {
 }
 
 func TestTriggerBackup_Timeout(t *testing.T) {
-	t.Skip("Plan 03 implements internal/velero/client.go")
-
 	scheme := runtime.NewScheme()
 	if err := velerov1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
