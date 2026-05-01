@@ -3,12 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
-	"github.com/lucawalz/horizon/internal/headscale"
+	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
+	"github.com/lucawalz/horizon/internal/zerotier"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -18,23 +18,22 @@ import (
 )
 
 type downDeps struct {
-	hs   headscaler
+	zt   zerotierAuthorizer
 	prov hetznerProvider
 	kc   kubernetes.Interface
 }
 
 var downSteps = []string{
 	"Cordon node and evict non-DaemonSet pods",
+	"Deauthorize burst node from ZeroTier network",
 	"Run terraform destroy (provider: hetzner)",
-	"Delete burst node from Headscale",
-	"Revoke Headscale pre-auth key",
-	"Delete state file",
+	"Delete burst state file",
 }
 
 func newDownCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "down",
-		Short: "Tear down the burst node and revoke its Headscale state",
+		Short: "Tear down the burst node and revoke its ZeroTier membership",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if dryRun {
@@ -66,13 +65,13 @@ func newDownCmd(app *App) *cobra.Command {
 }
 
 func newDownDeps(app *App) (*downDeps, error) {
-	apiKey := os.Getenv(app.Config.Headscale.APIKeyEnv)
-	if apiKey == "" {
-		return nil, fmt.Errorf("down: headscale api key env %q is empty", app.Config.Headscale.APIKeyEnv)
+	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
+	if token == "" {
+		return nil, fmt.Errorf("down: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
 	}
-	hs := headscale.NewClient(app.Config.Headscale.APIURL, apiKey)
+	zt := zerotier.NewClient("", token)
 	prov := hetzner.New(app.Config, app.Config.InfraPath)
-	return &downDeps{hs: hs, prov: prov, kc: app.KubeClient}, nil
+	return &downDeps{zt: zt, prov: prov, kc: app.KubeClient}, nil
 }
 
 func resolveBurstID(stateDir, flag string) (string, error) {
@@ -105,6 +104,7 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 		ctx = context.Background()
 	}
 
+	networkID := app.Config.ZeroTier.NetworkID
 	r := &runner.Runner{}
 
 	r.Add(runner.Step{
@@ -117,37 +117,22 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 	})
 
 	r.Add(runner.Step{
+		Name: "zerotier-deauth",
+		Run: func(ctx context.Context) error {
+			if st.ZeroTierMemberID == "" {
+				return nil
+			}
+			if networkID == "" {
+				return fmt.Errorf("zerotier-deauth: zerotier.network_id is empty in config")
+			}
+			return deps.zt.Deauthorize(ctx, networkID, st.ZeroTierMemberID)
+		},
+	})
+
+	r.Add(runner.Step{
 		Name: "terraform-destroy",
 		Run: func(ctx context.Context) error {
 			return deps.prov.Destroy(ctx)
-		},
-	})
-
-	r.Add(runner.Step{
-		Name: "headscale-delete-node",
-		Run: func(ctx context.Context) error {
-			nodeID := st.HeadscaleNodeID
-			if nodeID == "" {
-				found, err := deps.hs.FindNodeByHostname(ctx, st.Hostname)
-				if err != nil {
-					return err
-				}
-				nodeID = found
-			}
-			if nodeID == "" {
-				return nil
-			}
-			return deps.hs.DeleteNode(ctx, nodeID)
-		},
-	})
-
-	r.Add(runner.Step{
-		Name: "headscale-revoke-key",
-		Run: func(ctx context.Context) error {
-			if st.HeadscalePreAuthKey == "" {
-				return nil
-			}
-			return deps.hs.RevokePreAuthKey(ctx, "burst-nodes", st.HeadscalePreAuthKey)
 		},
 	})
 
@@ -216,8 +201,8 @@ func RunDownDryRunForTest(app *App) error {
 	return runDownDryRun(app)
 }
 
-func RunDownForTest(ctx context.Context, app *App, hs headscaler, prov hetznerProvider, kc kubernetes.Interface, stateDir string, st BurstState) error {
-	return runDown(ctx, app, &downDeps{hs: hs, prov: prov, kc: kc}, stateDir, st)
+func RunDownForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface, stateDir string, st BurstState) error {
+	return runDown(ctx, app, &downDeps{zt: zt, prov: prov, kc: kc}, stateDir, st)
 }
 
 func ResolveBurstIDForTest(stateDir, flag string) (string, error) {

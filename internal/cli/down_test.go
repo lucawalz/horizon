@@ -19,14 +19,17 @@ func TestDownDryRun(t *testing.T) {
 	out := captureStdout(func() {
 		cli.RunDownDryRunForTest(app)
 	})
-	for i := 1; i <= 5; i++ {
+	for i := 1; i <= 4; i++ {
 		want := fmt.Sprintf("[dry-run] Step %d:", i)
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
+	if !strings.Contains(out, "Deauthorize burst node from ZeroTier network") {
+		t.Errorf("dry-run output missing zerotier-deauth label:\n%s", out)
+	}
 	if !strings.Contains(out, "[dry-run] No actions executed.") {
-		t.Errorf("missing trailing line in output:\n%s", out)
+		t.Errorf("missing trailing line:\n%s", out)
 	}
 }
 
@@ -43,88 +46,57 @@ func TestDownStepOrder(t *testing.T) {
 	defer restore()
 
 	st := cli.BurstState{
-		BurstID:             "aabb1122",
-		Hostname:            "horizon-burst-aabb1122",
-		HeadscaleNodeID:     "7",
-		HeadscalePreAuthKey: "key-abc",
-		HetznerServerID:     "42",
+		BurstID:          "aabb1122",
+		Hostname:         "horizon-burst-aabb1122",
+		ZeroTierMemberID: "member-7",
+		HetznerServerID:  "42",
 	}
 	seededState(t, stateDir, st)
 
-	hs := &mockHeadscaler{}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{burstID: "aabb1122", hostname: "horizon-burst-aabb1122"}
 	kc := fake.NewSimpleClientset()
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), hs, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 
 	if prov.destroyCalls != 1 {
 		t.Errorf("Destroy calls = %d, want 1", prov.destroyCalls)
 	}
-	if len(hs.deleteCalls) != 1 || hs.deleteCalls[0] != "7" {
-		t.Errorf("DeleteNode calls = %v, want [7]", hs.deleteCalls)
+	if len(zt.deauthCalls) != 1 || zt.deauthCalls[0] != "member-7" {
+		t.Errorf("Deauthorize calls = %v, want [member-7]", zt.deauthCalls)
 	}
-	if len(hs.revokeCalls) != 1 || hs.revokeCalls[0] != "key-abc" {
-		t.Errorf("RevokePreAuthKey calls = %v, want [key-abc]", hs.revokeCalls)
-	}
-
 	if _, err := cli.ReadState(stateDir, "aabb1122"); err == nil {
 		t.Error("state file still exists after down")
 	}
 }
 
-func TestDownDeletesNodeByPersistedHostname(t *testing.T) {
+func TestDownContinuesOnEmptyMemberID(t *testing.T) {
 	stateDir := t.TempDir()
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
 	st := cli.BurstState{
-		BurstID:             "ccdd3344",
-		Hostname:            "horizon-burst-aaaa1111",
-		HeadscaleNodeID:     "99",
-		HeadscalePreAuthKey: "key-x",
-		HetznerServerID:     "10",
+		BurstID:          "eeff5566",
+		Hostname:         "horizon-burst-eeff5566",
+		ZeroTierMemberID: "",
+		HetznerServerID:  "20",
 	}
 	seededState(t, stateDir, st)
 
-	hs := &mockHeadscaler{}
-	prov := &mockHetznerProvider{burstID: "ccdd3344", hostname: "horizon-burst-zzzz9999"}
-	kc := fake.NewSimpleClientset()
-
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), hs, prov, kc, stateDir, st); err != nil {
-		t.Fatalf("RunDownForTest: %v", err)
-	}
-
-	if len(hs.deleteCalls) != 1 || hs.deleteCalls[0] != "99" {
-		t.Errorf("DeleteNode called with %v, want [99] (persisted node id)", hs.deleteCalls)
-	}
-}
-
-func TestDownContinuesOnHeadscaleNodeNotFound(t *testing.T) {
-	stateDir := t.TempDir()
-	restore := cli.SetStateDirForTest(stateDir)
-	defer restore()
-
-	st := cli.BurstState{
-		BurstID:             "eeff5566",
-		Hostname:            "horizon-burst-eeff5566",
-		HeadscaleNodeID:     "",
-		HeadscalePreAuthKey: "key-y",
-		HetznerServerID:     "20",
-	}
-	seededState(t, stateDir, st)
-
-	hs := &mockHeadscaler{findNodeID: ""}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: "horizon-burst-eeff5566"}
 	kc := fake.NewSimpleClientset()
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), hs, prov, kc, stateDir, st); err != nil {
-		t.Fatalf("expected success when headscale node not found, got: %v", err)
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+		t.Fatalf("expected success when member id empty, got: %v", err)
 	}
-
-	if len(hs.deleteCalls) != 0 {
-		t.Errorf("DeleteNode called unexpectedly: %v", hs.deleteCalls)
+	if len(zt.deauthCalls) != 0 {
+		t.Errorf("Deauthorize called unexpectedly: %v", zt.deauthCalls)
+	}
+	if prov.destroyCalls != 1 {
+		t.Errorf("Destroy still must run, got %d", prov.destroyCalls)
 	}
 }
 
@@ -134,15 +106,14 @@ func TestDownNoBurstIDFlagSelectsSingleState(t *testing.T) {
 	defer restore()
 
 	st := cli.BurstState{
-		BurstID:             "ffff7777",
-		Hostname:            "horizon-burst-ffff7777",
-		HeadscaleNodeID:     "5",
-		HeadscalePreAuthKey: "key-z",
-		HetznerServerID:     "30",
+		BurstID:          "ffff7777",
+		Hostname:         "horizon-burst-ffff7777",
+		ZeroTierMemberID: "m5",
+		HetznerServerID:  "30",
 	}
 	seededState(t, stateDir, st)
 
-	hs := &mockHeadscaler{}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{burstID: "ffff7777", hostname: "horizon-burst-ffff7777"}
 	kc := fake.NewSimpleClientset()
 
@@ -154,7 +125,7 @@ func TestDownNoBurstIDFlagSelectsSingleState(t *testing.T) {
 		t.Errorf("resolved = %q, want ffff7777", resolved)
 	}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), hs, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 }
@@ -170,7 +141,7 @@ func TestDownNoBurstIDFlagAmbiguous(t *testing.T) {
 
 	_, err := cli.ResolveBurstIDForTest(stateDir, "")
 	if err == nil {
-		t.Fatal("expected error for multiple state files, got nil")
+		t.Fatal("expected error for multiple state files")
 	}
 	if !strings.Contains(err.Error(), "burst-id") {
 		t.Errorf("error %q should contain 'burst-id'", err.Error())
@@ -182,7 +153,7 @@ func TestDownNoBurstIDFlagAmbiguous(t *testing.T) {
 	emptyDir := t.TempDir()
 	_, zeroErr := cli.ResolveBurstIDForTest(emptyDir, "")
 	if zeroErr == nil || !strings.Contains(zeroErr.Error(), "burst-id") {
-		t.Errorf("zero-state error = %v, want error containing 'burst-id'", zeroErr)
+		t.Errorf("zero-state error = %v", zeroErr)
 	}
 }
 
@@ -193,24 +164,19 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 
 	hostname := "horizon-burst-aabb9999"
 	st := cli.BurstState{
-		BurstID:             "aabb9999",
-		Hostname:            hostname,
-		HeadscaleNodeID:     "3",
-		HeadscalePreAuthKey: "key-evict",
-		HetznerServerID:     "50",
+		BurstID:          "aabb9999",
+		Hostname:         hostname,
+		ZeroTierMemberID: "m3",
+		HetznerServerID:  "50",
 	}
 	seededState(t, stateDir, st)
 
-	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: hostname},
-	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
 	deployPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "deploy-pod",
 			Namespace: "default",
-			OwnerReferences: []metav1.OwnerReference{
-				{Kind: "ReplicaSet", Name: "rs-1"},
-			},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "rs-1"}},
 		},
 		Spec: corev1.PodSpec{NodeName: hostname},
 	}
@@ -218,19 +184,16 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ds-pod",
 			Namespace: "default",
-			OwnerReferences: []metav1.OwnerReference{
-				{Kind: "DaemonSet", Name: "ds-1"},
-			},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: "ds-1"}},
 		},
 		Spec: corev1.PodSpec{NodeName: hostname},
 	}
-
 	kc := fake.NewSimpleClientset(node, deployPod, dsPod)
 
-	hs := &mockHeadscaler{}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{burstID: "aabb9999", hostname: hostname}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), hs, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 
@@ -240,20 +203,11 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 			evictActions = append(evictActions, a)
 		}
 	}
-
 	if len(evictActions) != 1 {
 		t.Errorf("eviction count = %d, want 1 (only deploy-pod, not ds-pod)", len(evictActions))
 	}
-	for _, a := range evictActions {
-		ca, ok := a.(k8stesting.CreateAction)
-		if !ok {
-			continue
-		}
-		obj := ca.GetObject()
-		t.Logf("evicted object: %T %v", obj, obj)
-	}
 
-	if _, statErr := os.Stat(stateDir + "/" + "aabb9999.json"); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(stateDir + "/aabb9999.json"); !os.IsNotExist(statErr) {
 		t.Error("state file should be deleted after successful down")
 	}
 }
