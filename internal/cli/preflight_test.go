@@ -2,8 +2,6 @@ package cli_test
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -39,143 +37,86 @@ func TestPreFlightDryRunSkipsCredentials(t *testing.T) {
 	}
 }
 
-func TestPreFlightDryRunSkipsHeadscale(t *testing.T) {
+func TestPreFlightZeroTierAPITokenMissing(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.Headscale.APIKeyEnv = "HEADSCALE_API_KEY"
-	origKey := os.Getenv("HEADSCALE_API_KEY")
-	os.Unsetenv("HEADSCALE_API_KEY")
-	defer os.Setenv("HEADSCALE_API_KEY", origKey)
+	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
+	cfg.ZeroTier.NetworkID = "abc123"
+	cfg.K3s.URL = "https://10.147.20.1:6443"
 
-	err := cli.RunPreFlight(context.Background(), cfg, nil, true)
-	if err != nil {
-		if strings.Contains(err.Error(), "headscale") {
-			t.Errorf("dry-run must not check headscale; got: %v", err)
-		}
-	}
-}
-
-func TestPreFlightHeadscaleAPIKeyMissing(t *testing.T) {
-	cfg := minimalConfig(t)
-	cfg.Headscale.APIKeyEnv = "HEADSCALE_API_KEY"
-
-	origKey := os.Getenv("HEADSCALE_API_KEY")
-	os.Unsetenv("HEADSCALE_API_KEY")
-	defer os.Setenv("HEADSCALE_API_KEY", origKey)
-
-	origToken := os.Getenv("HCLOUD_TOKEN")
-	if origToken == "" {
-		os.Setenv("HCLOUD_TOKEN", "dummy-token-for-test")
-		defer os.Unsetenv("HCLOUD_TOKEN")
-	}
+	t.Setenv("ZEROTIER_API_TOKEN", "")
+	t.Setenv("HCLOUD_TOKEN", "dummy")
 
 	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
 	if err == nil {
-		t.Fatal("expected error when HEADSCALE_API_KEY is not set, got nil")
+		t.Fatal("expected error when ZEROTIER_API_TOKEN unset")
 	}
-	want := "pre-flight: headscale: HEADSCALE_API_KEY is not set"
+	if !strings.Contains(err.Error(), "zerotier") || !strings.Contains(err.Error(), "ZEROTIER_API_TOKEN") {
+		t.Errorf("error = %q, want contains 'zerotier' and 'ZEROTIER_API_TOKEN'", err.Error())
+	}
+}
+
+func TestPreFlightZeroTierNetworkIDMissing(t *testing.T) {
+	cfg := minimalConfig(t)
+	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
+	cfg.ZeroTier.NetworkID = ""
+	cfg.K3s.URL = "https://10.147.20.1:6443"
+
+	t.Setenv("ZEROTIER_API_TOKEN", "any")
+	t.Setenv("HCLOUD_TOKEN", "dummy")
+
+	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "network_id") {
+		t.Errorf("expected network_id error, got %v", err)
+	}
+}
+
+func TestPreFlightK3sURLLAN(t *testing.T) {
+	cfg := minimalConfig(t)
+	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
+	cfg.ZeroTier.NetworkID = "abc"
+	cfg.K3s.URL = "https://192.168.2.191:6443"
+
+	t.Setenv("ZEROTIER_API_TOKEN", "any")
+	t.Setenv("HCLOUD_TOKEN", "dummy")
+
+	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
+	if err == nil {
+		t.Fatal("expected error for LAN K3S_URL")
+	}
+	want := "pre-flight: k3s: K3S_URL https://192.168.2.191:6443 is a LAN address — use the master's ZeroTier IP"
 	if err.Error() != want {
-		t.Errorf("got %q, want %q", err.Error(), want)
+		t.Errorf("got %q\nwant %q", err.Error(), want)
 	}
 }
 
-func TestPreFlightHeadscaleAPIUnreachable(t *testing.T) {
+func TestPreFlightK3sURLEmpty(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.Headscale.APIKeyEnv = "HEADSCALE_API_KEY"
-	cfg.Headscale.APIURL = "http://127.0.0.1:19999"
+	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
+	cfg.ZeroTier.NetworkID = "abc"
+	cfg.K3s.URL = ""
+	cfg.K3s.URLEnv = "HORIZON_K3S_URL_TEST_UNSET"
 
-	origKey := os.Getenv("HEADSCALE_API_KEY")
-	os.Setenv("HEADSCALE_API_KEY", "dummy-api-key")
-	defer func() {
-		if origKey == "" {
-			os.Unsetenv("HEADSCALE_API_KEY")
-		} else {
-			os.Setenv("HEADSCALE_API_KEY", origKey)
-		}
-	}()
-
-	origToken := os.Getenv("HCLOUD_TOKEN")
-	if origToken == "" {
-		os.Setenv("HCLOUD_TOKEN", "dummy-token-for-test")
-		defer os.Unsetenv("HCLOUD_TOKEN")
-	}
+	t.Setenv("ZEROTIER_API_TOKEN", "any")
+	t.Setenv("HCLOUD_TOKEN", "dummy")
+	t.Setenv("HORIZON_K3S_URL_TEST_UNSET", "")
 
 	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
-	if err == nil {
-		t.Fatal("expected error when headscale API is unreachable, got nil")
-	}
-	if !strings.Contains(err.Error(), "pre-flight: headscale: API unreachable") {
-		t.Errorf("got %q, want error containing %q", err.Error(), "pre-flight: headscale: API unreachable")
+	if err == nil || !strings.Contains(err.Error(), "K3S_URL is empty") {
+		t.Errorf("expected K3S_URL empty error, got %v", err)
 	}
 }
 
-func TestPreFlightHeadscaleUserMissing(t *testing.T) {
+func TestPreFlightK3sURLZeroTierAccepted(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.Headscale.APIKeyEnv = "HEADSCALE_API_KEY"
+	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
+	cfg.ZeroTier.NetworkID = "abc"
+	cfg.K3s.URL = "https://10.147.20.1:6443"
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer server.Close()
-	cfg.Headscale.APIURL = server.URL
-
-	origKey := os.Getenv("HEADSCALE_API_KEY")
-	os.Setenv("HEADSCALE_API_KEY", "dummy-api-key")
-	defer func() {
-		if origKey == "" {
-			os.Unsetenv("HEADSCALE_API_KEY")
-		} else {
-			os.Setenv("HEADSCALE_API_KEY", origKey)
-		}
-	}()
-
-	origToken := os.Getenv("HCLOUD_TOKEN")
-	if origToken == "" {
-		os.Setenv("HCLOUD_TOKEN", "dummy-token-for-test")
-		defer os.Unsetenv("HCLOUD_TOKEN")
-	}
+	t.Setenv("ZEROTIER_API_TOKEN", "any")
+	t.Setenv("HCLOUD_TOKEN", "dummy")
 
 	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
-	if err == nil {
-		t.Fatal("expected error when burst-nodes user is missing (404), got nil")
-	}
-	if !strings.Contains(err.Error(), "headscale") {
-		t.Errorf("got %q, want error containing %q", err.Error(), "headscale")
-	}
-	if !strings.Contains(err.Error(), "burst-nodes") {
-		t.Errorf("got %q, want error containing %q", err.Error(), "burst-nodes")
-	}
-}
-
-func TestPreFlightHeadscaleOK(t *testing.T) {
-	cfg := minimalConfig(t)
-	cfg.Headscale.APIKeyEnv = "HEADSCALE_API_KEY"
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"preAuthKeys":[]}`))
-	}))
-	defer server.Close()
-	cfg.Headscale.APIURL = server.URL
-
-	origKey := os.Getenv("HEADSCALE_API_KEY")
-	os.Setenv("HEADSCALE_API_KEY", "dummy-api-key")
-	defer func() {
-		if origKey == "" {
-			os.Unsetenv("HEADSCALE_API_KEY")
-		} else {
-			os.Setenv("HEADSCALE_API_KEY", origKey)
-		}
-	}()
-
-	origToken := os.Getenv("HCLOUD_TOKEN")
-	if origToken == "" {
-		os.Setenv("HCLOUD_TOKEN", "dummy-token-for-test")
-		defer os.Unsetenv("HCLOUD_TOKEN")
-	}
-
-	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
-	if err != nil && strings.Contains(err.Error(), "headscale") {
-		t.Errorf("expected no headscale-prefixed error on 200 response, got %q", err.Error())
+	if err != nil && strings.Contains(err.Error(), "K3S_URL") {
+		t.Errorf("10.147.x.x must not be flagged as LAN: %v", err)
 	}
 }

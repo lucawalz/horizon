@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"net/url"
 	"os/exec"
-	"time"
+	"strings"
 
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
@@ -67,30 +67,35 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 		if config.Resolve(cfg.Hetzner.APITokenEnv, cfg.Hetzner.APIToken) == "" {
 			return fmt.Errorf("pre-flight: hetzner: HCLOUD_TOKEN environment variable is not set")
 		}
-		apiKey := config.Resolve(cfg.Headscale.APIKeyEnv, cfg.Headscale.APIKey)
-		if apiKey == "" {
-			return fmt.Errorf("pre-flight: headscale: %s is not set", cfg.Headscale.APIKeyEnv)
+
+		ztTokenEnv := cfg.ZeroTier.APITokenEnv
+		if ztTokenEnv == "" {
+			ztTokenEnv = "ZEROTIER_API_TOKEN"
 		}
-		hsCtx, hsCancel := context.WithTimeout(ctx, 5*time.Second)
-		defer hsCancel()
-		req, err := http.NewRequestWithContext(hsCtx, http.MethodGet,
-			cfg.Headscale.APIURL+"/api/v1/preauthkey?user=burst-nodes", nil)
-		if err != nil {
-			return fmt.Errorf("pre-flight: headscale: API unreachable: %w", err)
+		if config.Resolve(ztTokenEnv, cfg.ZeroTier.APIToken) == "" {
+			return fmt.Errorf("pre-flight: zerotier: %s environment variable is not set", ztTokenEnv)
 		}
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("pre-flight: headscale: API unreachable: %w", err)
+		if cfg.ZeroTier.NetworkID == "" {
+			return fmt.Errorf("pre-flight: zerotier: network_id is empty in config")
 		}
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusNotFound {
-			return fmt.Errorf("pre-flight: headscale: burst-nodes user not found")
+
+		k3sURL := config.Resolve(cfg.K3s.URLEnv, cfg.K3s.URL)
+		if k3sURL == "" {
+			return fmt.Errorf("pre-flight: k3s: K3S_URL is empty — set k3s.url or %s to the master's ZeroTier IP", cfg.K3s.URLEnv)
 		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("pre-flight: headscale: API unreachable (status %d)", resp.StatusCode)
+		if isLANAddress(k3sURL) {
+			return fmt.Errorf("pre-flight: k3s: K3S_URL %s is a LAN address — use the master's ZeroTier IP", k3sURL)
 		}
 	}
 
 	return nil
+}
+
+func isLANAddress(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	host := u.Hostname()
+	return strings.HasPrefix(host, "192.168.")
 }
