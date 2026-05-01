@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lucawalz/horizon/internal/k8s"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,14 +16,37 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-func TestDrain(t *testing.T) {
-	t.Skip("Plan 04 implements internal/k8s/drain.go")
+func boolPtr(b bool) *bool { return &b }
 
+func evictAndDelete(kc *fake.Clientset) {
+	kc.Resources = append(kc.Resources, &metav1.APIResourceList{
+		GroupVersion: "v1",
+		APIResources: []metav1.APIResource{{
+			Name:    "pods/eviction",
+			Kind:    "Eviction",
+			Group:   "policy",
+			Version: "v1",
+		}},
+	})
+	kc.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() != "eviction" {
+			return false, nil, nil
+		}
+		ca := action.(k8stesting.CreateAction)
+		if ev, ok := ca.GetObject().(interface{ GetName() string }); ok {
+			_ = kc.Tracker().Delete(corev1.SchemeGroupVersion.WithResource("pods"), action.GetNamespace(), ev.GetName())
+		}
+		return true, nil, nil
+	})
+}
+
+func TestDrain(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	appPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
 		Spec:       corev1.PodSpec{NodeName: "burst-node"},
 	}
+	ds := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "ds-1", Namespace: "default", UID: "u"}}
 	dsPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ds-pod",
@@ -32,11 +56,13 @@ func TestDrain(t *testing.T) {
 				Name:       "ds-1",
 				APIVersion: "apps/v1",
 				UID:        "u",
+				Controller: boolPtr(true),
 			}},
 		},
 		Spec: corev1.PodSpec{NodeName: "burst-node"},
 	}
-	kc := fake.NewSimpleClientset(node, appPod, dsPod)
+	kc := fake.NewSimpleClientset(node, appPod, ds, dsPod)
+	evictAndDelete(kc)
 
 	if err := k8s.Drain(context.Background(), kc, "burst-node", 30*time.Second); err != nil {
 		t.Fatalf("Drain: %v", err)
@@ -73,13 +99,12 @@ func TestDrain(t *testing.T) {
 }
 
 func TestDrain_DaemonSetSkip(t *testing.T) {
-	t.Skip("Plan 04 implements internal/k8s/drain.go")
-
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	appPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
 		Spec:       corev1.PodSpec{NodeName: "burst-node"},
 	}
+	ds := &appsv1.DaemonSet{ObjectMeta: metav1.ObjectMeta{Name: "ds-1", Namespace: "default", UID: "u"}}
 	dsPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "ds-pod",
@@ -89,11 +114,13 @@ func TestDrain_DaemonSetSkip(t *testing.T) {
 				Name:       "ds-1",
 				APIVersion: "apps/v1",
 				UID:        "u",
+				Controller: boolPtr(true),
 			}},
 		},
 		Spec: corev1.PodSpec{NodeName: "burst-node"},
 	}
-	kc := fake.NewSimpleClientset(node, appPod, dsPod)
+	kc := fake.NewSimpleClientset(node, appPod, ds, dsPod)
+	evictAndDelete(kc)
 
 	if err := k8s.Drain(context.Background(), kc, "burst-node", 30*time.Second); err != nil {
 		t.Fatalf("Drain: %v", err)
@@ -113,14 +140,21 @@ func TestDrain_DaemonSetSkip(t *testing.T) {
 }
 
 func TestDrain_Timeout(t *testing.T) {
-	t.Skip("Plan 04 implements internal/k8s/drain.go")
-
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	appPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
 		Spec:       corev1.PodSpec{NodeName: "burst-node"},
 	}
 	kc := fake.NewSimpleClientset(node, appPod)
+	kc.Resources = append(kc.Resources, &metav1.APIResourceList{
+		GroupVersion: "v1",
+		APIResources: []metav1.APIResource{{
+			Name:    "pods/eviction",
+			Kind:    "Eviction",
+			Group:   "policy",
+			Version: "v1",
+		}},
+	})
 	kc.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		if action.GetSubresource() == "eviction" {
 			return true, nil, apierrors.NewTooManyRequests("pdb blocks eviction", 1)
