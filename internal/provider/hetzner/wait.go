@@ -43,14 +43,7 @@ func WaitNodeReady(ctx context.Context, kc kubernetes.Interface, hostname string
 		} else if !ready {
 			lastErr = fmt.Errorf("node %s not Ready", hostname)
 		} else {
-			flannelOK, err := flannelPodRunningOnNode(pollCtx, kc, hostname)
-			if err != nil {
-				lastErr = err
-			} else if !flannelOK {
-				lastErr = fmt.Errorf("flannel pod not Running on node %s", hostname)
-			} else {
-				return nil
-			}
+			return nil
 		}
 
 		select {
@@ -108,27 +101,12 @@ func WaitNewNodeReady(ctx context.Context, kc kubernetes.Interface, exclude map[
 					continue
 				}
 				found = n.Name
-				ready := false
 				for _, c := range n.Status.Conditions {
 					if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
-						ready = true
-						break
+						return n.Name, nil
 					}
 				}
-				if !ready {
-					lastErr = fmt.Errorf("node %s not Ready", n.Name)
-					break
-				}
-				ok, err := flannelPodRunningOnNode(pollCtx, kc, n.Name)
-				if err != nil {
-					lastErr = err
-					break
-				}
-				if !ok {
-					lastErr = fmt.Errorf("flannel pod not Running on node %s", n.Name)
-					break
-				}
-				return n.Name, nil
+				lastErr = fmt.Errorf("node %s not Ready", n.Name)
 			}
 			if found == "" {
 				lastErr = fmt.Errorf("no new node appeared yet")
@@ -158,18 +136,3 @@ func nodeIsReady(ctx context.Context, kc kubernetes.Interface, name string) (boo
 	return false, nil
 }
 
-func flannelPodRunningOnNode(ctx context.Context, kc kubernetes.Interface, nodeName string) (bool, error) {
-	pods, err := kc.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
-		LabelSelector: "k8s-app=flannel",
-		FieldSelector: "spec.nodeName=" + nodeName,
-	})
-	if err != nil {
-		return false, fmt.Errorf("list flannel pods on %s: %w", nodeName, err)
-	}
-	for _, p := range pods.Items {
-		if p.Spec.NodeName == nodeName && p.Status.Phase == corev1.PodRunning {
-			return true, nil
-		}
-	}
-	return false, nil
-}
