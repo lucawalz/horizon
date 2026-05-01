@@ -25,6 +25,7 @@ type downDeps struct {
 
 var downSteps = []string{
 	"Cordon node and evict non-DaemonSet pods",
+	"Delete K3s node object from cluster",
 	"Deauthorize burst node from ZeroTier network",
 	"Run terraform destroy (provider: hetzner)",
 	"Delete burst state file",
@@ -113,6 +114,13 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 			c, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer cancel()
 			return cordonAndEvict(c, deps.kc, st.Hostname)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "delete-k3s-node",
+		Run: func(ctx context.Context) error {
+			return hetzner.DeleteNode(ctx, deps.kc, st.Hostname)
 		},
 	})
 
