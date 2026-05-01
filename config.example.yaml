@@ -1,0 +1,25 @@
+provider: hetzner
+infra_path: ""
+kubeconfig: ""
+
+thresholds:
+  burst: 0.80
+  scale_down: 0.30
+  window: 5
+  cooldown_minutes: 10
+
+hetzner:
+  api_token_env: HCLOUD_TOKEN
+  server_type: cx23
+  location: fsn1
+
+zerotier:
+  network_id: ""
+  api_token_env: ZEROTIER_API_TOKEN
+  master_ip: ""
+
+k3s:
+  url: ""
+  url_env: HORIZON_K3S_URL
+  token_env: HORIZON_K3S_TOKEN
+  ssh_public_key_env: HORIZON_SSH_PUBLIC_KEY
