@@ -140,6 +140,10 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 	r.Add(runner.Step{
 		Name: "terraform-destroy",
 		Run: func(ctx context.Context) error {
+			sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
+			k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
+			k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
+			deps.prov.SetRuntimeSecrets(networkID, sshPub, k3sURL, k3sToken)
 			return deps.prov.Destroy(ctx)
 		},
 	})
