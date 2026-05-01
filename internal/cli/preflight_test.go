@@ -106,6 +106,22 @@ func TestPreFlightK3sURLEmpty(t *testing.T) {
 	}
 }
 
+func TestPreFlightK3sURLZeroTier192Accepted(t *testing.T) {
+	cfg := minimalConfig(t)
+	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
+	cfg.ZeroTier.NetworkID = "abc"
+	cfg.ZeroTier.MasterIP = "192.168.100.1"
+	cfg.K3s.URL = "https://192.168.100.1:6443"
+
+	t.Setenv("ZEROTIER_API_TOKEN", "any")
+	t.Setenv("HCLOUD_TOKEN", "dummy")
+
+	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
+	if err != nil && strings.Contains(err.Error(), "K3S_URL") {
+		t.Errorf("192.168.x.x matching ZeroTier master_ip must not be flagged as LAN: %v", err)
+	}
+}
+
 func TestPreFlightK3sURLZeroTierAccepted(t *testing.T) {
 	cfg := minimalConfig(t)
 	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"

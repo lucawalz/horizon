@@ -87,7 +87,7 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 		if k3sURL == "" {
 			return fmt.Errorf("pre-flight: k3s: K3S_URL is empty — set k3s.url or %s to the master's ZeroTier IP", cfg.K3s.URLEnv)
 		}
-		if isLANAddress(k3sURL) {
+		if isLANAddress(k3sURL, cfg.ZeroTier.MasterIP) {
 			return fmt.Errorf("pre-flight: k3s: K3S_URL %s is a LAN address — use the master's ZeroTier IP", k3sURL)
 		}
 	}
@@ -95,11 +95,14 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 	return nil
 }
 
-func isLANAddress(rawURL string) bool {
+func isLANAddress(rawURL, ztMasterIP string) bool {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
 		return false
 	}
 	host := u.Hostname()
+	if ztMasterIP != "" && host == ztMasterIP {
+		return false
+	}
 	return strings.HasPrefix(host, "192.168.")
 }
