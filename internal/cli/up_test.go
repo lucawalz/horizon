@@ -8,42 +8,36 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
-	"github.com/lucawalz/horizon/internal/headscale"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-type mockHeadscaler struct {
-	createKey   headscale.PreAuthKey
-	createErr   error
-	revokeErr   error
-	findNodeID  string
-	findErr     error
-	deleteErr   error
-	revokeCalls []string
-	deleteCalls []string
+type mockZeroTier struct {
+	waitID         string
+	waitErr        error
+	authorizeErr   error
+	deauthorizeErr error
+	authorizeCalls []string
+	deauthCalls    []string
 }
 
-func (m *mockHeadscaler) CreatePreAuthKey(_ context.Context, user string) (headscale.PreAuthKey, error) {
-	return m.createKey, m.createErr
+func (m *mockZeroTier) WaitForMemberByName(_ context.Context, _, _ string, _, _ time.Duration) (string, error) {
+	return m.waitID, m.waitErr
 }
 
-func (m *mockHeadscaler) RevokePreAuthKey(_ context.Context, user, key string) error {
-	m.revokeCalls = append(m.revokeCalls, key)
-	return m.revokeErr
+func (m *mockZeroTier) Authorize(_ context.Context, _, memberID string) error {
+	m.authorizeCalls = append(m.authorizeCalls, memberID)
+	return m.authorizeErr
 }
 
-func (m *mockHeadscaler) FindNodeByHostname(_ context.Context, hostname string) (string, error) {
-	return m.findNodeID, m.findErr
-}
-
-func (m *mockHeadscaler) DeleteNode(_ context.Context, nodeID string) error {
-	m.deleteCalls = append(m.deleteCalls, nodeID)
-	return m.deleteErr
+func (m *mockZeroTier) Deauthorize(_ context.Context, _, memberID string) error {
+	m.deauthCalls = append(m.deauthCalls, memberID)
+	return m.deauthorizeErr
 }
 
 type mockHetznerProvider struct {
@@ -56,7 +50,8 @@ type mockHetznerProvider struct {
 	generateErr  error
 }
 
-func (m *mockHetznerProvider) SetRuntimeSecrets(preAuthKey, sshPublicKey, k3sURL, k3sToken string) {}
+func (m *mockHetznerProvider) SetRuntimeSecrets(zerotierNetworkID, sshPublicKey, k3sURL, k3sToken string) {
+}
 
 func (m *mockHetznerProvider) GenerateTFVars() (map[string]string, error) {
 	if m.generateErr != nil {
@@ -81,9 +76,10 @@ func (m *mockHetznerProvider) ServerID() string { return m.serverID }
 func newTestApp() *cli.App {
 	return &cli.App{
 		Config: &config.Config{
-			Headscale: config.HeadscaleConfig{
-				APIURL:    "http://headscale.test",
-				APIKeyEnv: "TEST_HEADSCALE_KEY",
+			ZeroTier: config.ZeroTierConfig{
+				NetworkID:   "nw-test",
+				APITokenEnv: "ZEROTIER_API_TOKEN",
+				MasterIP:    "10.147.20.1",
 			},
 			K3s: config.K3sConfig{
 				URLEnv:    "HORIZON_K3S_URL",
@@ -140,8 +136,11 @@ func TestUpDryRun(t *testing.T) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
+	if !strings.Contains(out, "Authorize burst node in ZeroTier network") {
+		t.Errorf("dry-run output missing zerotier-auth label:\n%s", out)
+	}
 	if !strings.Contains(out, "[dry-run] No actions executed.") {
-		t.Errorf("missing trailing line in output:\n%s", out)
+		t.Errorf("missing trailing line:\n%s", out)
 	}
 }
 
@@ -151,9 +150,7 @@ func TestUpStepOrder(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1122"
-	hs := &mockHeadscaler{
-		createKey: headscale.PreAuthKey{ID: "1", Key: "key-abc", User: "burst-nodes"},
-	}
+	zt := &mockZeroTier{waitID: "member-99"}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1122",
 		hostname: hostname,
@@ -162,11 +159,14 @@ func TestUpStepOrder(t *testing.T) {
 	kc := fake.NewSimpleClientset(readyNode(hostname), flannelPodOnNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	if err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, kc); err != nil {
+	if err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, kc); err != nil {
 		t.Fatalf("RunUpForTest: %v", err)
+	}
+	if len(zt.authorizeCalls) != 1 || zt.authorizeCalls[0] != "member-99" {
+		t.Errorf("authorize calls = %v, want [member-99]", zt.authorizeCalls)
 	}
 }
 
@@ -176,9 +176,7 @@ func TestUpRollbackOnTerraformFailure(t *testing.T) {
 	defer restore()
 
 	tfErr := errors.New("terraform apply failed")
-	hs := &mockHeadscaler{
-		createKey: headscale.PreAuthKey{ID: "2", Key: "key-xyz", User: "burst-nodes"},
-	}
+	zt := &mockZeroTier{waitID: "should-not-be-used"}
 	prov := &mockHetznerProvider{
 		burstID:  "ccdd3344",
 		hostname: "horizon-burst-ccdd3344",
@@ -186,19 +184,52 @@ func TestUpRollbackOnTerraformFailure(t *testing.T) {
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, fake.NewSimpleClientset())
+	err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, fake.NewSimpleClientset())
 	if err == nil {
 		t.Fatal("expected error from terraform failure")
 	}
-	if len(hs.revokeCalls) != 1 || hs.revokeCalls[0] != "key-xyz" {
-		t.Errorf("revoke calls = %v, want [key-xyz]", hs.revokeCalls)
+	if len(zt.authorizeCalls) != 0 {
+		t.Errorf("authorize must not run when terraform fails: %v", zt.authorizeCalls)
+	}
+	if len(zt.deauthCalls) != 0 {
+		t.Errorf("deauthorize must not run when zerotier-auth never started: %v", zt.deauthCalls)
+	}
+	if prov.destroyCalls != 0 {
+		t.Errorf("destroy must not run when terraform-apply itself failed: %v", prov.destroyCalls)
 	}
 	ids, _ := cli.ListStates(stateDir)
 	if len(ids) != 0 {
 		t.Errorf("state file written on failure: %v", ids)
+	}
+}
+
+func TestUpRollbackOnZeroTierAuthFailure(t *testing.T) {
+	stateDir := t.TempDir()
+	restore := cli.SetStateDirForTest(stateDir)
+	defer restore()
+
+	zt := &mockZeroTier{waitID: "member-77", authorizeErr: errors.New("zt 401")}
+	prov := &mockHetznerProvider{
+		burstID:  "ddee5566",
+		hostname: "horizon-burst-ddee5566",
+	}
+
+	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
+	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_TOKEN", "tok")
+
+	err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, fake.NewSimpleClientset())
+	if err == nil {
+		t.Fatal("expected error from zerotier-auth failure")
+	}
+	if len(zt.deauthCalls) != 0 {
+		t.Errorf("deauth must not run when authorize itself failed: %v", zt.deauthCalls)
+	}
+	if prov.destroyCalls != 1 {
+		t.Errorf("destroy calls = %d, want 1 (terraform-apply rollback)", prov.destroyCalls)
 	}
 }
 
@@ -208,30 +239,28 @@ func TestUpRollbackOnWaitNodeReadyTimeout(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-eeff5566"
-	hs := &mockHeadscaler{
-		createKey: headscale.PreAuthKey{ID: "3", Key: "key-wait", User: "burst-nodes"},
-	}
+	zt := &mockZeroTier{waitID: "member-late"}
 	prov := &mockHetznerProvider{
 		burstID:  "eeff5566",
 		hostname: hostname,
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := cli.RunUpForTest(ctx, newTestApp(), hs, prov, fake.NewSimpleClientset())
+	err := cli.RunUpForTest(ctx, newTestApp(), zt, prov, fake.NewSimpleClientset())
 	if err == nil {
 		t.Fatal("expected error from wait-node-ready with cancelled context")
 	}
+	if len(zt.deauthCalls) != 1 || zt.deauthCalls[0] != "member-late" {
+		t.Errorf("deauth calls = %v, want [member-late]", zt.deauthCalls)
+	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("destroy calls = %d, want 1", prov.destroyCalls)
-	}
-	if len(hs.revokeCalls) != 1 || hs.revokeCalls[0] != "key-wait" {
-		t.Errorf("revoke calls = %v, want [key-wait]", hs.revokeCalls)
 	}
 	ids, _ := cli.ListStates(stateDir)
 	if len(ids) != 0 {
@@ -245,10 +274,7 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1234"
-	hs := &mockHeadscaler{
-		createKey:  headscale.PreAuthKey{ID: "4", Key: "key-ok", User: "burst-nodes"},
-		findNodeID: "42",
-	}
+	zt := &mockZeroTier{waitID: "member-ok"}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1234",
 		hostname: hostname,
@@ -257,11 +283,11 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 	kc := fake.NewSimpleClientset(readyNode(hostname), flannelPodOnNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://master:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	out := captureStdout(func() {
-		if err := cli.RunUpForTest(context.Background(), newTestApp(), hs, prov, kc); err != nil {
+		if err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, kc); err != nil {
 			t.Errorf("RunUpForTest: %v", err)
 		}
 	})
@@ -275,10 +301,10 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 		t.Fatalf("ReadState: %v", err)
 	}
 	if st.BurstID != "aabb1234" {
-		t.Errorf("state.BurstID = %q, want aabb1234", st.BurstID)
+		t.Errorf("state.BurstID = %q", st.BurstID)
 	}
-	if st.HeadscalePreAuthKey != "key-ok" {
-		t.Errorf("state.HeadscalePreAuthKey = %q, want key-ok", st.HeadscalePreAuthKey)
+	if st.ZeroTierMemberID != "member-ok" {
+		t.Errorf("state.ZeroTierMemberID = %q, want member-ok", st.ZeroTierMemberID)
 	}
 	if st.HetznerServerID != "99" {
 		t.Errorf("state.HetznerServerID = %q, want 99", st.HetznerServerID)

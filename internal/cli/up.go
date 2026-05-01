@@ -7,22 +7,21 @@ import (
 	"time"
 
 	"github.com/lucawalz/horizon/internal/config"
-	"github.com/lucawalz/horizon/internal/headscale"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
+	"github.com/lucawalz/horizon/internal/zerotier"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 )
 
-type headscaler interface {
-	CreatePreAuthKey(ctx context.Context, user string) (headscale.PreAuthKey, error)
-	RevokePreAuthKey(ctx context.Context, user, key string) error
-	FindNodeByHostname(ctx context.Context, hostname string) (string, error)
-	DeleteNode(ctx context.Context, nodeID string) error
+type zerotierAuthorizer interface {
+	Authorize(ctx context.Context, networkID, memberID string) error
+	Deauthorize(ctx context.Context, networkID, memberID string) error
+	WaitForMemberByName(ctx context.Context, networkID, name string, timeout, poll time.Duration) (string, error)
 }
 
 type hetznerProvider interface {
-	SetRuntimeSecrets(preAuthKey, sshPublicKey, k3sURL, k3sToken string)
+	SetRuntimeSecrets(zerotierNetworkID, sshPublicKey, k3sURL, k3sToken string)
 	GenerateTFVars() (map[string]string, error)
 	Apply(ctx context.Context, vars map[string]string) error
 	Destroy(ctx context.Context) error
@@ -32,7 +31,7 @@ type hetznerProvider interface {
 }
 
 type upDeps struct {
-	hs            headscaler
+	zt            zerotierAuthorizer
 	prov          hetznerProvider
 	kc            kubernetes.Interface
 	skipPreflight bool
@@ -40,8 +39,8 @@ type upDeps struct {
 
 var upSteps = []string{
 	"Pre-flight checks",
-	"Create Headscale pre-auth key (user: burst-nodes)",
 	"Run terraform apply (provider: hetzner)",
+	"Authorize burst node in ZeroTier network",
 	"Wait for node Ready and flannel pod Running",
 	"Persist burst state file (~/.local/state/horizon/<burst_id>.json)",
 }
@@ -67,13 +66,13 @@ func newUpCmd(app *App) *cobra.Command {
 }
 
 func newUpDeps(app *App) (*upDeps, error) {
-	apiKey := config.Resolve(app.Config.Headscale.APIKeyEnv, app.Config.Headscale.APIKey)
-	if apiKey == "" {
-		return nil, fmt.Errorf("up: headscale api key env %q is empty", app.Config.Headscale.APIKeyEnv)
+	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
+	if token == "" {
+		return nil, fmt.Errorf("up: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
 	}
-	hs := headscale.NewClient(app.Config.Headscale.APIURL, apiKey)
+	zt := zerotier.NewClient("", token)
 	prov := hetzner.New(app.Config, app.Config.InfraPath)
-	return &upDeps{hs: hs, prov: prov, kc: app.KubeClient}, nil
+	return &upDeps{zt: zt, prov: prov, kc: app.KubeClient}, nil
 }
 
 func runUpDryRun(app *App) error {
@@ -89,7 +88,9 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 		ctx = context.Background()
 	}
 
-	var preAuthKey headscale.PreAuthKey
+	var memberID string
+	var authorized bool
+	networkID := app.Config.ZeroTier.NetworkID
 
 	r := &runner.Runner{}
 
@@ -104,24 +105,6 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 	})
 
 	r.Add(runner.Step{
-		Name: "headscale-preauth-key",
-		Run: func(ctx context.Context) error {
-			key, err := deps.hs.CreatePreAuthKey(ctx, "burst-nodes")
-			if err != nil {
-				return err
-			}
-			preAuthKey = key
-			return nil
-		},
-		Rollback: func(ctx context.Context) error {
-			if preAuthKey.Key == "" {
-				return nil
-			}
-			return deps.hs.RevokePreAuthKey(ctx, "burst-nodes", preAuthKey.Key)
-		},
-	})
-
-	r.Add(runner.Step{
 		Name: "terraform-apply",
 		Run: func(ctx context.Context) error {
 			sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
@@ -131,7 +114,10 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 				return fmt.Errorf("terraform-apply: missing %s, %s, or %s",
 					app.Config.K3s.SSHKeyEnv, app.Config.K3s.URLEnv, app.Config.K3s.TokenEnv)
 			}
-			deps.prov.SetRuntimeSecrets(preAuthKey.Key, sshPub, k3sURL, k3sToken)
+			if networkID == "" {
+				return fmt.Errorf("terraform-apply: zerotier.network_id is empty in config")
+			}
+			deps.prov.SetRuntimeSecrets(networkID, sshPub, k3sURL, k3sToken)
 			vars, err := deps.prov.GenerateTFVars()
 			if err != nil {
 				return err
@@ -140,6 +126,30 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 		},
 		Rollback: func(ctx context.Context) error {
 			return deps.prov.Destroy(ctx)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "zerotier-auth",
+		Run: func(ctx context.Context) error {
+			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+			defer cancel()
+			id, err := deps.zt.WaitForMemberByName(waitCtx, networkID, deps.prov.Hostname(), 3*time.Minute, 5*time.Second)
+			if err != nil {
+				return fmt.Errorf("zerotier-auth: wait member: %w", err)
+			}
+			memberID = id
+			if err := deps.zt.Authorize(ctx, networkID, memberID); err != nil {
+				return fmt.Errorf("zerotier-auth: authorize: %w", err)
+			}
+			authorized = true
+			return nil
+		},
+		Rollback: func(ctx context.Context) error {
+			if !authorized || memberID == "" {
+				return nil
+			}
+			return deps.zt.Deauthorize(ctx, networkID, memberID)
 		},
 	})
 
@@ -157,17 +167,11 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 			if err != nil {
 				return err
 			}
-			nodeID, err := deps.hs.FindNodeByHostname(ctx, deps.prov.Hostname())
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not resolve headscale node id for %s: %v\n", deps.prov.Hostname(), err)
-				nodeID = ""
-			}
 			st := BurstState{
-				BurstID:             deps.prov.BurstID(),
-				Hostname:            deps.prov.Hostname(),
-				HeadscaleNodeID:     nodeID,
-				HeadscalePreAuthKey: preAuthKey.Key,
-				HetznerServerID:     deps.prov.ServerID(),
+				BurstID:          deps.prov.BurstID(),
+				Hostname:         deps.prov.Hostname(),
+				ZeroTierMemberID: memberID,
+				HetznerServerID:  deps.prov.ServerID(),
 			}
 			if err := WriteState(stateDir, st); err != nil {
 				return err
@@ -199,8 +203,8 @@ func RunUpDryRunForTest(app *App) error {
 	return runUpDryRun(app)
 }
 
-func RunUpForTest(ctx context.Context, app *App, hs headscaler, prov hetznerProvider, kc kubernetes.Interface) error {
-	return runUp(ctx, app, &upDeps{hs: hs, prov: prov, kc: kc, skipPreflight: true})
+func RunUpForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface) error {
+	return runUp(ctx, app, &upDeps{zt: zt, prov: prov, kc: kc, skipPreflight: true})
 }
 
 func SetStateDirForTest(dir string) (restore func()) {

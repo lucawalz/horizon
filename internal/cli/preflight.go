@@ -64,7 +64,11 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 	}
 
 	if !dryRun {
-		if config.Resolve(cfg.Hetzner.APITokenEnv, cfg.Hetzner.APIToken) == "" {
+		hcloudEnv := cfg.Hetzner.APITokenEnv
+		if hcloudEnv == "" {
+			hcloudEnv = "HCLOUD_TOKEN"
+		}
+		if config.Resolve(hcloudEnv, cfg.Hetzner.APIToken) == "" {
 			return fmt.Errorf("pre-flight: hetzner: HCLOUD_TOKEN environment variable is not set")
 		}
 
