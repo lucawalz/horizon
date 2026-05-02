@@ -174,6 +174,57 @@ infra_path: ` + dir + `
 	}
 }
 
+func TestThresholdsMaxBurstNodes(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+infra_path: ` + dir + `
+thresholds:
+  burst: 0.80
+  scale_down: 0.40
+  window: 5
+  cooldown_minutes: 10
+  max_burst_nodes: 3
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(orig) }()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Thresholds.MaxBurstNodes != 3 {
+		t.Errorf("MaxBurstNodes: got %d, want 3", cfg.Thresholds.MaxBurstNodes)
+	}
+}
+
+func TestPushgatewayURL(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+infra_path: ` + dir + `
+pushgateway_url: http://kube-prometheus-stack-pushgateway.monitoring.svc:9091
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.Getwd()
+	_ = os.Chdir(dir)
+	defer func() { _ = os.Chdir(orig) }()
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.PushgatewayURL != "http://kube-prometheus-stack-pushgateway.monitoring.svc:9091" {
+		t.Errorf("PushgatewayURL: got %q, want %q", cfg.PushgatewayURL, "http://kube-prometheus-stack-pushgateway.monitoring.svc:9091")
+	}
+}
+
 func TestK3sConfig(t *testing.T) {
 	dir := t.TempDir()
 	content := `
