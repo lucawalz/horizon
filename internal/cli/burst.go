@@ -22,7 +22,7 @@ var burstSteps = []string{
 	"Create Velero backup of target namespace",
 	"Run terraform apply (provider: hetzner)",
 	"Authorize burst node in ZeroTier network",
-	"Wait for node Ready and flannel pod Running",
+	"Wait for node Ready",
 	"Persist burst state file",
 	"Migrate workload to cloud node (label, affinity, evict)",
 	"Wait for workload pods Running on cloud node",
