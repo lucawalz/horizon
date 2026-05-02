@@ -170,14 +170,16 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 			authorized = true
 			return nil
 		},
-		Rollback: func(ctx context.Context) error {
+		Rollback: func(_ context.Context) error {
+			rbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
 			if memberID == "" {
 				return nil
 			}
 			if authorized {
-				_ = deps.zt.Deauthorize(ctx, networkID, memberID)
+				_ = deps.zt.Deauthorize(rbCtx, networkID, memberID)
 			}
-			return deps.zt.DeleteMember(ctx, networkID, memberID)
+			return deps.zt.DeleteMember(rbCtx, networkID, memberID)
 		},
 	})
 
