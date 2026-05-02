@@ -156,7 +156,11 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 		},
 	})
 
-	return r.Run(ctx)
+	if err := r.Run(ctx); err != nil {
+		return err
+	}
+	_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseIdle)
+	return nil
 }
 
 func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname string) error {
