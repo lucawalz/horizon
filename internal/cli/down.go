@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
 	"github.com/lucawalz/horizon/internal/zerotier"
 	"github.com/spf13/cobra"
-	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -185,7 +185,7 @@ func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname strin
 		if pod.Spec.NodeName != hostname {
 			continue
 		}
-		if isDaemonSetPod(&pod) {
+		if k8s.IsDaemonSetPod(&pod) {
 			continue
 		}
 		ev := &policyv1.Eviction{
@@ -199,15 +199,6 @@ func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname strin
 		}
 	}
 	return nil
-}
-
-func isDaemonSetPod(pod *corev1.Pod) bool {
-	for _, o := range pod.OwnerReferences {
-		if o.Kind == "DaemonSet" {
-			return true
-		}
-	}
-	return false
 }
 
 func RunDownDryRunForTest(app *App) error {
