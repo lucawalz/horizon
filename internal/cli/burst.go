@@ -1,24 +1,51 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
+	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/provider/hetzner"
+	"github.com/lucawalz/horizon/internal/runner"
+	"github.com/lucawalz/horizon/internal/velero"
+	"github.com/lucawalz/horizon/internal/zerotier"
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/kubernetes"
 )
 
-var burstSequence = []string{
-	"Pre-flight checks (Velero API + Prometheus + terraform binary)",
+var burstSteps = []string{
 	"Create Velero backup of target namespace",
-	"Provision cloud node via Terraform (provider: %s)",
-	"Join cloud node to K3s cluster via Tailscale",
-	"Migrate workload to cloud node",
-	"Monitor until workload is Running on cloud node",
+	"Run terraform apply (provider: hetzner)",
+	"Authorize burst node in ZeroTier network",
+	"Wait for node Ready and flannel pod Running",
+	"Persist burst state file",
+	"Migrate workload to cloud node (label, affinity, evict)",
+	"Wait for workload pods Running on cloud node",
+}
+
+type veleroClient interface {
+	TriggerBackup(ctx context.Context, workloadNamespace, name string, poll, timeout time.Duration) error
+}
+
+type burstDeps struct {
+	zt               zerotierAuthorizer
+	prov             hetznerProvider
+	kc               kubernetes.Interface
+	vc               veleroClient
+	skipPreflight    bool
+	preExistingNodes map[string]bool
 }
 
 func newBurstCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "burst",
-		Short: "Burst workload to cloud provider (Phase 1: dry-run only)",
+		Short: "Burst workload to cloud provider",
+		Args:  cobra.ExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if !dryRun {
@@ -26,32 +53,217 @@ func newBurstCmd(app *App) *cobra.Command {
 					dryRun = true
 				}
 			}
+			workload, _ := cmd.Flags().GetString("workload")
 			if dryRun {
 				return runBurstDryRun(app)
 			}
-			return fmt.Errorf("burst: full burst not implemented; use --dry-run")
+			if workload == "" {
+				return fmt.Errorf("burst: --workload is required")
+			}
+			if err := k8s.ValidateNamespace(workload); err != nil {
+				return fmt.Errorf("burst: %w", err)
+			}
+			deps, err := newBurstDeps(app)
+			if err != nil {
+				return fmt.Errorf("burst: init: %w", err)
+			}
+			return runBurst(cmd.Context(), app, deps, workload)
 		},
 	}
 	cmd.Flags().Bool("dry-run", false, "Print planned burst sequence without executing")
+	cmd.Flags().String("workload", "", "target namespace to burst (required unless --dry-run)")
 	return cmd
 }
 
-func runBurstDryRun(app *App) error {
-	provider := "hetzner"
-	if app.Config != nil && app.Config.Provider != "" {
-		provider = app.Config.Provider
+func newBurstDeps(app *App) (*burstDeps, error) {
+	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
+	if token == "" {
+		return nil, fmt.Errorf("burst: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
 	}
-	for i, step := range burstSequence {
-		formatted := step
-		if i == 2 {
-			formatted = fmt.Sprintf(step, provider)
-		}
-		fmt.Printf("[dry-run] Step %d: %s\n", i+1, formatted)
+	zt := zerotier.NewClient("", token)
+	prov := hetzner.New(app.Config, app.Config.InfraPath)
+	vc, err := velero.NewClient(app.Config.Kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("burst: velero client: %w", err)
+	}
+	return &burstDeps{zt: zt, prov: prov, kc: app.KubeClient, vc: vc}, nil
+}
+
+func runBurstDryRun(app *App) error {
+	for i, s := range burstSteps {
+		fmt.Printf("[dry-run] Step %d: %s\n", i+1, s)
 	}
 	fmt.Println("[dry-run] No actions executed.")
 	return nil
 }
 
-func NewBurstCmdForTest(app *App) *cobra.Command {
-	return newBurstCmd(app)
+func runBurst(parent context.Context, app *App, deps *burstDeps, workload string) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if deps.preExistingNodes == nil {
+		names, err := hetzner.ListNodeNames(ctx, deps.kc)
+		if err != nil {
+			return fmt.Errorf("burst: snapshot existing nodes: %w", err)
+		}
+		deps.preExistingNodes = names
+	}
+
+	var memberID string
+	var authorized bool
+	var burstNodeName string
+	var savedMigrate *k8s.SavedState
+	networkID := app.Config.ZeroTier.NetworkID
+
+	r := &runner.Runner{}
+
+	r.Add(runner.Step{
+		Name: "velero-backup",
+		Run: func(ctx context.Context) error {
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseBackingUp)
+			name := fmt.Sprintf("horizon-burst-%s-%d", workload, time.Now().Unix())
+			return deps.vc.TriggerBackup(ctx, workload, name, 5*time.Second, 10*time.Minute)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "terraform-apply",
+		Run: func(ctx context.Context) error {
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseProvisioning)
+			sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
+			k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
+			k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
+			if sshPub == "" || k3sURL == "" || k3sToken == "" {
+				return fmt.Errorf("terraform-apply: missing %s, %s, or %s",
+					app.Config.K3s.SSHKeyEnv, app.Config.K3s.URLEnv, app.Config.K3s.TokenEnv)
+			}
+			if networkID == "" {
+				return fmt.Errorf("terraform-apply: zerotier.network_id is empty in config")
+			}
+			deps.prov.SetRuntimeSecrets(networkID, sshPub, k3sURL, k3sToken)
+			vars, err := deps.prov.GenerateTFVars()
+			if err != nil {
+				return err
+			}
+			return deps.prov.Apply(ctx, vars)
+		},
+		Rollback: func(ctx context.Context) error {
+			return deps.prov.Destroy(ctx)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "zerotier-auth",
+		Run: func(ctx context.Context) error {
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseJoining)
+			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+			defer cancel()
+			id, err := deps.zt.WaitForMemberByIP(waitCtx, networkID, deps.prov.ServerIP(), 3*time.Minute, 5*time.Second)
+			if err != nil {
+				return fmt.Errorf("zerotier-auth: wait member: %w", err)
+			}
+			memberID = id
+			if err := deps.zt.Authorize(ctx, networkID, memberID); err != nil {
+				return fmt.Errorf("zerotier-auth: authorize: %w", err)
+			}
+			authorized = true
+			return nil
+		},
+		Rollback: func(ctx context.Context) error {
+			if memberID == "" {
+				return nil
+			}
+			if authorized {
+				_ = deps.zt.Deauthorize(ctx, networkID, memberID)
+			}
+			return deps.zt.DeleteMember(ctx, networkID, memberID)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "wait-node-ready",
+		Run: func(ctx context.Context) error {
+			name, err := hetzner.WaitNewNodeReady(ctx, deps.kc, deps.preExistingNodes, 5*time.Minute, 5*time.Second)
+			burstNodeName = name
+			return err
+		},
+		Rollback: func(ctx context.Context) error {
+			if burstNodeName == "" {
+				return nil
+			}
+			return hetzner.DeleteNode(ctx, deps.kc, burstNodeName)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "write-state",
+		Run: func(ctx context.Context) error {
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseMigrating)
+			stateDir, err := stateDirOrTestOverride()
+			if err != nil {
+				return err
+			}
+			st := BurstState{
+				BurstID:          deps.prov.BurstID(),
+				Hostname:         burstNodeName,
+				ZeroTierMemberID: memberID,
+				HetznerServerID:  deps.prov.ServerID(),
+			}
+			if err := WriteState(stateDir, st); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "burst_id: %s\n", st.BurstID)
+			return nil
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "migrate-workload",
+		Run: func(ctx context.Context) error {
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseMigrating)
+			state, err := k8s.Migrate(ctx, deps.kc, workload, burstNodeName)
+			savedMigrate = state
+			return err
+		},
+		Rollback: func(_ context.Context) error {
+			rbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = k8s.WriteBurstPhase(rbCtx, deps.kc, k8s.BurstPhaseTearingDown)
+			return k8s.RollbackMigrate(rbCtx, deps.kc, savedMigrate)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "wait-pods-running",
+		Run: func(ctx context.Context) error {
+			if err := k8s.WaitPodsRunningOnNode(ctx, deps.kc, workload, burstNodeName, 5*time.Second, 5*time.Minute); err != nil {
+				return err
+			}
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseRunning)
+			return nil
+		},
+	})
+
+	if err := r.Run(ctx); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = k8s.WriteBurstPhase(cleanupCtx, deps.kc, k8s.BurstPhaseIdle)
+		return err
+	}
+	return nil
+}
+
+func NewBurstCmdForTest(app *App) *cobra.Command { return newBurstCmd(app) }
+
+func RunBurstDryRunForTest(app *App) error { return runBurstDryRun(app) }
+
+func RunBurstForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface, vc veleroClient, workload string) error {
+	return runBurst(ctx, app, &burstDeps{
+		zt: zt, prov: prov, kc: kc, vc: vc,
+		skipPreflight:    true,
+		preExistingNodes: map[string]bool{},
+	}, workload)
 }
