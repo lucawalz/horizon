@@ -50,10 +50,12 @@ func TestPressureWindow_MovingAverage(t *testing.T) {
 		t.Errorf("empty window Average() = %v, want 0.0", avg)
 	}
 
-	w.Add(0.1)
-	w.Add(0.2)
-	if avg := w.Average(); avg != (0.1+0.2)/2 {
-		t.Errorf("2-sample average = %v, want %v", avg, (0.1+0.2)/2)
+	v1, v2 := 0.1, 0.2
+	w.Add(v1)
+	w.Add(v2)
+	want2 := (v1 + v2) / 2.0
+	if avg := w.Average(); avg != want2 {
+		t.Errorf("2-sample average = %v, want %v", avg, want2)
 	}
 
 	w.Add(0.3)
