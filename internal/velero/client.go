@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/flowcontrol"
 	crClient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -20,7 +21,8 @@ const (
 )
 
 type Client struct {
-	cl crClient.Client
+	cl      crClient.Client
+	restCfg *rest.Config
 }
 
 func NewClient(kubeconfigPath string) (*Client, error) {
@@ -35,6 +37,7 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 		return nil, fmt.Errorf("velero: kubeconfig %q: %w", kubeconfigPath, err)
 	}
 	restCfg.WarningHandler = rest.NoWarnings{}
+	restCfg.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
 
 	scheme := runtime.NewScheme()
 	if err := velerov1.AddToScheme(scheme); err != nil {
@@ -44,7 +47,7 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("velero: client: %w", err)
 	}
-	return &Client{cl: cl}, nil
+	return &Client{cl: cl, restCfg: restCfg}, nil
 }
 
 func NewClientWithCRClient(cl crClient.Client) *Client {

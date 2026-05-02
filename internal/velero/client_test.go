@@ -2,6 +2,8 @@ package velero_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +105,46 @@ func TestTriggerBackup_Timeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timeout") {
 		t.Errorf("error %q does not contain 'timeout'", err.Error())
+	}
+}
+
+func TestNewClient_RateLimiterDisabled(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfigPath := filepath.Join(dir, "kubeconfig")
+	const kc = `apiVersion: v1
+kind: Config
+clusters:
+- name: test
+  cluster:
+    server: https://127.0.0.1:1
+contexts:
+- name: test
+  context:
+    cluster: test
+    user: test
+current-context: test
+users:
+- name: test
+  user:
+    token: ""
+`
+	if err := os.WriteFile(kubeconfigPath, []byte(kc), 0o600); err != nil {
+		t.Fatalf("write kubeconfig: %v", err)
+	}
+
+	c, err := velero.NewClient(kubeconfigPath)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	limiter := velero.ClientRateLimiterForTest(c)
+	if limiter == nil {
+		t.Fatal("rate limiter is nil; expected fake-always")
+	}
+	for i := 0; i < 100; i++ {
+		if !limiter.TryAccept() {
+			t.Fatalf("TryAccept returned false on iteration %d; default token-bucket limiter is in use", i)
+		}
 	}
 }
 
