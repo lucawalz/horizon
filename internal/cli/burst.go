@@ -159,9 +159,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 		Name: "zerotier-auth",
 		Run: func(ctx context.Context) error {
 			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseJoining)
-			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-			defer cancel()
-			id, err := deps.zt.WaitForMemberByIP(waitCtx, networkID, deps.prov.ServerIP(), 3*time.Minute, 5*time.Second)
+			id, err := deps.zt.WaitForMemberByIP(ctx, networkID, deps.prov.ServerIP(), 3*time.Minute, 5*time.Second)
 			if err != nil {
 				return fmt.Errorf("zerotier-auth: wait member: %w", err)
 			}
