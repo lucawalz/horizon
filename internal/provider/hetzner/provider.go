@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -34,6 +35,15 @@ func newBurstID() string {
 	buf := make([]byte, 4)
 	_, _ = rand.Read(buf)
 	return hex.EncodeToString(buf)
+}
+
+var internalBurstIDPattern = regexp.MustCompile(`^[a-f0-9]{4,16}$`)
+
+func NewWithBurstID(cfg *config.Config, workDir, burstID string) (*Provider, error) {
+	if !internalBurstIDPattern.MatchString(burstID) {
+		return nil, fmt.Errorf("hetzner: NewWithBurstID: invalid burst_id %q", burstID)
+	}
+	return &Provider{cfg: cfg, workDir: workDir, burstID: burstID}, nil
 }
 
 func (p *Provider) SetRuntimeSecrets(zerotierNetworkID, sshPublicKey, k3sURL, k3sToken string) {
@@ -85,6 +95,9 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	if err := tf.Init(tctx, tfexec.Upgrade(false)); err != nil {
 		return fmt.Errorf("hetzner: apply: init: %w", err)
 	}
+	if err := p.selectOrCreateWorkspace(tctx, tf); err != nil {
+		return err
+	}
 	applyOpts := []tfexec.ApplyOption{tfexec.LockTimeout("30s")}
 	for k, v := range vars {
 		applyOpts = append(applyOpts, tfexec.Var(k+"="+v))
@@ -123,6 +136,26 @@ func (p *Provider) Destroy(ctx context.Context) error {
 	}
 	tctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
+	if err := tf.Init(tctx, tfexec.Upgrade(false)); err != nil {
+		return fmt.Errorf("hetzner: destroy: init: %w", err)
+	}
+	wsName := "burst-" + p.burstID
+	workspaces, _, err := tf.WorkspaceList(tctx)
+	if err != nil {
+		return fmt.Errorf("hetzner: destroy: workspace list: %w", err)
+	}
+	wsExists := false
+	for _, w := range workspaces {
+		if w == wsName {
+			wsExists = true
+			break
+		}
+	}
+	if wsExists {
+		if err := tf.WorkspaceSelect(tctx, wsName); err != nil {
+			return fmt.Errorf("hetzner: destroy: workspace select %s: %w", wsName, err)
+		}
+	}
 	vars, err := p.GenerateTFVars()
 	if err != nil {
 		return fmt.Errorf("hetzner: destroy: vars: %w", err)
@@ -133,6 +166,14 @@ func (p *Provider) Destroy(ctx context.Context) error {
 	}
 	if err := tf.Destroy(tctx, destroyOpts...); err != nil {
 		return fmt.Errorf("hetzner: destroy: %w", err)
+	}
+	if wsExists {
+		if err := tf.WorkspaceSelect(tctx, "default"); err != nil {
+			return fmt.Errorf("hetzner: destroy: workspace select default: %w", err)
+		}
+		if err := tf.WorkspaceDelete(tctx, wsName); err != nil {
+			return fmt.Errorf("hetzner: destroy: workspace delete %s: %w", wsName, err)
+		}
 	}
 	return nil
 }
@@ -191,4 +232,24 @@ func (p *Provider) setBaseEnv(tf *tfexec.Terraform, extras map[string]string) er
 		env[k] = v
 	}
 	return tf.SetEnv(env)
+}
+
+func (p *Provider) selectOrCreateWorkspace(ctx context.Context, tf *tfexec.Terraform) error {
+	wsName := "burst-" + p.burstID
+	workspaces, _, err := tf.WorkspaceList(ctx)
+	if err != nil {
+		return fmt.Errorf("hetzner: apply: workspace list: %w", err)
+	}
+	for _, w := range workspaces {
+		if w == wsName {
+			if err := tf.WorkspaceSelect(ctx, wsName); err != nil {
+				return fmt.Errorf("hetzner: apply: workspace select %s: %w", wsName, err)
+			}
+			return nil
+		}
+	}
+	if err := tf.WorkspaceNew(ctx, wsName); err != nil {
+		return fmt.Errorf("hetzner: apply: workspace new %s: %w", wsName, err)
+	}
+	return nil
 }
