@@ -244,6 +244,9 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 func IsDaemonSetPod(pod *corev1.Pod) bool { return isDaemonSetPod(pod) }
 
 func WaitPodsRunningOnNode(ctx context.Context, kc kubernetes.Interface, namespace, nodeName string, poll, timeout time.Duration) error {
+	if namespace == "" {
+		return fmt.Errorf("wait-pods: namespace must not be empty")
+	}
 	pollCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(poll)
