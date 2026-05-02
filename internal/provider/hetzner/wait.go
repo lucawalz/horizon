@@ -11,56 +11,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-func WaitNodeReady(ctx context.Context, kc kubernetes.Interface, hostname string, timeout, poll time.Duration) error {
-	if poll <= 0 {
-		poll = 5 * time.Second
-	}
-	if timeout <= 0 {
-		timeout = 5 * time.Minute
-	}
-	pollCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(poll)
-	defer ticker.Stop()
-
-	var lastErr error
-	for {
-		select {
-		case <-pollCtx.Done():
-			if ctx.Err() != nil {
-				return fmt.Errorf("hetzner: wait %s: %w", hostname, ctx.Err())
-			}
-			if lastErr != nil {
-				return fmt.Errorf("hetzner: wait %s: timeout: %w", hostname, lastErr)
-			}
-			return fmt.Errorf("hetzner: wait %s: timeout after %s", hostname, timeout)
-		default:
-		}
-
-		ready, err := nodeIsReady(pollCtx, kc, hostname)
-		if err != nil {
-			lastErr = err
-		} else if !ready {
-			lastErr = fmt.Errorf("node %s not Ready", hostname)
-		} else {
-			return nil
-		}
-
-		select {
-		case <-pollCtx.Done():
-			if ctx.Err() != nil {
-				return fmt.Errorf("hetzner: wait %s: %w", hostname, ctx.Err())
-			}
-			if lastErr != nil {
-				return fmt.Errorf("hetzner: wait %s: timeout: %w", hostname, lastErr)
-			}
-			return fmt.Errorf("hetzner: wait %s: timeout after %s", hostname, timeout)
-		case <-ticker.C:
-		}
-	}
-}
-
 func ListNodeNames(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
