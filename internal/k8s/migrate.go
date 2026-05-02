@@ -66,7 +66,10 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, nodeName s
 			"labels": map[string]string{NodeAffinityLabelKey: namespace},
 		},
 	}
-	data, _ := json.Marshal(labelPatch)
+	data, err := json.Marshal(labelPatch)
+	if err != nil {
+		return nil, fmt.Errorf("migrate: marshal label patch: %w", err)
+	}
 	if _, err := kc.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, data, metav1.PatchOptions{}); err != nil {
 		return nil, fmt.Errorf("migrate: label node %q: %w", nodeName, err)
 	}
@@ -99,7 +102,10 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, nodeName s
 		d := deps.Items[i]
 		var orig []byte
 		if d.Spec.Template.Spec.Affinity != nil {
-			orig, _ = json.Marshal(d.Spec.Template.Spec.Affinity)
+			orig, err = json.Marshal(d.Spec.Template.Spec.Affinity)
+			if err != nil {
+				return state, fmt.Errorf("migrate: marshal affinity for %q: %w", d.Name, err)
+			}
 		}
 		state.deployments = append(state.deployments, savedSpec{name: d.Name, originalAffinity: orig})
 		if _, err := kc.AppsV1().Deployments(namespace).Patch(ctx, d.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
@@ -115,7 +121,10 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, nodeName s
 		s := stss.Items[i]
 		var orig []byte
 		if s.Spec.Template.Spec.Affinity != nil {
-			orig, _ = json.Marshal(s.Spec.Template.Spec.Affinity)
+			orig, err = json.Marshal(s.Spec.Template.Spec.Affinity)
+			if err != nil {
+				return state, fmt.Errorf("migrate: marshal affinity for %q: %w", s.Name, err)
+			}
 		}
 		state.statefulSets = append(state.statefulSets, savedSpec{name: s.Name, originalAffinity: orig})
 		if _, err := kc.AppsV1().StatefulSets(namespace).Patch(ctx, s.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
@@ -202,8 +211,12 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 			"labels": map[string]interface{}{NodeAffinityLabelKey: nil},
 		},
 	}
-	removeData, _ := json.Marshal(removePatch)
-	if _, err := kc.CoreV1().Nodes().Patch(ctx, state.nodeName, types.MergePatchType, removeData, metav1.PatchOptions{}); err != nil {
+	removeData, err := json.Marshal(removePatch)
+	if err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("rollback-migrate: marshal remove label patch: %w", err)
+		}
+	} else if _, err := kc.CoreV1().Nodes().Patch(ctx, state.nodeName, types.MergePatchType, removeData, metav1.PatchOptions{}); err != nil {
 		if firstErr == nil {
 			firstErr = fmt.Errorf("rollback-migrate: remove node label: %w", err)
 		}
