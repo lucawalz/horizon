@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/cli"
+	"github.com/lucawalz/horizon/internal/k8s"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -215,5 +216,36 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 
 	if _, statErr := os.Stat(stateDir + "/aabb9999.json"); !os.IsNotExist(statErr) {
 		t.Error("state file should be deleted after successful down")
+	}
+}
+
+func TestDownResetsBurstPhaseToIdle(t *testing.T) {
+	stateDir := t.TempDir()
+	restore := cli.SetStateDirForTest(stateDir)
+	defer restore()
+
+	st := cli.BurstState{
+		BurstID:          "aabb5555",
+		Hostname:         "horizon-burst-aabb5555",
+		ZeroTierMemberID: "m9",
+		HetznerServerID:  "60",
+	}
+	seededState(t, stateDir, st)
+
+	kc := fake.NewSimpleClientset()
+	if err := k8s.WriteBurstPhase(context.Background(), kc, k8s.BurstPhaseTearingDown); err != nil {
+		t.Fatalf("seed BurstPhase: %v", err)
+	}
+
+	zt := &mockZeroTier{}
+	prov := &mockHetznerProvider{burstID: "aabb5555", hostname: "horizon-burst-aabb5555"}
+
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+		t.Fatalf("RunDownForTest: %v", err)
+	}
+
+	phase := k8s.ReadBurstPhase(context.Background(), kc)
+	if phase != k8s.BurstPhaseIdle {
+		t.Errorf("BurstPhase after down = %q, want Idle", phase)
 	}
 }
