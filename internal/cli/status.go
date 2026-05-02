@@ -70,7 +70,7 @@ func runStatus(app *App) error {
 		memScore, threshold, pressureDot(memScore, threshold),
 		pendingCount,
 	)
-	fmt.Printf("BurstPhase: %s\n", k8s.ReadBurstPhase(ctx, app.KubeClient))
+	printBurstPhase(ctx, app)
 	fmt.Println()
 
 	return printNodeTable(ctx, app)
@@ -154,4 +154,12 @@ func pressureDot(score, threshold float64) string {
 		return color.YellowString("●")
 	}
 	return color.GreenString("●")
+}
+
+func printBurstPhase(ctx context.Context, app *App) {
+	fmt.Printf("BurstPhase: %s\n", k8s.ReadBurstPhase(ctx, app.KubeClient))
+}
+
+func PrintBurstPhaseForTest(ctx context.Context, app *App) {
+	printBurstPhase(ctx, app)
 }
