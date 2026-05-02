@@ -111,7 +111,6 @@ func TestBurstStepOrder(t *testing.T) {
 	prov := &mockHetznerProvider{burstID: "aabb1234", hostname: hostname, serverID: "99"}
 	kc := fake.NewSimpleClientset(
 		readyNode(hostname),
-		flannelPodOnNode(hostname),
 		workloadPod("app1", "sentio-systems", hostname),
 	)
 	vc := &mockVelero{}
@@ -203,7 +202,6 @@ func TestBurstWritesPhase(t *testing.T) {
 	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: hostname, serverID: "1"}
 	kc := fake.NewSimpleClientset(
 		readyNode(hostname),
-		flannelPodOnNode(hostname),
 		workloadPod("p", "sentio-systems", hostname),
 	)
 	vc := &mockVelero{}
