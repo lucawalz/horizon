@@ -86,7 +86,8 @@ func (c *Client) TriggerBackup(ctx context.Context, workloadNamespace, name stri
 				return fmt.Errorf("velero: backup %q completed with %d errors", name, current.Status.Errors)
 			}
 			return nil
-		case velerov1.BackupPhaseFailed, velerov1.BackupPhasePartiallyFailed:
+		case velerov1.BackupPhaseFailed, velerov1.BackupPhasePartiallyFailed,
+			velerov1.BackupPhaseFailedValidation:
 			return fmt.Errorf("velero: backup %q: phase %s", name, current.Status.Phase)
 		}
 		select {
