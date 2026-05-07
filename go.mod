@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/fatih/color v1.19.0
-	github.com/hashicorp/terraform-exec v0.25.1
+	github.com/hashicorp/terraform-exec v0.25.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common v0.67.5
 	github.com/spf13/cobra v1.10.2
