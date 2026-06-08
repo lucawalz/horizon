@@ -2,7 +2,15 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strconv"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/lucawalz/horizon/internal/config"
@@ -10,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/prometheus/common/model"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -23,6 +32,17 @@ const (
 	metricBurstNodeCount      = "horizon_burst_node_count"
 	metricLastBurstDuration   = "horizon_last_burst_duration_seconds"
 	metricPressureScore       = "horizon_pressure_score"
+)
+
+const (
+	pollInterval        = 30 * time.Second
+	shutdownGracePeriod = 60 * time.Second
+	waitPollInterval    = 100 * time.Millisecond
+	nodeBurstLabel      = "horizon.dev/burst=true"
+	burstHostnamePrefix = "horizon-burst-"
+	burstSubcommand     = "burst"
+	burstWorkloadFlag   = "--workload"
+	burstIDByteLen      = 4
 )
 
 type ScaleAction int
@@ -273,8 +293,266 @@ func RunSinglePollCycleForTest(ctx context.Context, deps WatchDepsForTest, state
 	return nil
 }
 
+type managedBurst struct {
+	cmd *exec.Cmd
+	pid int
+}
+
+type subprocessManager struct {
+	mu       sync.Mutex
+	bursts   map[string]*managedBurst
+	stateDir string
+}
+
+func newSubprocessManager(stateDir string) *subprocessManager {
+	return &subprocessManager{bursts: make(map[string]*managedBurst), stateDir: stateDir}
+}
+
+func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string) error {
+	if !burstIDPattern.MatchString(burstID) {
+		return fmt.Errorf("watch: invalid burst_id %q", burstID)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("watch: resolve executable: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, self, burstSubcommand, burstWorkloadFlag, workload)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("watch: spawn burst: %w", err)
+	}
+	pid := cmd.Process.Pid
+	pidPath, err := PidFilePath(burstID)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		return fmt.Errorf("watch: pid path: %w", err)
+	}
+	if err := os.MkdirAll(m.stateDir, 0o700); err != nil {
+		_ = cmd.Process.Kill()
+		return fmt.Errorf("watch: state dir: %w", err)
+	}
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(pid)), 0o600); err != nil {
+		_ = cmd.Process.Kill()
+		return fmt.Errorf("watch: write pid file: %w", err)
+	}
+	m.mu.Lock()
+	m.bursts[burstID] = &managedBurst{cmd: cmd, pid: pid}
+	m.mu.Unlock()
+
+	go func() {
+		_ = cmd.Wait()
+		m.mu.Lock()
+		delete(m.bursts, burstID)
+		m.mu.Unlock()
+		_ = os.Remove(pidPath)
+	}()
+	return nil
+}
+
+func (m *subprocessManager) signalAll(sig syscall.Signal) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, mb := range m.bursts {
+		if mb.cmd != nil && mb.cmd.Process != nil {
+			_ = mb.cmd.Process.Signal(sig)
+		}
+	}
+}
+
+func (m *subprocessManager) signalAndWait(burstID string, sig syscall.Signal, timeout time.Duration) error {
+	m.mu.Lock()
+	mb, ok := m.bursts[burstID]
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	if mb.cmd != nil && mb.cmd.Process != nil {
+		_ = mb.cmd.Process.Signal(sig)
+	}
+	done := make(chan struct{})
+	go func() {
+		m.waitFor(burstID)
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		if mb.cmd != nil && mb.cmd.Process != nil {
+			_ = mb.cmd.Process.Kill()
+		}
+		return fmt.Errorf("watch: subprocess %s did not exit within %s", burstID, timeout)
+	}
+}
+
+func (m *subprocessManager) waitFor(burstID string) {
+	for {
+		m.mu.Lock()
+		_, ok := m.bursts[burstID]
+		m.mu.Unlock()
+		if !ok {
+			return
+		}
+		time.Sleep(waitPollInterval)
+	}
+}
+
+func (m *subprocessManager) waitAll(timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		for {
+			m.mu.Lock()
+			n := len(m.bursts)
+			m.mu.Unlock()
+			if n == 0 {
+				close(done)
+				return
+			}
+			time.Sleep(waitPollInterval)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
+}
+
+func adoptActiveBursts(ctx context.Context, kc kubernetes.Interface, ws k8s.WatchState) []string {
+	if len(ws.ActiveBurstIDs) == 0 {
+		return nil
+	}
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: nodeBurstLabel})
+	if err != nil {
+		return ws.ActiveBurstIDs
+	}
+	live := map[string]bool{}
+	for _, n := range nodes.Items {
+		live[n.Name] = true
+	}
+	keep := make([]string, 0, len(ws.ActiveBurstIDs))
+	for _, id := range ws.ActiveBurstIDs {
+		if live[burstHostnamePrefix+id] {
+			keep = append(keep, id)
+		}
+	}
+	return keep
+}
+
+func newRandomBurstID() (string, error) {
+	buf := make([]byte, burstIDByteLen)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("watch: rand: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func runWatch(parent context.Context, deps WatchDepsForTest, cfg *config.Config, workload string) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	var ws k8s.WatchState
+	if deps.KubeClient != nil {
+		read, err := k8s.ReadWatchState(ctx, deps.KubeClient)
+		if err != nil {
+			return fmt.Errorf("watch: read state: %w", err)
+		}
+		ws = read
+		ws.ActiveBurstIDs = adoptActiveBursts(ctx, deps.KubeClient, ws)
+	}
+
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	state := WatchRuntimeState{
+		PressureCount:  0,
+		CooldownUntil:  ws.CooldownUntil,
+		ActiveBurstIDs: ws.ActiveBurstIDs,
+		Window:         newPressureWindow(cfg.Thresholds.Window),
+	}
+
+	stateDir, err := stateDirOrTestOverride()
+	if err != nil {
+		return fmt.Errorf("watch: state dir: %w", err)
+	}
+	mgr := newSubprocessManager(stateDir)
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := pollCycle(ctx, deps, &state); err != nil {
+			fmt.Fprintf(os.Stderr, "watch: poll error: %v\n", err)
+		}
+
+		if shouldEvaluatePressure(state, time.Now()) {
+			avg := 0.0
+			if state.Window != nil {
+				avg = state.Window.Average()
+			}
+			switch decideScaleAction(state, avg, cfg.Thresholds) {
+			case ScaleOut:
+				newID, err := newRandomBurstID()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "watch: burst id: %v\n", err)
+				} else if err := mgr.spawn(ctx, workload, newID); err != nil {
+					fmt.Fprintf(os.Stderr, "watch: spawn: %v\n", err)
+				} else {
+					state.ActiveBurstIDs = append(state.ActiveBurstIDs, newID)
+					state.LastBurstStart = time.Now()
+					state.PressureCount = 0
+				}
+			case ScaleIn:
+				victim := selectVictimForScaleIn(state)
+				if victim != "" {
+					_ = mgr.signalAndWait(victim, syscall.SIGTERM, shutdownGracePeriod)
+					state.ActiveBurstIDs = state.ActiveBurstIDs[1:]
+					state.CooldownUntil = time.Now().Add(time.Duration(cfg.Thresholds.CooldownMinutes) * time.Minute)
+					state.PressureCount = 0
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			mgr.signalAll(syscall.SIGTERM)
+			mgr.waitAll(shutdownGracePeriod)
+			_ = pollCycle(context.Background(), deps, &state)
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func pollCycle(ctx context.Context, deps WatchDepsForTest, state *WatchRuntimeState) error {
+	now := time.Now()
+	avg := 0.0
+	if state.Window != nil {
+		avg = state.Window.Average()
+	}
+	_ = buildSnapshot(*state, avg, now)
+	if deps.MetricPusher != nil {
+		if err := deps.MetricPusher.PushContext(ctx); err != nil {
+			return fmt.Errorf("watch: push: %w", err)
+		}
+	}
+	if deps.KubeClient != nil {
+		if err := persistWatchState(ctx, deps.KubeClient, *state); err != nil {
+			return fmt.Errorf("watch: persist state: %w", err)
+		}
+	}
+	return nil
+}
+
 func RunWatchForTest(ctx context.Context, app *App, deps WatchDepsForTest, workload string) error {
-	return fmt.Errorf("watch: RunWatchForTest not yet implemented")
+	var cfg *config.Config
+	if app != nil {
+		cfg = app.Config
+	}
+	return runWatch(ctx, deps, cfg, workload)
 }
 
 func PidFilePathForTest(burstID string) (string, error) {
