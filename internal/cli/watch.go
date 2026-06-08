@@ -167,7 +167,7 @@ func decideScaleAction(state WatchRuntimeState, score float64, t config.Threshol
 	}
 	activeCount := len(state.ActiveBurstIDs)
 	hysteresisMet := activeCount == 0 || state.PressureCount >= hysteresisRequiredSamples
-	if score >= t.Burst && hysteresisMet && activeCount < maxNodes {
+	if t.Burst > 0 && score >= t.Burst && hysteresisMet && activeCount < maxNodes {
 		return ScaleOut
 	}
 	if score < t.ScaleDown && activeCount > 0 {
@@ -221,38 +221,48 @@ const (
 )
 
 func runSinglePollCycle(ctx context.Context, deps *watchDeps, state *WatchRuntimeState) error {
-	cpuVec, _ := deps.prom.QueryInstant(ctx, cpuPressureQuery)
-	memVec, _ := deps.prom.QueryInstant(ctx, memPressureQuery)
-	pendVec, _ := deps.prom.QueryInstant(ctx, pendingPressureQuery)
-
-	cpu := vectorAverage(cpuVec)
-	mem := vectorAverage(memVec)
+	var cpu, mem float64
 	pending := 0
-	if len(pendVec) > 0 {
-		pending = int(pendVec[0].Value)
+	if deps.prom != nil {
+		cpuVec, _ := deps.prom.QueryInstant(ctx, cpuPressureQuery)
+		memVec, _ := deps.prom.QueryInstant(ctx, memPressureQuery)
+		pendVec, _ := deps.prom.QueryInstant(ctx, pendingPressureQuery)
+		cpu = vectorAverage(cpuVec)
+		mem = vectorAverage(memVec)
+		if len(pendVec) > 0 {
+			pending = int(pendVec[0].Value)
+		}
 	}
 
 	sample := computePressureScore(cpu, mem, pending)
 	if state.Window == nil {
-		state.Window = newPressureWindow(deps.cfg.Thresholds.Window)
+		size := 0
+		if deps.cfg != nil {
+			size = deps.cfg.Thresholds.Window
+		}
+		state.Window = newPressureWindow(size)
 	}
 	state.Window.Add(sample)
 	avg := state.Window.Average()
 
 	now := time.Now()
-	if shouldEvaluatePressure(*state, now) {
+	if deps.cfg != nil && shouldEvaluatePressure(*state, now) {
 		evaluateHysteresis(state, avg, deps.cfg.Thresholds.Burst)
 	}
 
 	snap := buildSnapshot(*state, avg, now)
 	if deps.pushFactory != nil {
-		if err := deps.pushFactory(snap).PushContext(ctx); err != nil {
-			return fmt.Errorf("watch: push: %w", err)
+		if p := deps.pushFactory(snap); p != nil {
+			if err := p.PushContext(ctx); err != nil {
+				return fmt.Errorf("watch: push: %w", err)
+			}
 		}
 	}
 
-	if err := persistWatchState(ctx, deps.kc, *state); err != nil {
-		return fmt.Errorf("watch: persist state: %w", err)
+	if deps.kc != nil {
+		if err := persistWatchState(ctx, deps.kc, *state); err != nil {
+			return fmt.Errorf("watch: persist state: %w", err)
+		}
 	}
 	return nil
 }
@@ -276,25 +286,24 @@ func persistWatchState(ctx context.Context, kc kubernetes.Interface, s WatchRunt
 	})
 }
 
+func constPusherFactory(p metricPusher) pusherFactory {
+	return func(watchMetricsSnapshot) metricPusher { return p }
+}
+
+func (d WatchDepsForTest) toWatchDeps(cfg *config.Config, workload string) *watchDeps {
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	return &watchDeps{
+		kc:          d.KubeClient,
+		pushFactory: constPusherFactory(d.MetricPusher),
+		cfg:         cfg,
+		workload:    workload,
+	}
+}
+
 func RunSinglePollCycleForTest(ctx context.Context, deps WatchDepsForTest, state *WatchRuntimeState) error {
-	now := time.Now()
-	var avg float64
-	if state.Window != nil {
-		avg = state.Window.Average()
-	}
-	snap := buildSnapshot(*state, avg, now)
-	if deps.MetricPusher != nil {
-		if err := deps.MetricPusher.PushContext(ctx); err != nil {
-			return fmt.Errorf("watch: push: %w", err)
-		}
-	}
-	_ = snap
-	if deps.KubeClient != nil {
-		if err := persistWatchState(ctx, deps.KubeClient, *state); err != nil {
-			return fmt.Errorf("watch: persist state: %w", err)
-		}
-	}
-	return nil
+	return runSinglePollCycle(ctx, deps.toWatchDeps(nil, ""), state)
 }
 
 type managedBurst struct {
@@ -451,26 +460,30 @@ func newRandomBurstID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func runWatch(parent context.Context, deps WatchDepsForTest, cfg *config.Config, workload string) error {
+func runWatch(parent context.Context, deps *watchDeps) error {
 	if parent == nil {
 		parent = context.Background()
 	}
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	cfg := deps.cfg
+	if cfg == nil {
+		cfg = &config.Config{}
+		deps.cfg = cfg
+	}
+	workload := deps.workload
+
 	var ws k8s.WatchState
-	if deps.KubeClient != nil {
-		read, err := k8s.ReadWatchState(ctx, deps.KubeClient)
+	if deps.kc != nil {
+		read, err := k8s.ReadWatchState(ctx, deps.kc)
 		if err != nil {
 			return fmt.Errorf("watch: read state: %w", err)
 		}
 		ws = read
-		ws.ActiveBurstIDs = adoptActiveBursts(ctx, deps.KubeClient, ws)
+		ws.ActiveBurstIDs = adoptActiveBursts(ctx, deps.kc, ws)
 	}
 
-	if cfg == nil {
-		cfg = &config.Config{}
-	}
 	state := WatchRuntimeState{
 		PressureCount:  0,
 		CooldownUntil:  ws.CooldownUntil,
@@ -488,7 +501,7 @@ func runWatch(parent context.Context, deps WatchDepsForTest, cfg *config.Config,
 	defer ticker.Stop()
 
 	for {
-		if err := pollCycle(ctx, deps, &state); err != nil {
+		if err := runSinglePollCycle(ctx, deps, &state); err != nil {
 			fmt.Fprintf(os.Stderr, "watch: poll error: %v\n", err)
 		}
 
@@ -524,31 +537,11 @@ func runWatch(parent context.Context, deps WatchDepsForTest, cfg *config.Config,
 		case <-ctx.Done():
 			mgr.signalAll(syscall.SIGTERM)
 			mgr.waitAll(shutdownGracePeriod)
-			_ = pollCycle(context.Background(), deps, &state)
+			_ = runSinglePollCycle(context.Background(), deps, &state)
 			return nil
 		case <-ticker.C:
 		}
 	}
-}
-
-func pollCycle(ctx context.Context, deps WatchDepsForTest, state *WatchRuntimeState) error {
-	now := time.Now()
-	avg := 0.0
-	if state.Window != nil {
-		avg = state.Window.Average()
-	}
-	_ = buildSnapshot(*state, avg, now)
-	if deps.MetricPusher != nil {
-		if err := deps.MetricPusher.PushContext(ctx); err != nil {
-			return fmt.Errorf("watch: push: %w", err)
-		}
-	}
-	if deps.KubeClient != nil {
-		if err := persistWatchState(ctx, deps.KubeClient, *state); err != nil {
-			return fmt.Errorf("watch: persist state: %w", err)
-		}
-	}
-	return nil
 }
 
 func RunWatchForTest(ctx context.Context, app *App, deps WatchDepsForTest, workload string) error {
@@ -556,7 +549,7 @@ func RunWatchForTest(ctx context.Context, app *App, deps WatchDepsForTest, workl
 	if app != nil {
 		cfg = app.Config
 	}
-	return runWatch(ctx, deps, cfg, workload)
+	return runWatch(ctx, deps.toWatchDeps(cfg, workload))
 }
 
 func PidFilePathForTest(burstID string) (string, error) {
@@ -602,27 +595,33 @@ func newWatchCmd(app *App) *cobra.Command {
 			if err := k8s.ValidateNamespace(workload); err != nil {
 				return fmt.Errorf("watch: %w", err)
 			}
-			deps, err := newWatchDeps(app)
+			deps, err := newWatchDeps(app, workload)
 			if err != nil {
 				return fmt.Errorf("watch: init: %w", err)
 			}
-			return runWatch(cmd.Context(), deps, app.Config, workload)
+			return runWatch(cmd.Context(), deps)
 		},
 	}
 	cmd.Flags().String("workload", "", "target namespace to monitor and burst (required)")
 	return cmd
 }
 
-func newWatchDeps(app *App) (WatchDepsForTest, error) {
-	if _, err := hzprom.NewClient(app.KubeClient, app.Config.Kubeconfig); err != nil {
-		return WatchDepsForTest{}, fmt.Errorf("watch: prometheus: %w", err)
+func newWatchDeps(app *App, workload string) (*watchDeps, error) {
+	prom, err := hzprom.NewClient(app.KubeClient, app.Config.Kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("watch: prometheus: %w", err)
 	}
 	url := app.Config.PushgatewayURL
 	if url == "" {
 		url = defaultPushgatewayURL
 	}
-	pusher := defaultPusherFactory(url)(watchMetricsSnapshot{})
-	return WatchDepsForTest{KubeClient: app.KubeClient, MetricPusher: pusher}, nil
+	return &watchDeps{
+		kc:          app.KubeClient,
+		prom:        prom,
+		pushFactory: defaultPusherFactory(url),
+		cfg:         app.Config,
+		workload:    workload,
+	}, nil
 }
 
 func NewWatchCmdForTest(app *App) *cobra.Command { return newWatchCmd(app) }
