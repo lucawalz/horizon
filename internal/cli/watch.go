@@ -320,6 +320,13 @@ func newSubprocessManager(stateDir string) *subprocessManager {
 	return &subprocessManager{bursts: make(map[string]*managedBurst), stateDir: stateDir}
 }
 
+func gracefulCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = shutdownGracePeriod
+	return cmd
+}
+
 func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string) error {
 	if !burstIDPattern.MatchString(burstID) {
 		return fmt.Errorf("watch: invalid burst_id %q", burstID)
@@ -328,7 +335,7 @@ func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string)
 	if err != nil {
 		return fmt.Errorf("watch: resolve executable: %w", err)
 	}
-	cmd := exec.CommandContext(ctx, self, burstSubcommand, burstWorkloadFlag, workload)
+	cmd := gracefulCommandContext(ctx, self, burstSubcommand, burstWorkloadFlag, workload)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -481,6 +488,11 @@ func runWatch(parent context.Context, deps *watchDeps) error {
 		}
 		ws = read
 		ws.ActiveBurstIDs = adoptActiveBursts(ctx, deps.kc, ws)
+		if workload != "" {
+			if err := k8s.ReconcileStrandedAffinity(ctx, deps.kc, workload); err != nil {
+				fmt.Fprintf(os.Stderr, "watch: reconcile stranded affinity: %v\n", err)
+			}
+		}
 	}
 
 	state := WatchRuntimeState{
@@ -549,6 +561,10 @@ func RunWatchForTest(ctx context.Context, app *App, deps WatchDepsForTest, workl
 		cfg = app.Config
 	}
 	return runWatch(ctx, deps.toWatchDeps(cfg, workload))
+}
+
+func GracefulCommandContextForTest(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return gracefulCommandContext(ctx, name, args...)
 }
 
 func PidFilePathForTest(burstID string) (string, error) {
