@@ -278,7 +278,7 @@ func RunWatchForTest(ctx context.Context, app *App, deps WatchDepsForTest, workl
 }
 
 func PidFilePathForTest(burstID string) (string, error) {
-	return "", fmt.Errorf("watch: PidFilePathForTest not yet implemented")
+	return PidFilePath(burstID)
 }
 
 func ComputePressureScoreForTest(cpu, mem float64, pending int) float64 {
