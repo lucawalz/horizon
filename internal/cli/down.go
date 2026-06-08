@@ -53,7 +53,7 @@ func newDownCmd(app *App) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("down: read state: %w", err)
 			}
-			deps, err := newDownDeps(app)
+			deps, err := newDownDeps(app, resolved)
 			if err != nil {
 				return fmt.Errorf("down: init: %w", err)
 			}
@@ -65,13 +65,16 @@ func newDownCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func newDownDeps(app *App) (*downDeps, error) {
+func newDownDeps(app *App, burstID string) (*downDeps, error) {
 	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
 	if token == "" {
 		return nil, fmt.Errorf("down: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
 	}
 	zt := zerotier.NewClient("", token)
-	prov := hetzner.New(app.Config, app.Config.InfraPath)
+	prov, err := hetzner.NewWithBurstID(app.Config, app.Config.InfraPath, burstID)
+	if err != nil {
+		return nil, fmt.Errorf("down: provider: %w", err)
+	}
 	return &downDeps{zt: zt, prov: prov, kc: app.KubeClient}, nil
 }
 
