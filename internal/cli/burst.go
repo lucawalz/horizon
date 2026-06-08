@@ -63,7 +63,11 @@ func newBurstCmd(app *App) *cobra.Command {
 			if err := k8s.ValidateNamespace(workload); err != nil {
 				return fmt.Errorf("burst: %w", err)
 			}
-			deps, err := newBurstDeps(app)
+			burstID, _ := cmd.Flags().GetString("burst-id")
+			if burstID != "" && !burstIDPattern.MatchString(burstID) {
+				return fmt.Errorf("burst: invalid burst_id %q", burstID)
+			}
+			deps, err := newBurstDeps(app, burstID)
 			if err != nil {
 				return fmt.Errorf("burst: init: %w", err)
 			}
@@ -72,21 +76,36 @@ func newBurstCmd(app *App) *cobra.Command {
 	}
 	cmd.Flags().Bool("dry-run", false, "Print planned burst sequence without executing")
 	cmd.Flags().String("workload", "", "target namespace to burst (required unless --dry-run)")
+	cmd.Flags().String("burst-id", "", "Burst id for the node name, workspace, and state file (auto-generated when omitted)")
 	return cmd
 }
 
-func newBurstDeps(app *App) (*burstDeps, error) {
+func newBurstDeps(app *App, burstID string) (*burstDeps, error) {
 	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
 	if token == "" {
 		return nil, fmt.Errorf("burst: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
 	}
 	zt := zerotier.NewClient("", token)
-	prov := hetzner.New(app.Config, app.Config.InfraPath)
+	prov, err := newBurstProvider(app, burstID)
+	if err != nil {
+		return nil, err
+	}
 	vc, err := velero.NewClient(app.Config.Kubeconfig)
 	if err != nil {
 		return nil, fmt.Errorf("burst: velero client: %w", err)
 	}
 	return &burstDeps{zt: zt, prov: prov, kc: app.KubeClient, vc: vc}, nil
+}
+
+func newBurstProvider(app *App, burstID string) (hetznerProvider, error) {
+	if burstID == "" {
+		return hetzner.New(app.Config, app.Config.InfraPath), nil
+	}
+	prov, err := hetzner.NewWithBurstID(app.Config, app.Config.InfraPath, burstID)
+	if err != nil {
+		return nil, fmt.Errorf("burst: provider: %w", err)
+	}
+	return prov, nil
 }
 
 func runBurstDryRun(app *App) error {
@@ -257,6 +276,14 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 }
 
 func NewBurstCmdForTest(app *App) *cobra.Command { return newBurstCmd(app) }
+
+func NewBurstProviderBurstIDForTest(app *App, burstID string) (string, error) {
+	prov, err := newBurstProvider(app, burstID)
+	if err != nil {
+		return "", err
+	}
+	return prov.BurstID(), nil
+}
 
 func RunBurstDryRunForTest(app *App) error { return runBurstDryRun(app) }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +45,35 @@ func TestGracefulCommandContext_SendsSIGTERMNotSIGKILL(t *testing.T) {
 	}
 	if string(data) != "got-term\n" {
 		t.Errorf("marker = %q, want \"got-term\\n\"", string(data))
+	}
+}
+
+func TestBurstSpawnArgs_IncludesBurstID(t *testing.T) {
+	args := cli.BurstSpawnArgsForTest("sentio-systems", "5d855091")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--burst-id 5d855091") {
+		t.Fatalf("spawn args %v must pass --burst-id so the node name matches the tracked id", args)
+	}
+	if !strings.Contains(joined, "--workload sentio-systems") {
+		t.Errorf("spawn args %v missing --workload", args)
+	}
+}
+
+func TestBurstSpawnArgs_TrackedIDMatchesNodeName(t *testing.T) {
+	id := "5d855091"
+	args := cli.BurstSpawnArgsForTest("sentio-systems", id)
+	var spawnedID string
+	for i, a := range args {
+		if a == "--burst-id" && i+1 < len(args) {
+			spawnedID = args[i+1]
+		}
+	}
+	if spawnedID != id {
+		t.Fatalf("burst subprocess id %q must equal the daemon-tracked id %q", spawnedID, id)
+	}
+	wantNode := "horizon-burst-" + id
+	if got := "horizon-burst-" + spawnedID; got != wantNode {
+		t.Errorf("derived node name %q != %q", got, wantNode)
 	}
 }
 

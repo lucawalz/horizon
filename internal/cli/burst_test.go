@@ -101,6 +101,46 @@ func TestBurstWorkloadFlag_InvalidNamespace(t *testing.T) {
 	}
 }
 
+func TestBurstProvider_UsesSuppliedBurstID(t *testing.T) {
+	id := "5d855091"
+	got, err := cli.NewBurstProviderBurstIDForTest(newTestApp(), id)
+	if err != nil {
+		t.Fatalf("NewBurstProviderBurstIDForTest: %v", err)
+	}
+	if got != id {
+		t.Fatalf("provider burst_id = %q, want %q (node name/workspace/state must derive from it)", got, id)
+	}
+}
+
+func TestBurstProvider_AutoGeneratesWhenNoID(t *testing.T) {
+	got, err := cli.NewBurstProviderBurstIDForTest(newTestApp(), "")
+	if err != nil {
+		t.Fatalf("NewBurstProviderBurstIDForTest: %v", err)
+	}
+	if got == "" {
+		t.Fatal("provider must auto-generate a burst_id when none supplied")
+	}
+}
+
+func TestBurstProvider_RejectsInvalidID(t *testing.T) {
+	if _, err := cli.NewBurstProviderBurstIDForTest(newTestApp(), "NOT-HEX!!"); err == nil {
+		t.Fatal("expected error for invalid burst_id")
+	}
+}
+
+func TestBurstCmd_InvalidBurstIDRejected(t *testing.T) {
+	app := &cli.App{Config: &config.Config{Provider: "hetzner"}}
+	cmd := cli.NewBurstCmdForTest(app)
+	cmd.SetArgs([]string{"--workload", "sentio-systems", "--burst-id", "NOT-HEX!!"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --burst-id fails the burst id pattern")
+	}
+	if !strings.Contains(err.Error(), "burst_id") {
+		t.Errorf("error %q does not mention burst_id", err.Error())
+	}
+}
+
 func TestBurstStepOrder(t *testing.T) {
 	stateDir := t.TempDir()
 	restore := cli.SetStateDirForTest(stateDir)

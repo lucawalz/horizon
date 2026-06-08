@@ -48,7 +48,7 @@ const (
 	burstSubcommand     = "burst"
 	burstWorkloadFlag   = "--workload"
 	downSubcommand      = "down"
-	downBurstIDFlag     = "--burst-id"
+	burstIDFlag         = "--burst-id"
 	burstIDByteLen      = 4
 )
 
@@ -364,6 +364,10 @@ func gracefulCommandContext(ctx context.Context, name string, args ...string) *e
 	return cmd
 }
 
+func burstSpawnArgs(workload, burstID string) []string {
+	return []string{burstSubcommand, burstWorkloadFlag, workload, burstIDFlag, burstID}
+}
+
 func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string) error {
 	if !burstIDPattern.MatchString(burstID) {
 		return fmt.Errorf("watch: invalid burst_id %q", burstID)
@@ -372,7 +376,7 @@ func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string)
 	if err != nil {
 		return fmt.Errorf("watch: resolve executable: %w", err)
 	}
-	cmd := gracefulCommandContext(ctx, self, burstSubcommand, burstWorkloadFlag, workload)
+	cmd := gracefulCommandContext(ctx, self, burstSpawnArgs(workload, burstID)...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -418,7 +422,7 @@ func (m *subprocessManager) spawnDown(ctx context.Context, burstID string) error
 	if err != nil {
 		return fmt.Errorf("watch: resolve executable: %w", err)
 	}
-	cmd := gracefulCommandContext(ctx, self, downSubcommand, downBurstIDFlag, burstID)
+	cmd := gracefulCommandContext(ctx, self, downSubcommand, burstIDFlag, burstID)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -669,6 +673,10 @@ func RunWatchForTest(ctx context.Context, app *App, deps WatchDepsForTest, workl
 
 func GracefulCommandContextForTest(ctx context.Context, name string, args ...string) *exec.Cmd {
 	return gracefulCommandContext(ctx, name, args...)
+}
+
+func BurstSpawnArgsForTest(workload, burstID string) []string {
+	return burstSpawnArgs(workload, burstID)
 }
 
 func PidFilePathForTest(burstID string) (string, error) {
