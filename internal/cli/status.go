@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"math"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -39,7 +41,7 @@ func runStatus(app *App) error {
 	pc, err := prometheus.NewClient(app.KubeClient, app.Config.Kubeconfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: prometheus unavailable: %v\n", err)
-		return printNodeTable(ctx, app)
+		return printNodeTable(ctx, app, nil, nil)
 	}
 	defer pc.Close()
 
@@ -73,10 +75,10 @@ func runStatus(app *App) error {
 	printBurstPhase(ctx, app)
 	fmt.Println()
 
-	return printNodeTable(ctx, app)
+	return printNodeTable(ctx, app, cpuVec, memVec)
 }
 
-func printNodeTable(ctx context.Context, app *App) error {
+func printNodeTable(ctx context.Context, app *App, cpuVec, memVec model.Vector) error {
 	nodes, err := app.KubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list nodes: %w", err)
@@ -99,9 +101,30 @@ func printNodeTable(ctx context.Context, app *App) error {
 		}
 
 		fmt.Fprintf(os.Stdout, "%-10s  %-8s  %-6s  %-6s  %-5d  %-10s  %s\n",
-			node.Name, role, "N/A", "N/A", podCount, status, ip)
+			node.Name, role, nodeMetricCell(cpuVec, ip), nodeMetricCell(memVec, ip), podCount, status, ip)
 	}
 	return nil
+}
+
+func nodeMetricCell(vec model.Vector, nodeIP string) string {
+	if nodeIP == "" || nodeIP == "N/A" {
+		return "N/A"
+	}
+	for _, s := range vec {
+		host, _, err := net.SplitHostPort(string(s.Metric["instance"]))
+		if err != nil {
+			host = string(s.Metric["instance"])
+		}
+		if host != nodeIP {
+			continue
+		}
+		v := float64(s.Value)
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return "N/A"
+		}
+		return fmt.Sprintf("%d%%", int(math.Round(v*100)))
+	}
+	return "N/A"
 }
 
 func getNodeIPv4(node corev1.Node) string {
@@ -162,4 +185,8 @@ func printBurstPhase(ctx context.Context, app *App) {
 
 func PrintBurstPhaseForTest(ctx context.Context, app *App) {
 	printBurstPhase(ctx, app)
+}
+
+func NodeMetricCellForTest(vec model.Vector, nodeIP string) string {
+	return nodeMetricCell(vec, nodeIP)
 }
