@@ -44,7 +44,7 @@ var upSteps = []string{
 	"Pre-flight checks",
 	"Run terraform apply (provider: hetzner)",
 	"Authorize burst node in ZeroTier network",
-	"Wait for node Ready and flannel pod Running",
+	"Wait for node Ready",
 	"Persist burst state file (~/.local/state/horizon/<burst_id>.json)",
 }
 

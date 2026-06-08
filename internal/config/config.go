@@ -13,6 +13,7 @@ type ThresholdConfig struct {
 	ScaleDown       float64 `mapstructure:"scale_down"`
 	Window          int     `mapstructure:"window"`
 	CooldownMinutes int     `mapstructure:"cooldown_minutes"`
+	MaxBurstNodes   int     `mapstructure:"max_burst_nodes"`
 }
 
 type HetznerConfig struct {
@@ -50,14 +51,15 @@ func Resolve(envName, inline string) string {
 }
 
 type Config struct {
-	Provider   string          `mapstructure:"provider"`
-	InfraPath  string          `mapstructure:"infra_path"`
-	Kubeconfig string          `mapstructure:"kubeconfig"`
-	Thresholds ThresholdConfig `mapstructure:"thresholds"`
-	Hetzner    HetznerConfig   `mapstructure:"hetzner"`
-	ZeroTier   ZeroTierConfig  `mapstructure:"zerotier"`
-	K3s        K3sConfig       `mapstructure:"k3s"`
-	AWS        AWSConfig       `mapstructure:"aws"`
+	Provider       string          `mapstructure:"provider"`
+	InfraPath      string          `mapstructure:"infra_path"`
+	Kubeconfig     string          `mapstructure:"kubeconfig"`
+	Thresholds     ThresholdConfig `mapstructure:"thresholds"`
+	Hetzner        HetznerConfig   `mapstructure:"hetzner"`
+	ZeroTier       ZeroTierConfig  `mapstructure:"zerotier"`
+	K3s            K3sConfig       `mapstructure:"k3s"`
+	AWS            AWSConfig       `mapstructure:"aws"`
+	PushgatewayURL string          `mapstructure:"pushgateway_url"`
 }
 
 func Load() (*Config, error) {

@@ -10,6 +10,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/prometheus/common/model"
 	"github.com/spf13/cobra"
+	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,7 +70,7 @@ func runStatus(app *App) error {
 		memScore, threshold, pressureDot(memScore, threshold),
 		pendingCount,
 	)
-	fmt.Println("BurstPhase: Idle")
+	printBurstPhase(ctx, app)
 	fmt.Println()
 
 	return printNodeTable(ctx, app)
@@ -153,4 +154,12 @@ func pressureDot(score, threshold float64) string {
 		return color.YellowString("●")
 	}
 	return color.GreenString("●")
+}
+
+func printBurstPhase(ctx context.Context, app *App) {
+	fmt.Printf("BurstPhase: %s\n", k8s.ReadBurstPhase(ctx, app.KubeClient))
+}
+
+func PrintBurstPhaseForTest(ctx context.Context, app *App) {
+	printBurstPhase(ctx, app)
 }

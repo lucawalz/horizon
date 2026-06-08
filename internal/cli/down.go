@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
 	"github.com/lucawalz/horizon/internal/zerotier"
 	"github.com/spf13/cobra"
-	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,7 +53,7 @@ func newDownCmd(app *App) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("down: read state: %w", err)
 			}
-			deps, err := newDownDeps(app)
+			deps, err := newDownDeps(app, resolved)
 			if err != nil {
 				return fmt.Errorf("down: init: %w", err)
 			}
@@ -65,13 +65,16 @@ func newDownCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func newDownDeps(app *App) (*downDeps, error) {
+func newDownDeps(app *App, burstID string) (*downDeps, error) {
 	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
 	if token == "" {
 		return nil, fmt.Errorf("down: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
 	}
 	zt := zerotier.NewClient("", token)
-	prov := hetzner.New(app.Config, app.Config.InfraPath)
+	prov, err := hetzner.NewWithBurstID(app.Config, app.Config.InfraPath, burstID)
+	if err != nil {
+		return nil, fmt.Errorf("down: provider: %w", err)
+	}
 	return &downDeps{zt: zt, prov: prov, kc: app.KubeClient}, nil
 }
 
@@ -156,7 +159,11 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 		},
 	})
 
-	return r.Run(ctx)
+	if err := r.Run(ctx); err != nil {
+		return err
+	}
+	_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseIdle)
+	return nil
 }
 
 func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname string) error {
@@ -185,7 +192,7 @@ func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname strin
 		if pod.Spec.NodeName != hostname {
 			continue
 		}
-		if isDaemonSetPod(&pod) {
+		if k8s.IsDaemonSetPod(&pod) {
 			continue
 		}
 		ev := &policyv1.Eviction{
@@ -199,15 +206,6 @@ func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname strin
 		}
 	}
 	return nil
-}
-
-func isDaemonSetPod(pod *corev1.Pod) bool {
-	for _, o := range pod.OwnerReferences {
-		if o.Kind == "DaemonSet" {
-			return true
-		}
-	}
-	return false
 }
 
 func RunDownDryRunForTest(app *App) error {

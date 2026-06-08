@@ -97,3 +97,14 @@ func DeleteState(dir, burstID string) error {
 	}
 	return nil
 }
+
+func PidFilePath(burstID string) (string, error) {
+	if !burstIDPattern.MatchString(burstID) {
+		return "", fmt.Errorf("state: invalid burst_id %q", burstID)
+	}
+	dir, err := DefaultStateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, burstID+".pid"), nil
+}

@@ -122,18 +122,6 @@ func readyNode(name string) *corev1.Node {
 	}
 }
 
-func flannelPodOnNode(nodeName string) *corev1.Pod {
-	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "flannel-" + nodeName,
-			Namespace: "kube-system",
-			Labels:    map[string]string{"k8s-app": "flannel"},
-		},
-		Spec:   corev1.PodSpec{NodeName: nodeName},
-		Status: corev1.PodStatus{Phase: corev1.PodRunning},
-	}
-}
-
 func TestUpDryRun(t *testing.T) {
 	app := newTestApp()
 	out := captureStdout(func() {
@@ -165,7 +153,7 @@ func TestUpStepOrder(t *testing.T) {
 		hostname: hostname,
 		serverID: "99",
 	}
-	kc := fake.NewSimpleClientset(readyNode(hostname), flannelPodOnNode(hostname))
+	kc := fake.NewSimpleClientset(readyNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
@@ -292,7 +280,7 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 		hostname: hostname,
 		serverID: "99",
 	}
-	kc := fake.NewSimpleClientset(readyNode(hostname), flannelPodOnNode(hostname))
+	kc := fake.NewSimpleClientset(readyNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
