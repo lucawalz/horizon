@@ -8,8 +8,60 @@ import (
 
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/k8s"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
+
+func TestRunSinglePollCycle_HealsStrandCreatedMidSession(t *testing.T) {
+	ns := "sentio-systems"
+	burstAff := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key:      k8s.NodeAffinityLabelKey,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{ns},
+				}},
+			}},
+		},
+	}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: ns},
+		Spec:       appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: burstAff}}},
+	}
+	burstNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "horizon-burst-aaaa", Labels: map[string]string{k8s.NodeAffinityLabelKey: ns}},
+		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	}
+
+	kc := fake.NewSimpleClientset(dep, burstNode)
+	deps := cli.WatchDepsForTest{KubeClient: kc, MetricPusher: &mockPusher{}}
+	state := cli.WatchRuntimeState{}
+	ctx := context.Background()
+
+	if err := cli.RunSinglePollCycleWithWorkloadForTest(ctx, deps, ns, &state); err != nil {
+		t.Fatalf("first cycle: %v", err)
+	}
+	d, _ := kc.AppsV1().Deployments(ns).Get(ctx, "dep1", metav1.GetOptions{})
+	if d.Spec.Template.Spec.Affinity == nil || d.Spec.Template.Spec.Affinity.NodeAffinity == nil {
+		t.Fatal("affinity should remain while burst node is present")
+	}
+
+	if err := kc.CoreV1().Nodes().Delete(ctx, "horizon-burst-aaaa", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("delete node: %v", err)
+	}
+
+	if err := cli.RunSinglePollCycleWithWorkloadForTest(ctx, deps, ns, &state); err != nil {
+		t.Fatalf("second cycle: %v", err)
+	}
+	d, _ = kc.AppsV1().Deployments(ns).Get(ctx, "dep1", metav1.GetOptions{})
+	if d.Spec.Template.Spec.Affinity != nil && d.Spec.Template.Spec.Affinity.NodeAffinity != nil {
+		t.Error("strand created mid-session was not healed on a later poll cycle")
+	}
+}
 
 type mockPusher struct {
 	calls   int

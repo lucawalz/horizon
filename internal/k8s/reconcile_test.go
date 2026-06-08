@@ -150,7 +150,7 @@ func TestReconcileStrandedAffinity_PreservesNonBurstNodeAffinityTerm(t *testing.
 	}
 }
 
-func TestReconcileStrandedAffinity_IgnoresNotReadyNode(t *testing.T) {
+func TestReconcileStrandedAffinity_KeepsWhenNodePresentButNotReady(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: "sentio-systems"},
 		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{
@@ -171,8 +171,8 @@ func TestReconcileStrandedAffinity_IgnoresNotReadyNode(t *testing.T) {
 	}
 
 	d, _ := kc.AppsV1().Deployments("sentio-systems").Get(context.Background(), "dep1", metav1.GetOptions{})
-	if d.Spec.Template.Spec.Affinity != nil && d.Spec.Template.Spec.Affinity.NodeAffinity != nil {
-		t.Error("nodeAffinity should be stripped when only a NotReady node carries the label")
+	if d.Spec.Template.Spec.Affinity == nil || d.Spec.Template.Spec.Affinity.NodeAffinity == nil {
+		t.Error("nodeAffinity must NOT be stripped while a node carrying the label still exists, even if momentarily NotReady")
 	}
 }
 

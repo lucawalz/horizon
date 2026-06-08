@@ -245,34 +245,22 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 	return firstErr
 }
 
-func liveBurstWorkloadValues(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
+func presentBurstWorkloadValues(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("reconcile-affinity: list nodes: %w", err)
 	}
-	live := map[string]bool{}
+	present := map[string]bool{}
 	for i := range nodes.Items {
 		n := nodes.Items[i]
-		if !nodeReady(&n) {
-			continue
-		}
 		if v, ok := n.Labels[NodeAffinityLabelKey]; ok {
-			live[v] = true
+			present[v] = true
 		}
 	}
-	return live, nil
+	return present, nil
 }
 
-func nodeReady(n *corev1.Node) bool {
-	for _, c := range n.Status.Conditions {
-		if c.Type == corev1.NodeReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
-
-func strippedNodeAffinity(a *corev1.Affinity, live map[string]bool) (*corev1.NodeAffinity, bool) {
+func strippedNodeAffinity(a *corev1.Affinity, present map[string]bool) (*corev1.NodeAffinity, bool) {
 	if a == nil || a.NodeAffinity == nil || a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
 		return nil, false
 	}
@@ -280,7 +268,7 @@ func strippedNodeAffinity(a *corev1.Affinity, live map[string]bool) (*corev1.Nod
 	kept := make([]corev1.NodeSelectorTerm, 0, len(terms))
 	changed := false
 	for _, term := range terms {
-		if termStranded(term, live) {
+		if termStranded(term, present) {
 			changed = true
 			continue
 		}
@@ -314,13 +302,13 @@ func buildStrandedAffinityPatch(na *corev1.NodeAffinity) ([]byte, error) {
 	return json.Marshal(patch)
 }
 
-func termStranded(term corev1.NodeSelectorTerm, live map[string]bool) bool {
+func termStranded(term corev1.NodeSelectorTerm, present map[string]bool) bool {
 	for _, req := range term.MatchExpressions {
 		if req.Key != NodeAffinityLabelKey {
 			continue
 		}
 		for _, v := range req.Values {
-			if !live[v] {
+			if !present[v] {
 				return true
 			}
 		}
@@ -337,7 +325,7 @@ func ReconcileStrandedAffinity(ctx context.Context, kc kubernetes.Interface, nam
 	if err := ValidateNamespace(namespace); err != nil {
 		return fmt.Errorf("reconcile-affinity: %w", err)
 	}
-	live, err := liveBurstWorkloadValues(ctx, kc)
+	present, err := presentBurstWorkloadValues(ctx, kc)
 	if err != nil {
 		return err
 	}
@@ -349,7 +337,7 @@ func ReconcileStrandedAffinity(ctx context.Context, kc kubernetes.Interface, nam
 	}
 	for i := range deps.Items {
 		d := deps.Items[i]
-		na, changed := strippedNodeAffinity(d.Spec.Template.Spec.Affinity, live)
+		na, changed := strippedNodeAffinity(d.Spec.Template.Spec.Affinity, present)
 		if !changed {
 			continue
 		}
@@ -376,7 +364,7 @@ func ReconcileStrandedAffinity(ctx context.Context, kc kubernetes.Interface, nam
 	}
 	for i := range stss.Items {
 		s := stss.Items[i]
-		na, changed := strippedNodeAffinity(s.Spec.Template.Spec.Affinity, live)
+		na, changed := strippedNodeAffinity(s.Spec.Template.Spec.Affinity, present)
 		if !changed {
 			continue
 		}

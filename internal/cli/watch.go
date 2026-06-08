@@ -250,6 +250,12 @@ func runSinglePollCycle(ctx context.Context, deps *watchDeps, state *WatchRuntim
 		evaluateHysteresis(state, avg, deps.cfg.Thresholds.Burst)
 	}
 
+	if deps.kc != nil && deps.workload != "" {
+		if err := k8s.ReconcileStrandedAffinity(ctx, deps.kc, deps.workload); err != nil {
+			fmt.Fprintf(os.Stderr, "watch: reconcile stranded affinity: %v\n", err)
+		}
+	}
+
 	if deps.kc != nil {
 		if err := persistWatchState(ctx, deps.kc, *state); err != nil {
 			return fmt.Errorf("watch: persist state: %w", err)
@@ -303,6 +309,10 @@ func (d WatchDepsForTest) toWatchDeps(cfg *config.Config, workload string) *watc
 
 func RunSinglePollCycleForTest(ctx context.Context, deps WatchDepsForTest, state *WatchRuntimeState) error {
 	return runSinglePollCycle(ctx, deps.toWatchDeps(nil, ""), state)
+}
+
+func RunSinglePollCycleWithWorkloadForTest(ctx context.Context, deps WatchDepsForTest, workload string, state *WatchRuntimeState) error {
+	return runSinglePollCycle(ctx, deps.toWatchDeps(nil, workload), state)
 }
 
 type managedBurst struct {
@@ -488,11 +498,6 @@ func runWatch(parent context.Context, deps *watchDeps) error {
 		}
 		ws = read
 		ws.ActiveBurstIDs = adoptActiveBursts(ctx, deps.kc, ws)
-		if workload != "" {
-			if err := k8s.ReconcileStrandedAffinity(ctx, deps.kc, workload); err != nil {
-				fmt.Fprintf(os.Stderr, "watch: reconcile stranded affinity: %v\n", err)
-			}
-		}
 	}
 
 	state := WatchRuntimeState{
