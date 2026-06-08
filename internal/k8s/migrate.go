@@ -245,6 +245,158 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 	return firstErr
 }
 
+func liveBurstWorkloadValues(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("reconcile-affinity: list nodes: %w", err)
+	}
+	live := map[string]bool{}
+	for i := range nodes.Items {
+		n := nodes.Items[i]
+		if !nodeReady(&n) {
+			continue
+		}
+		if v, ok := n.Labels[NodeAffinityLabelKey]; ok {
+			live[v] = true
+		}
+	}
+	return live, nil
+}
+
+func nodeReady(n *corev1.Node) bool {
+	for _, c := range n.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+func strippedNodeAffinity(a *corev1.Affinity, live map[string]bool) (*corev1.NodeAffinity, bool) {
+	if a == nil || a.NodeAffinity == nil || a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return nil, false
+	}
+	terms := a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	kept := make([]corev1.NodeSelectorTerm, 0, len(terms))
+	changed := false
+	for _, term := range terms {
+		if termStranded(term, live) {
+			changed = true
+			continue
+		}
+		kept = append(kept, term)
+	}
+	if !changed {
+		return nil, false
+	}
+	na := a.NodeAffinity.DeepCopy()
+	if len(kept) == 0 {
+		na.RequiredDuringSchedulingIgnoredDuringExecution = nil
+	} else {
+		na.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = kept
+	}
+	if nodeAffinityEmpty(na) {
+		return nil, true
+	}
+	return na, true
+}
+
+func buildStrandedAffinityPatch(na *corev1.NodeAffinity) ([]byte, error) {
+	patch := map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"affinity": map[string]any{"nodeAffinity": na},
+				},
+			},
+		},
+	}
+	return json.Marshal(patch)
+}
+
+func termStranded(term corev1.NodeSelectorTerm, live map[string]bool) bool {
+	for _, req := range term.MatchExpressions {
+		if req.Key != NodeAffinityLabelKey {
+			continue
+		}
+		for _, v := range req.Values {
+			if !live[v] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func nodeAffinityEmpty(na *corev1.NodeAffinity) bool {
+	return na.RequiredDuringSchedulingIgnoredDuringExecution == nil &&
+		len(na.PreferredDuringSchedulingIgnoredDuringExecution) == 0
+}
+
+func ReconcileStrandedAffinity(ctx context.Context, kc kubernetes.Interface, namespace string) error {
+	if err := ValidateNamespace(namespace); err != nil {
+		return fmt.Errorf("reconcile-affinity: %w", err)
+	}
+	live, err := liveBurstWorkloadValues(ctx, kc)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+	deps, err := kc.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("reconcile-affinity: list deployments in %q: %w", namespace, err)
+	}
+	for i := range deps.Items {
+		d := deps.Items[i]
+		na, changed := strippedNodeAffinity(d.Spec.Template.Spec.Affinity, live)
+		if !changed {
+			continue
+		}
+		patchData, err := buildStrandedAffinityPatch(na)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("reconcile-affinity: marshal deployment %q: %w", d.Name, err)
+			}
+			continue
+		}
+		if _, err := kc.AppsV1().Deployments(namespace).Patch(ctx, d.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("reconcile-affinity: patch deployment %q: %w", d.Name, err)
+			}
+		}
+	}
+
+	stss, err := kc.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if firstErr == nil {
+			firstErr = fmt.Errorf("reconcile-affinity: list statefulsets in %q: %w", namespace, err)
+		}
+		return firstErr
+	}
+	for i := range stss.Items {
+		s := stss.Items[i]
+		na, changed := strippedNodeAffinity(s.Spec.Template.Spec.Affinity, live)
+		if !changed {
+			continue
+		}
+		patchData, err := buildStrandedAffinityPatch(na)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("reconcile-affinity: marshal statefulset %q: %w", s.Name, err)
+			}
+			continue
+		}
+		if _, err := kc.AppsV1().StatefulSets(namespace).Patch(ctx, s.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("reconcile-affinity: patch statefulset %q: %w", s.Name, err)
+			}
+		}
+	}
+
+	return firstErr
+}
+
 func isDaemonSetPod(pod *corev1.Pod) bool {
 	for _, o := range pod.OwnerReferences {
 		if o.Kind == "DaemonSet" {
