@@ -7,13 +7,14 @@ import (
 	"net"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/prometheus/common/model"
-	"github.com/spf13/cobra"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/prometheus"
+	"github.com/prometheus/common/model"
+	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -84,8 +85,10 @@ func printNodeTable(ctx context.Context, app *App, cpuVec, memVec model.Vector) 
 		return fmt.Errorf("list nodes: %w", err)
 	}
 
-	fmt.Fprintf(os.Stdout, "%-10s  %-8s  %-6s  %-6s  %-5s  %-10s  %s\n",
-		"Name", "Role", "CPU%", "Mem%", "Pods", "Status", "IP")
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	defer w.Flush()
+
+	fmt.Fprintln(w, "NAME\tROLE\tCPU%\tMEM%\tPODS\tSTATUS\tIP")
 
 	for _, node := range nodes.Items {
 		role := nodeRole(node)
@@ -100,7 +103,7 @@ func printNodeTable(ctx context.Context, app *App, cpuVec, memVec model.Vector) 
 			podCount = len(pods.Items)
 		}
 
-		fmt.Fprintf(os.Stdout, "%-10s  %-8s  %-6s  %-6s  %-5d  %-10s  %s\n",
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 			node.Name, role, nodeMetricCell(cpuVec, ip), nodeMetricCell(memVec, ip), podCount, status, ip)
 	}
 	return nil
