@@ -10,8 +10,8 @@ thresholds:
 
 hetzner:
   api_token_env: HCLOUD_TOKEN
-  server_type: cx23
-  location: fsn1
+  server_type: cpx22
+  location: hel1
 
 zerotier:
   network_id: ""
