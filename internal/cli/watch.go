@@ -250,18 +250,17 @@ func runSinglePollCycle(ctx context.Context, deps *watchDeps, state *WatchRuntim
 		evaluateHysteresis(state, avg, deps.cfg.Thresholds.Burst)
 	}
 
-	snap := buildSnapshot(*state, avg, now)
-	if deps.pushFactory != nil {
-		if p := deps.pushFactory(snap); p != nil {
-			if err := p.PushContext(ctx); err != nil {
-				return fmt.Errorf("watch: push: %w", err)
-			}
-		}
-	}
-
 	if deps.kc != nil {
 		if err := persistWatchState(ctx, deps.kc, *state); err != nil {
 			return fmt.Errorf("watch: persist state: %w", err)
+		}
+	}
+
+	if deps.pushFactory != nil {
+		if p := deps.pushFactory(buildSnapshot(*state, avg, now)); p != nil {
+			if err := p.PushContext(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "watch: metrics push failed (non-fatal): %v\n", err)
+			}
 		}
 	}
 	return nil
