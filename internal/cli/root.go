@@ -56,6 +56,7 @@ func init() {
 	rootCmd.AddCommand(newUpCmd(app))
 	rootCmd.AddCommand(newDownCmd(app))
 	rootCmd.AddCommand(newDrainCmd(app))
+	rootCmd.AddCommand(newWatchCmd(app))
 }
 
 func Execute() {

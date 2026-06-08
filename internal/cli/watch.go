@@ -15,12 +15,16 @@ import (
 
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
+	hzprom "github.com/lucawalz/horizon/internal/prometheus"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/prometheus/common/model"
+	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
+
+const defaultPushgatewayURL = "http://kube-prometheus-stack-pushgateway.monitoring.svc:9091"
 
 const (
 	hysteresisRequiredSamples = 3
@@ -584,3 +588,41 @@ func SelectVictimForScaleInForTest(state WatchRuntimeState) string {
 func NewWatchDepsForTest(kc kubernetes.Interface, prom promQuerier, factory pusherFactory, cfg *config.Config, workload string) *watchDeps {
 	return &watchDeps{kc: kc, prom: prom, pushFactory: factory, cfg: cfg, workload: workload}
 }
+
+func newWatchCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "watch",
+		Short: "Continuously monitor cluster pressure and scale burst nodes",
+		Args:  cobra.ExactArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			workload, _ := cmd.Flags().GetString("workload")
+			if workload == "" {
+				return fmt.Errorf("watch: --workload is required")
+			}
+			if err := k8s.ValidateNamespace(workload); err != nil {
+				return fmt.Errorf("watch: %w", err)
+			}
+			deps, err := newWatchDeps(app)
+			if err != nil {
+				return fmt.Errorf("watch: init: %w", err)
+			}
+			return runWatch(cmd.Context(), deps, app.Config, workload)
+		},
+	}
+	cmd.Flags().String("workload", "", "target namespace to monitor and burst (required)")
+	return cmd
+}
+
+func newWatchDeps(app *App) (WatchDepsForTest, error) {
+	if _, err := hzprom.NewClient(app.KubeClient, app.Config.Kubeconfig); err != nil {
+		return WatchDepsForTest{}, fmt.Errorf("watch: prometheus: %w", err)
+	}
+	url := app.Config.PushgatewayURL
+	if url == "" {
+		url = defaultPushgatewayURL
+	}
+	pusher := defaultPusherFactory(url)(watchMetricsSnapshot{})
+	return WatchDepsForTest{KubeClient: app.KubeClient, MetricPusher: pusher}, nil
+}
+
+func NewWatchCmdForTest(app *App) *cobra.Command { return newWatchCmd(app) }
