@@ -66,9 +66,12 @@ func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
-	home, _ := os.UserHomeDir()
-	v.AddConfigPath(".")
-	v.AddConfigPath(filepath.Join(home, ".config", "horizon"))
+	if dir := os.Getenv("HORIZON_CONFIG_DIR"); dir != "" {
+		v.AddConfigPath(dir)
+	} else {
+		home, _ := os.UserHomeDir()
+		v.AddConfigPath(filepath.Join(home, ".config", "horizon"))
+	}
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("read config: %w", err)

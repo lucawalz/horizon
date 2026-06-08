@@ -29,9 +29,7 @@ aws:
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -69,9 +67,7 @@ infra_path: ` + dir + `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -91,9 +87,7 @@ infra_path: /nonexistent/path/that/does/not/exist
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	_, err := config.Load()
 	if err == nil {
@@ -104,9 +98,7 @@ infra_path: /nonexistent/path/that/does/not/exist
 func TestLoadMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	_, err := config.Load()
 	if err == nil {
@@ -127,9 +119,7 @@ zerotier:
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -155,9 +145,7 @@ infra_path: ` + dir + `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -189,9 +177,7 @@ thresholds:
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -212,9 +198,7 @@ pushgateway_url: http://kube-prometheus-stack-pushgateway.monitoring.svc:9091
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -238,9 +222,7 @@ k3s:
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	orig, _ := os.Getwd()
-	_ = os.Chdir(dir)
-	defer func() { _ = os.Chdir(orig) }()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
 
 	cfg, err := config.Load()
 	if err != nil {
