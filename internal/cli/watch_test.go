@@ -244,10 +244,10 @@ func TestScaleOut_OneBurstPerCycle(t *testing.T) {
 }
 
 func TestScaleIn_RemovesOldestFirst(t *testing.T) {
-	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{"oldest", "middle", "newest"}}
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{"aaaa1111", "middle", "bbbb2222"}}
 	victim := cli.SelectVictimForScaleInForTest(state)
-	if victim != "oldest" {
-		t.Errorf("victim = %q, want %q", victim, "oldest")
+	if victim != "aaaa1111" {
+		t.Errorf("victim = %q, want %q", victim, "aaaa1111")
 	}
 
 	empty := cli.WatchRuntimeState{ActiveBurstIDs: []string{}}
@@ -286,6 +286,50 @@ func TestReconcileActiveBurstIDs_KeepsLiveNode(t *testing.T) {
 	)
 	if len(got) != 1 || got[0] != "healthy" {
 		t.Errorf("successful id (live node, subprocess exited) must be kept, got %v", got)
+	}
+}
+
+func TestScaleIn_TearsDownVictimViaDown(t *testing.T) {
+	var torn []string
+	teardownFn := func(_ context.Context, id string) error {
+		torn = append(torn, id)
+		return nil
+	}
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{"aaaa1111", "bbbb2222"}}
+	thresholds := config.ThresholdConfig{CooldownMinutes: 10}
+
+	cli.PerformScaleInForTest(context.Background(), teardownFn, &state, thresholds)
+
+	if len(torn) != 1 || torn[0] != "aaaa1111" {
+		t.Fatalf("teardown invoked for %v, want [oldest]", torn)
+	}
+	if state.CooldownUntil.IsZero() {
+		t.Error("cooldown must be set after launching teardown")
+	}
+}
+
+func TestScaleIn_FailedTeardownDoesNotForgetNode(t *testing.T) {
+	teardownFn := func(_ context.Context, _ string) error {
+		return context.DeadlineExceeded
+	}
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{"aaaa1111"}}
+	thresholds := config.ThresholdConfig{CooldownMinutes: 10}
+
+	cli.PerformScaleInForTest(context.Background(), teardownFn, &state, thresholds)
+
+	found := false
+	for _, id := range state.ActiveBurstIDs {
+		if id == "aaaa1111" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("a victim whose teardown failed must remain in ActiveBurstIDs")
+	}
+
+	kept := cli.ReconcileActiveBurstIDsForTest(state.ActiveBurstIDs, map[string]bool{}, map[string]bool{"aaaa1111": true})
+	if len(kept) != 1 || kept[0] != "aaaa1111" {
+		t.Errorf("level-reconcile must retain victim while its node still exists, got %v", kept)
 	}
 }
 

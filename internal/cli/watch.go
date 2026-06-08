@@ -47,6 +47,8 @@ const (
 	burstHostnamePrefix = "horizon-burst-"
 	burstSubcommand     = "burst"
 	burstWorkloadFlag   = "--workload"
+	downSubcommand      = "down"
+	downBurstIDFlag     = "--burst-id"
 	burstIDByteLen      = 4
 )
 
@@ -175,6 +177,27 @@ func decideScaleAction(state WatchRuntimeState, score float64, t config.Threshol
 		return ScaleIn
 	}
 	return ScaleNone
+}
+
+func performScaleIn(ctx context.Context, mgr *subprocessManager, state *WatchRuntimeState, t config.ThresholdConfig) {
+	victim := selectVictimForScaleIn(*state)
+	if victim == "" {
+		return
+	}
+	cooldown := func() {
+		state.CooldownUntil = time.Now().Add(time.Duration(t.CooldownMinutes) * time.Minute)
+		state.PressureCount = 0
+	}
+	if mgr.inFlightBurstIDs()[victim] {
+		_ = mgr.signalAndWait(victim, syscall.SIGTERM, shutdownGracePeriod)
+		cooldown()
+		return
+	}
+	if err := mgr.teardown(ctx, victim); err != nil {
+		fmt.Fprintf(os.Stderr, "watch: teardown %s: %v\n", victim, err)
+		return
+	}
+	cooldown()
 }
 
 func selectVictimForScaleIn(state WatchRuntimeState) string {
@@ -322,13 +345,16 @@ type managedBurst struct {
 }
 
 type subprocessManager struct {
-	mu       sync.Mutex
-	bursts   map[string]*managedBurst
-	stateDir string
+	mu         sync.Mutex
+	bursts     map[string]*managedBurst
+	stateDir   string
+	teardownFn func(ctx context.Context, burstID string) error
 }
 
 func newSubprocessManager(stateDir string) *subprocessManager {
-	return &subprocessManager{bursts: make(map[string]*managedBurst), stateDir: stateDir}
+	m := &subprocessManager{bursts: make(map[string]*managedBurst), stateDir: stateDir}
+	m.teardownFn = m.spawnDown
+	return m
 }
 
 func gracefulCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -376,6 +402,37 @@ func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string)
 		delete(m.bursts, burstID)
 		m.mu.Unlock()
 		_ = os.Remove(pidPath)
+	}()
+	return nil
+}
+
+func (m *subprocessManager) teardown(ctx context.Context, burstID string) error {
+	if !burstIDPattern.MatchString(burstID) {
+		return fmt.Errorf("watch: invalid burst_id %q", burstID)
+	}
+	return m.teardownFn(ctx, burstID)
+}
+
+func (m *subprocessManager) spawnDown(ctx context.Context, burstID string) error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("watch: resolve executable: %w", err)
+	}
+	cmd := gracefulCommandContext(ctx, self, downSubcommand, downBurstIDFlag, burstID)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("watch: spawn down: %w", err)
+	}
+	m.mu.Lock()
+	m.bursts[burstID] = &managedBurst{cmd: cmd, pid: cmd.Process.Pid}
+	m.mu.Unlock()
+
+	go func() {
+		_ = cmd.Wait()
+		m.mu.Lock()
+		delete(m.bursts, burstID)
+		m.mu.Unlock()
 	}()
 	return nil
 }
@@ -587,13 +644,7 @@ func runWatch(parent context.Context, deps *watchDeps) error {
 					state.PressureCount = 0
 				}
 			case ScaleIn:
-				victim := selectVictimForScaleIn(state)
-				if victim != "" {
-					_ = mgr.signalAndWait(victim, syscall.SIGTERM, shutdownGracePeriod)
-					state.ActiveBurstIDs = state.ActiveBurstIDs[1:]
-					state.CooldownUntil = time.Now().Add(time.Duration(cfg.Thresholds.CooldownMinutes) * time.Minute)
-					state.PressureCount = 0
-				}
+				performScaleIn(ctx, mgr, &state, cfg.Thresholds)
 			}
 		}
 
@@ -648,6 +699,12 @@ func SelectVictimForScaleInForTest(state WatchRuntimeState) string {
 
 func ReconcileActiveBurstIDsForTest(ids []string, inFlight, liveNodes map[string]bool) []string {
 	return reconcileActiveBurstIDs(ids, inFlight, liveNodes)
+}
+
+func PerformScaleInForTest(ctx context.Context, teardownFn func(context.Context, string) error, state *WatchRuntimeState, t config.ThresholdConfig) {
+	mgr := newSubprocessManager("")
+	mgr.teardownFn = teardownFn
+	performScaleIn(ctx, mgr, state, t)
 }
 
 func NewWatchDepsForTest(kc kubernetes.Interface, prom promQuerier, factory pusherFactory, cfg *config.Config, workload string) *watchDeps {
