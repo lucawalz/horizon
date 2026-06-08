@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -379,6 +380,16 @@ func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string)
 	return nil
 }
 
+func (m *subprocessManager) inFlightBurstIDs() map[string]bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make(map[string]bool, len(m.bursts))
+	for id := range m.bursts {
+		ids[id] = true
+	}
+	return ids
+}
+
 func (m *subprocessManager) signalAll(sig syscall.Signal) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -447,21 +458,56 @@ func (m *subprocessManager) waitAll(timeout time.Duration) {
 	}
 }
 
+func liveBurstNodeIDs(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: nodeBurstLabel})
+	if err != nil {
+		return nil, err
+	}
+	ids := map[string]bool{}
+	for _, n := range nodes.Items {
+		if strings.HasPrefix(n.Name, burstHostnamePrefix) {
+			ids[strings.TrimPrefix(n.Name, burstHostnamePrefix)] = true
+		}
+	}
+	return ids, nil
+}
+
 func adoptActiveBursts(ctx context.Context, kc kubernetes.Interface, ws k8s.WatchState) []string {
 	if len(ws.ActiveBurstIDs) == 0 {
 		return nil
 	}
-	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: nodeBurstLabel})
+	live, err := liveBurstNodeIDs(ctx, kc)
 	if err != nil {
 		return ws.ActiveBurstIDs
 	}
-	live := map[string]bool{}
-	for _, n := range nodes.Items {
-		live[n.Name] = true
-	}
 	keep := make([]string, 0, len(ws.ActiveBurstIDs))
 	for _, id := range ws.ActiveBurstIDs {
-		if live[burstHostnamePrefix+id] {
+		if live[id] {
+			keep = append(keep, id)
+		}
+	}
+	return keep
+}
+
+func reconcileActiveState(ctx context.Context, kc kubernetes.Interface, mgr *subprocessManager, state *WatchRuntimeState) {
+	if kc == nil || len(state.ActiveBurstIDs) == 0 {
+		return
+	}
+	liveNodes, err := liveBurstNodeIDs(ctx, kc)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "watch: reconcile active bursts: list nodes: %v\n", err)
+		return
+	}
+	state.ActiveBurstIDs = reconcileActiveBurstIDs(state.ActiveBurstIDs, mgr.inFlightBurstIDs(), liveNodes)
+	if err := persistWatchState(ctx, kc, *state); err != nil {
+		fmt.Fprintf(os.Stderr, "watch: reconcile active bursts: persist: %v\n", err)
+	}
+}
+
+func reconcileActiveBurstIDs(ids []string, inFlight, liveNodes map[string]bool) []string {
+	keep := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if inFlight[id] || liveNodes[id] {
 			keep = append(keep, id)
 		}
 	}
@@ -520,6 +566,8 @@ func runWatch(parent context.Context, deps *watchDeps) error {
 		if err := runSinglePollCycle(ctx, deps, &state); err != nil {
 			fmt.Fprintf(os.Stderr, "watch: poll error: %v\n", err)
 		}
+
+		reconcileActiveState(ctx, deps.kc, mgr, &state)
 
 		if shouldEvaluatePressure(state, time.Now()) {
 			avg := 0.0
@@ -596,6 +644,10 @@ func DecideScaleActionForTest(state WatchRuntimeState, score float64, t config.T
 
 func SelectVictimForScaleInForTest(state WatchRuntimeState) string {
 	return selectVictimForScaleIn(state)
+}
+
+func ReconcileActiveBurstIDsForTest(ids []string, inFlight, liveNodes map[string]bool) []string {
+	return reconcileActiveBurstIDs(ids, inFlight, liveNodes)
 }
 
 func NewWatchDepsForTest(kc kubernetes.Interface, prom promQuerier, factory pusherFactory, cfg *config.Config, workload string) *watchDeps {

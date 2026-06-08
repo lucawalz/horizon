@@ -256,6 +256,39 @@ func TestScaleIn_RemovesOldestFirst(t *testing.T) {
 	}
 }
 
+func TestReconcileActiveBurstIDs_PrunesPhantom(t *testing.T) {
+	got := cli.ReconcileActiveBurstIDsForTest(
+		[]string{"phantom"},
+		map[string]bool{},
+		map[string]bool{},
+	)
+	if len(got) != 0 {
+		t.Errorf("phantom id (exited, no node) must be pruned, got %v", got)
+	}
+}
+
+func TestReconcileActiveBurstIDs_KeepsInFlight(t *testing.T) {
+	got := cli.ReconcileActiveBurstIDsForTest(
+		[]string{"booting"},
+		map[string]bool{"booting": true},
+		map[string]bool{},
+	)
+	if len(got) != 1 || got[0] != "booting" {
+		t.Errorf("in-flight id (no node yet) must be kept, got %v", got)
+	}
+}
+
+func TestReconcileActiveBurstIDs_KeepsLiveNode(t *testing.T) {
+	got := cli.ReconcileActiveBurstIDsForTest(
+		[]string{"healthy"},
+		map[string]bool{},
+		map[string]bool{"healthy": true},
+	)
+	if len(got) != 1 || got[0] != "healthy" {
+		t.Errorf("successful id (live node, subprocess exited) must be kept, got %v", got)
+	}
+}
+
 func TestMetricPush_CalledEveryCycle(t *testing.T) {
 	kc := fake.NewSimpleClientset()
 	ctx := context.Background()
