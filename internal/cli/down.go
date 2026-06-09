@@ -25,9 +25,9 @@ type downDeps struct {
 
 var downSteps = []string{
 	"Cordon node and evict non-DaemonSet pods",
-	"Delete K3s node object from cluster",
 	"Remove burst node from ZeroTier network",
 	"Run terraform destroy (provider: hetzner)",
+	"Delete K3s node object from cluster",
 	"Delete burst state file",
 }
 
@@ -121,13 +121,6 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 	})
 
 	r.Add(runner.Step{
-		Name: "delete-k3s-node",
-		Run: func(ctx context.Context) error {
-			return hetzner.DeleteNode(ctx, deps.kc, st.Hostname)
-		},
-	})
-
-	r.Add(runner.Step{
 		Name: "zerotier-deauth",
 		Run: func(ctx context.Context) error {
 			if st.ZeroTierMemberID == "" {
@@ -149,6 +142,13 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 			k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
 			deps.prov.SetRuntimeSecrets(networkID, sshPub, k3sURL, k3sToken)
 			return deps.prov.Destroy(ctx)
+		},
+	})
+
+	r.Add(runner.Step{
+		Name: "delete-k3s-node",
+		Run: func(ctx context.Context) error {
+			return hetzner.DeleteNode(ctx, deps.kc, st.Hostname)
 		},
 	})
 

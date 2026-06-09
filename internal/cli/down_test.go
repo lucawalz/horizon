@@ -11,6 +11,7 @@ import (
 	"github.com/lucawalz/horizon/internal/k8s"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -73,6 +74,68 @@ func TestDownStepOrder(t *testing.T) {
 	}
 	if _, err := cli.ReadState(stateDir, "aabb1122"); err == nil {
 		t.Error("state file still exists after down")
+	}
+}
+
+type recordingHetznerProvider struct {
+	mockHetznerProvider
+	events *[]string
+}
+
+func (m *recordingHetznerProvider) Destroy(ctx context.Context) error {
+	*m.events = append(*m.events, "destroy")
+	return m.mockHetznerProvider.Destroy(ctx)
+}
+
+func TestDownDestroysVMBeforeDeletingNode(t *testing.T) {
+	stateDir := t.TempDir()
+	restore := cli.SetStateDirForTest(stateDir)
+	defer restore()
+
+	hostname := "horizon-burst-cc33dd44"
+	st := cli.BurstState{
+		BurstID:          "cc33dd44",
+		Hostname:         hostname,
+		ZeroTierMemberID: "member-9",
+		HetznerServerID:  "77",
+	}
+	seededState(t, stateDir, st)
+
+	var events []string
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
+	kc := fake.NewSimpleClientset(node)
+	kc.PrependReactor("delete", "nodes", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		events = append(events, "delete-node")
+		return false, nil, nil
+	})
+
+	zt := &mockZeroTier{}
+	prov := &recordingHetznerProvider{
+		mockHetznerProvider: mockHetznerProvider{burstID: "cc33dd44", hostname: hostname},
+		events:              &events,
+	}
+
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+		t.Fatalf("RunDownForTest: %v", err)
+	}
+
+	destroyIdx, deleteIdx := -1, -1
+	for i, e := range events {
+		switch e {
+		case "destroy":
+			destroyIdx = i
+		case "delete-node":
+			deleteIdx = i
+		}
+	}
+	if destroyIdx == -1 {
+		t.Fatalf("destroy was not recorded: %v", events)
+	}
+	if deleteIdx == -1 {
+		t.Fatalf("delete-node was not recorded: %v", events)
+	}
+	if destroyIdx >= deleteIdx {
+		t.Errorf("destroy must run before delete-node: %v", events)
 	}
 }
 
@@ -181,16 +244,16 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
 	deployPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "deploy-pod",
-			Namespace: "default",
+			Name:            "deploy-pod",
+			Namespace:       "default",
 			OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "rs-1"}},
 		},
 		Spec: corev1.PodSpec{NodeName: hostname},
 	}
 	dsPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "ds-pod",
-			Namespace: "default",
+			Name:            "ds-pod",
+			Namespace:       "default",
 			OwnerReferences: []metav1.OwnerReference{{Kind: "DaemonSet", Name: "ds-1"}},
 		},
 		Spec: corev1.PodSpec{NodeName: hostname},
