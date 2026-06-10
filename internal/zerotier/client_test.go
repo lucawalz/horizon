@@ -26,7 +26,7 @@ func TestAuthorize(t *testing.T) {
 	defer srv.Close()
 
 	c := zerotier.NewClient(srv.URL, "test-tok")
-	if err := c.Authorize(context.Background(), "nw123", "m456"); err != nil {
+	if err := c.Authorize(context.Background(), "nw123", "m456", "horizon-burst-aabb1122"); err != nil {
 		t.Fatalf("Authorize: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -41,6 +41,26 @@ func TestAuthorize(t *testing.T) {
 	cfg, _ := gotBody["config"].(map[string]any)
 	if cfg == nil || cfg["authorized"] != true {
 		t.Errorf("body = %v, want config.authorized=true", gotBody)
+	}
+	if gotBody["name"] != "horizon-burst-aabb1122" {
+		t.Errorf("body name = %v, want horizon-burst-aabb1122", gotBody["name"])
+	}
+}
+
+func TestAuthorizeOmitsEmptyName(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := zerotier.NewClient(srv.URL, "tok")
+	if err := c.Authorize(context.Background(), "nw", "m", ""); err != nil {
+		t.Fatalf("Authorize: %v", err)
+	}
+	if _, ok := gotBody["name"]; ok {
+		t.Errorf("body must omit name when empty: %v", gotBody)
 	}
 }
 
@@ -59,6 +79,9 @@ func TestDeauthorize(t *testing.T) {
 	cfg, _ := gotBody["config"].(map[string]any)
 	if cfg == nil || cfg["authorized"] != false {
 		t.Errorf("body = %v, want config.authorized=false", gotBody)
+	}
+	if _, ok := gotBody["name"]; ok {
+		t.Errorf("deauthorize body must not contain name: %v", gotBody)
 	}
 }
 
@@ -206,7 +229,7 @@ func TestNon2xxReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	c := zerotier.NewClient(srv.URL, "tok")
-	if err := c.Authorize(context.Background(), "nw", "m"); err == nil || !strings.Contains(err.Error(), "401") {
+	if err := c.Authorize(context.Background(), "nw", "m", ""); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("Authorize 401: got %v", err)
 	}
 	if err := c.Deauthorize(context.Background(), "nw", "m"); err == nil || !strings.Contains(err.Error(), "401") {
@@ -252,7 +275,7 @@ func TestAuthHeaderFormat(t *testing.T) {
 
 	c := zerotier.NewClient(srv.URL, "abc")
 	ctx := context.Background()
-	_ = c.Authorize(ctx, "nw", "m")
+	_ = c.Authorize(ctx, "nw", "m", "")
 	_ = c.Deauthorize(ctx, "nw", "m")
 	_, _ = c.FindMemberByName(ctx, "nw", "x")
 	if len(seen) == 0 {

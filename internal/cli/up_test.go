@@ -24,6 +24,7 @@ type mockZeroTier struct {
 	deauthorizeErr error
 	deleteErr      error
 	authorizeCalls []string
+	authorizeNames []string
 	deauthCalls    []string
 	deleteCalls    []string
 }
@@ -32,8 +33,9 @@ func (m *mockZeroTier) WaitForMemberByIP(_ context.Context, _, _ string, _, _ ti
 	return m.waitID, m.waitErr
 }
 
-func (m *mockZeroTier) Authorize(_ context.Context, _, memberID string) error {
+func (m *mockZeroTier) Authorize(_ context.Context, _, memberID, name string) error {
 	m.authorizeCalls = append(m.authorizeCalls, memberID)
+	m.authorizeNames = append(m.authorizeNames, name)
 	return m.authorizeErr
 }
 
@@ -164,6 +166,9 @@ func TestUpStepOrder(t *testing.T) {
 	}
 	if len(zt.authorizeCalls) != 1 || zt.authorizeCalls[0] != "member-99" {
 		t.Errorf("authorize calls = %v, want [member-99]", zt.authorizeCalls)
+	}
+	if len(zt.authorizeNames) != 1 || zt.authorizeNames[0] != hostname {
+		t.Errorf("authorize names = %v, want [%s]", zt.authorizeNames, hostname)
 	}
 }
 

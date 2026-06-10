@@ -183,7 +183,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 				return fmt.Errorf("zerotier-auth: wait member: %w", err)
 			}
 			memberID = id
-			if err := deps.zt.Authorize(ctx, networkID, memberID); err != nil {
+			if err := deps.zt.Authorize(ctx, networkID, memberID, deps.prov.Hostname()); err != nil {
 				return fmt.Errorf("zerotier-auth: authorize: %w", err)
 			}
 			authorized = true

@@ -15,7 +15,7 @@ import (
 )
 
 type zerotierAuthorizer interface {
-	Authorize(ctx context.Context, networkID, memberID string) error
+	Authorize(ctx context.Context, networkID, memberID, name string) error
 	Deauthorize(ctx context.Context, networkID, memberID string) error
 	DeleteMember(ctx context.Context, networkID, memberID string) error
 	WaitForMemberByIP(ctx context.Context, networkID, ip string, timeout, poll time.Duration) (string, error)
@@ -151,7 +151,7 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 				return fmt.Errorf("zerotier-auth: wait member: %w", err)
 			}
 			memberID = id
-			if err := deps.zt.Authorize(ctx, networkID, memberID); err != nil {
+			if err := deps.zt.Authorize(ctx, networkID, memberID, deps.prov.Hostname()); err != nil {
 				return fmt.Errorf("zerotier-auth: authorize: %w", err)
 			}
 			authorized = true

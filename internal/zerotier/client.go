@@ -56,8 +56,12 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (*htt
 	return resp, nil
 }
 
-func (c *Client) setAuthorized(ctx context.Context, networkID, memberID string, authorized bool) error {
-	payload, err := json.Marshal(map[string]any{"config": map[string]any{"authorized": authorized}})
+func (c *Client) setAuthorized(ctx context.Context, networkID, memberID, name string, authorized bool) error {
+	member := map[string]any{"config": map[string]any{"authorized": authorized}}
+	if name != "" {
+		member["name"] = name
+	}
+	payload, err := json.Marshal(member)
 	if err != nil {
 		return fmt.Errorf("zerotier: encode authorize payload: %w", err)
 	}
@@ -73,12 +77,12 @@ func (c *Client) setAuthorized(ctx context.Context, networkID, memberID string, 
 	return nil
 }
 
-func (c *Client) Authorize(ctx context.Context, networkID, memberID string) error {
-	return c.setAuthorized(ctx, networkID, memberID, true)
+func (c *Client) Authorize(ctx context.Context, networkID, memberID, name string) error {
+	return c.setAuthorized(ctx, networkID, memberID, name, true)
 }
 
 func (c *Client) Deauthorize(ctx context.Context, networkID, memberID string) error {
-	return c.setAuthorized(ctx, networkID, memberID, false)
+	return c.setAuthorized(ctx, networkID, memberID, "", false)
 }
 
 func (c *Client) ListMembers(ctx context.Context, networkID string) ([]Member, error) {
