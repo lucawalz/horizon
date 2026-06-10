@@ -34,12 +34,12 @@ Format: `<type>/<description>`
 | Type | Alias | Use case | Example |
 |------|-------|----------|---------|
 | `feat/` | `feature/` | New features | `feat/watch-daemon-hysteresis` |
-| `fix/` | `bugfix/` | Bug fixes | `fix/headscale-preauth-revocation` |
-| `hotfix/` | — | Urgent fixes | `hotfix/terraform-state-leak` |
-| `release/` | — | Release preparation | `release/v0.2.0` |
-| `chore/` | — | Non-code tasks (deps, docs) | `chore/update-dependencies` |
+| `fix/` | `bugfix/` | Bug fixes | `fix/zerotier-member-revocation` |
+| `hotfix/` | - | Urgent fixes | `hotfix/terraform-state-leak` |
+| `release/` | - | Release preparation | `release/v0.2.0` |
+| `chore/` | - | Non-code tasks (deps, docs) | `chore/update-dependencies` |
 
-Rules: lowercase letters, numbers, and hyphens only — no uppercase, underscores, spaces, or consecutive hyphens.
+Rules: lowercase letters, numbers, and hyphens only, with no uppercase, underscores, spaces, or consecutive hyphens.
 
 ## Commit conventions
 
@@ -48,9 +48,9 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 **Format**: `<type>[optional scope]: <description>`
 
 - Description: brief, imperative, lowercase, 7–12 words
-- Scope: component name (`cli`, `provider`, `runner`, `k8s`, `headscale`, …)
+- Scope: component name (`cli`, `provider`, `runner`, `k8s`, `zerotier`, …)
 - No period at end of subject line
-- Subject line only — no body, no bullet points
+- Subject line only, no body, no bullet points
 
 **Allowed types**: `feat` `fix` `chore` `ci` `docs` `refactor` `perf` `test` `build`
 
@@ -66,13 +66,13 @@ chore: bump k8s client-go to v0.35
 
 All contributions follow these principles:
 
-- **DRY** — extract shared logic; a change happens in one place
-- **KISS** — simplest solution that correctly solves the problem
-- **SRP** — each function and module has one reason to change
-- **Meaningful names** — names reveal intent without needing comments
-- **No magic numbers** — use named constants
-- **Fail fast** — validate inputs at the earliest possible point
-- **Comments** — add only where the intent is not obvious from the code itself, one line max
+- **DRY**: extract shared logic; a change happens in one place
+- **KISS**: simplest solution that correctly solves the problem
+- **SRP**: each function and module has one reason to change
+- **Meaningful names**: names reveal intent without needing comments
+- **No magic numbers**: use named constants
+- **Fail fast**: validate inputs at the earliest possible point
+- **Comments**: add only where the intent is not obvious from the code itself, one line max
 
 ## Architectural decisions
 
