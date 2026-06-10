@@ -9,7 +9,7 @@ Cloud VMs must be provisioned and destroyed reliably across at least two provide
 
 ## Decision
 
-Use Terraform (via `terraform-exec`) for VM provisioning. Terraform modules live in the `nixos-homelab` repository at a path configured by `infra_path` in `config.yaml`.
+Use Terraform (via `terraform-exec`) for VM provisioning. Terraform modules live in the `bedrock` repository at a path configured by `infra_path` in `config.yaml`.
 
 ## Consequences
 
