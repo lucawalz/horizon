@@ -240,6 +240,41 @@ func TestNon2xxReturnsError(t *testing.T) {
 	}
 }
 
+func TestRetriesTransientThenSucceeds(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) < 3 {
+			http.Error(w, "busy", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	c := zerotier.NewClient(srv.URL, "tok")
+	if err := c.Authorize(context.Background(), "nw", "m", "horizon-burst-x"); err != nil {
+		t.Fatalf("Authorize after transient 503s: %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Errorf("calls = %d, want 3", got)
+	}
+}
+
+func TestContextDeadlineStopsRetries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "busy", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	c := zerotier.NewClient(srv.URL, "tok")
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := c.Authorize(ctx, "nw", "m", "")
+	if err == nil {
+		t.Fatal("expected error when context deadline exceeded")
+	}
+}
+
 func TestDeleteMember(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

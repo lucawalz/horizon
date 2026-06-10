@@ -11,7 +11,13 @@ import (
 	"time"
 )
 
-const apiBaseURL = "https://api.zerotier.com"
+const (
+	apiBaseURL        = "https://api.zerotier.com"
+	requestTimeout    = 12 * time.Second
+	maxRetries        = 3
+	retryBackoffBase  = 500 * time.Millisecond
+	statusTooManyReqs = 429
+)
 
 type Member struct {
 	ID              string
@@ -36,13 +42,15 @@ func NewClient(apiURL, token string) *Client {
 	return &Client{apiURL: base, token: token, http: http.DefaultClient}
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+func (c *Client) doOnce(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	var br io.Reader
 	if body != nil {
 		br = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.apiURL+path, br)
+	req, err := http.NewRequestWithContext(attemptCtx, method, c.apiURL+path, br)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("zerotier: build %s %s: %w", method, path, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
@@ -51,9 +59,54 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (*htt
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("zerotier: %s %s: %w", method, path, err)
 	}
+	resp.Body = &cancelOnCloseBody{ReadCloser: resp.Body, cancel: cancel}
 	return resp, nil
+}
+
+func (c *Client) do(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryBackoffBase << (attempt - 1)):
+			}
+		}
+		resp, err := c.doOnce(ctx, method, path, body)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			lastErr = err
+			continue
+		}
+		if isRetryableStatus(resp.StatusCode) {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("zerotier: %s %s: status %d", method, path, resp.StatusCode)
+			continue
+		}
+		return resp, nil
+	}
+	return nil, lastErr
+}
+
+func isRetryableStatus(code int) bool {
+	return code == statusTooManyReqs || code >= 500
+}
+
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 func (c *Client) setAuthorized(ctx context.Context, networkID, memberID, name string, authorized bool) error {
