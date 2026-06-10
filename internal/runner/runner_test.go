@@ -115,6 +115,36 @@ func TestRunnerNilRollback(t *testing.T) {
 	}
 }
 
+func TestRollbackRunsWithLiveContext(t *testing.T) {
+	var rollbackErr error
+	rollbackErr = errors.New("not run")
+	failure := errors.New("boom")
+	r := &runner.Runner{}
+
+	r.Add(runner.Step{
+		Name: "destroy-step",
+		Run:  func(ctx context.Context) error { return nil },
+		Rollback: func(ctx context.Context) error {
+			rollbackErr = ctx.Err()
+			return nil
+		},
+	})
+	r.Add(runner.Step{
+		Name: "fail-step",
+		Run:  func(ctx context.Context) error { return failure },
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := r.Run(ctx); err == nil {
+		t.Fatal("expected error")
+	}
+	if rollbackErr != nil {
+		t.Fatalf("rollback ctx.Err() = %v, want nil despite cancelled parent", rollbackErr)
+	}
+}
+
 func TestRunnerErrorWrapping(t *testing.T) {
 	sentinel := errors.New("underlying")
 	r := &runner.Runner{}

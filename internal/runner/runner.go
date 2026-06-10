@@ -32,10 +32,11 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 func (r *Runner) rollback(ctx context.Context) {
+	rbCtx := context.WithoutCancel(ctx)
 	for i := len(r.done) - 1; i >= 0; i-- {
 		s := r.steps[r.done[i]]
 		if s.Rollback != nil {
-			if rbErr := s.Rollback(ctx); rbErr != nil {
+			if rbErr := s.Rollback(rbCtx); rbErr != nil {
 				fmt.Fprintf(os.Stderr, "rollback %s: %v\n", s.Name, rbErr)
 			}
 		}

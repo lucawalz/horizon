@@ -18,6 +18,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
+const (
+	zerotierCleanupTimeout = 30 * time.Second
+	migrateRollbackTimeout = 30 * time.Second
+)
+
 var burstSteps = []string{
 	"Create Velero backup of target namespace",
 	"Run terraform apply (provider: hetzner)",
@@ -189,8 +194,8 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 			authorized = true
 			return nil
 		},
-		Rollback: func(_ context.Context) error {
-			rbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		Rollback: func(ctx context.Context) error {
+			rbCtx, cancel := context.WithTimeout(ctx, zerotierCleanupTimeout)
 			defer cancel()
 			if memberID == "" {
 				return nil
@@ -247,8 +252,8 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 			savedMigrate = state
 			return err
 		},
-		Rollback: func(_ context.Context) error {
-			rbCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		Rollback: func(ctx context.Context) error {
+			rbCtx, cancel := context.WithTimeout(ctx, migrateRollbackTimeout)
 			defer cancel()
 			_ = k8s.WriteBurstPhase(rbCtx, deps.kc, k8s.BurstPhaseTearingDown)
 			return k8s.RollbackMigrate(rbCtx, deps.kc, savedMigrate)

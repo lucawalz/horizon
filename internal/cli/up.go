@@ -158,13 +158,15 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 			return nil
 		},
 		Rollback: func(ctx context.Context) error {
+			rbCtx, cancel := context.WithTimeout(ctx, zerotierCleanupTimeout)
+			defer cancel()
 			if memberID == "" {
 				return nil
 			}
 			if authorized {
-				_ = deps.zt.Deauthorize(ctx, networkID, memberID)
+				_ = deps.zt.Deauthorize(rbCtx, networkID, memberID)
 			}
-			return deps.zt.DeleteMember(ctx, networkID, memberID)
+			return deps.zt.DeleteMember(rbCtx, networkID, memberID)
 		},
 	})
 

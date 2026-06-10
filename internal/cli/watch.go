@@ -41,7 +41,7 @@ const (
 
 const (
 	pollInterval        = 30 * time.Second
-	shutdownGracePeriod = 60 * time.Second
+	shutdownGracePeriod = 3 * time.Minute
 	waitPollInterval    = 100 * time.Millisecond
 	nodeBurstLabel      = "horizon.dev/burst=true"
 	burstHostnamePrefix = "horizon-burst-"
