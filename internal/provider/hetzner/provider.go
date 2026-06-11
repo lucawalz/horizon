@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/zerotier"
 )
+
+const sharedInfraTimeout = 10 * time.Minute
 
 type Provider struct {
 	cfg               *config.Config
@@ -91,9 +94,62 @@ func (p *Provider) ensureIdentity(ctx context.Context) error {
 	return nil
 }
 
+func (p *Provider) sharedDir() string { return filepath.Join(p.workDir, "shared") }
+
+func (p *Provider) EnsureSharedInfra(ctx context.Context) error {
+	if p.sshPublicKey == "" {
+		return fmt.Errorf("hetzner: ensure shared infra: missing ssh public key")
+	}
+	tf, err := tfexec.NewTerraform(p.sharedDir(), "terraform")
+	if err != nil {
+		return fmt.Errorf("hetzner: ensure shared infra: %w", err)
+	}
+	tf.SetStdout(os.Stderr)
+	tf.SetStderr(os.Stderr)
+	if err := p.setBaseEnv(tf, nil); err != nil {
+		return fmt.Errorf("hetzner: ensure shared infra: %w", err)
+	}
+	tctx, cancel := context.WithTimeout(ctx, sharedInfraTimeout)
+	defer cancel()
+	if err := tf.Init(tctx, tfexec.Upgrade(false)); err != nil {
+		return fmt.Errorf("hetzner: ensure shared infra: %w", err)
+	}
+	if err := tf.Apply(tctx, tfexec.LockTimeout("30s"), tfexec.Var("ssh_public_key="+p.sshPublicKey)); err != nil {
+		return fmt.Errorf("hetzner: ensure shared infra: %w", err)
+	}
+	return nil
+}
+
+func (p *Provider) DestroySharedInfra(ctx context.Context) error {
+	if p.sshPublicKey == "" {
+		return fmt.Errorf("hetzner: destroy shared infra: missing ssh public key")
+	}
+	tf, err := tfexec.NewTerraform(p.sharedDir(), "terraform")
+	if err != nil {
+		return fmt.Errorf("hetzner: destroy shared infra: %w", err)
+	}
+	tf.SetStdout(os.Stderr)
+	tf.SetStderr(os.Stderr)
+	if err := p.setBaseEnv(tf, nil); err != nil {
+		return fmt.Errorf("hetzner: destroy shared infra: %w", err)
+	}
+	tctx, cancel := context.WithTimeout(ctx, sharedInfraTimeout)
+	defer cancel()
+	if err := tf.Init(tctx, tfexec.Upgrade(false)); err != nil {
+		return fmt.Errorf("hetzner: destroy shared infra: %w", err)
+	}
+	if err := tf.Destroy(tctx, tfexec.LockTimeout("30s"), tfexec.Var("ssh_public_key="+p.sshPublicKey)); err != nil {
+		return fmt.Errorf("hetzner: destroy shared infra: %w", err)
+	}
+	return nil
+}
+
 func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	if err := p.ensureIdentity(ctx); err != nil {
 		return err
+	}
+	if err := p.EnsureSharedInfra(ctx); err != nil {
+		return fmt.Errorf("hetzner: apply: %w", err)
 	}
 	tf, err := tfexec.NewTerraform(p.workDir, "terraform")
 	if err != nil {

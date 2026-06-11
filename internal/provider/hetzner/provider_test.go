@@ -1,6 +1,7 @@
 package hetzner_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/config"
@@ -134,6 +135,21 @@ func TestGenerateTFVarsWithoutIdentity(t *testing.T) {
 	p.SetRuntimeSecrets("nw-abc", "ssh-rsa AAAA", "https://10.147.20.1:6443", "tok")
 	if _, err := p.GenerateTFVars(); err != nil {
 		t.Fatalf("GenerateTFVars must not require an identity: %v", err)
+	}
+}
+
+func TestEnsureSharedInfra_RequiresSSHKey(t *testing.T) {
+	cfg := newTestConfig()
+	p := hetzner.New(cfg, t.TempDir())
+	if err := p.EnsureSharedInfra(context.Background()); err == nil {
+		t.Fatal("expected error when ssh public key missing")
+	}
+}
+
+func TestSharedDir(t *testing.T) {
+	cfg := newTestConfig()
+	if got := hetzner.New(cfg, "/x").SharedDirForTest(); got != "/x/shared" {
+		t.Errorf("sharedDir = %q, want %q", got, "/x/shared")
 	}
 }
 
