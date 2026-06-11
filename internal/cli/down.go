@@ -42,6 +42,10 @@ func newDownCmd(app *App) *cobra.Command {
 			if dryRun {
 				return runDownDryRun(app)
 			}
+			shared, _ := cmd.Flags().GetBool("shared")
+			if shared {
+				return runDownShared(cmd.Context(), app)
+			}
 			burstID, _ := cmd.Flags().GetString("burst-id")
 			stateDir, err := stateDirOrTestOverride()
 			if err != nil {
@@ -67,7 +71,21 @@ func newDownCmd(app *App) *cobra.Command {
 	}
 	cmd.Flags().Bool("dry-run", false, "Print planned down sequence without executing")
 	cmd.Flags().String("burst-id", "", "Burst id to tear down (omit when exactly one state file exists)")
+	cmd.Flags().Bool("shared", false, "Tear down shared burst infrastructure (operator ssh key + firewall) instead of a burst node")
 	return cmd
+}
+
+func runDownShared(ctx context.Context, app *App) error {
+	prov := hetzner.New(app.Config, app.Config.InfraPath)
+	sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
+	k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
+	k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
+	prov.SetRuntimeSecrets(app.Config.ZeroTier.NetworkID, sshPub, k3sURL, k3sToken)
+	if err := prov.DestroySharedInfra(ctx); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Shared burst infrastructure torn down.")
+	return nil
 }
 
 func newDownDeps(app *App, burstID string) (*downDeps, error) {
