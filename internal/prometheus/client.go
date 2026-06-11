@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	promapi "github.com/prometheus/client_golang/api"
@@ -13,16 +14,18 @@ import (
 	"github.com/prometheus/common/model"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
+
+	"github.com/lucawalz/horizon/internal/k8s"
 )
 
 const (
 	prometheusServiceName = "kube-prometheus-stack-prometheus"
 	prometheusNamespace   = "monitoring"
 	prometheusPort        = 9090
+	inClusterURLEnv       = "HORIZON_PROMETHEUS_URL"
+	defaultInClusterURL   = "http://kube-prometheus-stack-prometheus.monitoring.svc:9090"
 )
 
 type Client struct {
@@ -36,6 +39,10 @@ func NewClientFromAPI(api v1.API) *Client {
 }
 
 func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, error) {
+	if kubeconfigPath == "" && k8s.InCluster() {
+		return newDirectClient()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -54,17 +61,10 @@ func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, 
 	}
 	podName := targetRef.Name
 
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if kubeconfigPath != "" {
-		rules.ExplicitPath = kubeconfigPath
-	}
-	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		rules, &clientcmd.ConfigOverrides{},
-	).ClientConfig()
+	restCfg, err := k8s.RestConfig(kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig for port-forward: %w", err)
 	}
-	restCfg.WarningHandler = rest.NoWarnings{}
 
 	localPort, err := getFreePort()
 	if err != nil {
@@ -126,6 +126,21 @@ func NewClient(clientset kubernetes.Interface, kubeconfigPath string) (*Client, 
 		api:     v1.NewAPI(apiClient),
 		baseURL: baseURL,
 		stopCh:  stopCh,
+	}, nil
+}
+
+func newDirectClient() (*Client, error) {
+	baseURL := os.Getenv(inClusterURLEnv)
+	if baseURL == "" {
+		baseURL = defaultInClusterURL
+	}
+	apiClient, err := promapi.NewClient(promapi.Config{Address: baseURL})
+	if err != nil {
+		return nil, fmt.Errorf("prometheus api client: %w", err)
+	}
+	return &Client{
+		api:     v1.NewAPI(apiClient),
+		baseURL: baseURL,
 	}, nil
 }
 
