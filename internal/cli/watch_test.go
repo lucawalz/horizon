@@ -9,6 +9,7 @@ import (
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/prometheus/common/model"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -553,6 +554,62 @@ func TestAdoptActiveBursts_DiscoversLiveNodeOnRestart(t *testing.T) {
 	}
 	if got[0] != "survivor" || got[1] != "unknown" {
 		t.Errorf("adopted set must be oldest-first by creationTimestamp, got %v", got)
+	}
+}
+
+func TestVectorAverageExcludingHosts_DropsBurstInstances(t *testing.T) {
+	vec := model.Vector{
+		sampleAt("192.168.2.191:9100", 0.4),
+		sampleAt("192.168.2.100:9100", 0.6),
+		sampleAt("192.168.2.250:9100", 1.0),
+	}
+	exclude := map[string]bool{"192.168.2.250": true}
+
+	got := cli.VectorAverageExcludingHostsForTest(vec, exclude)
+	want := (0.4 + 0.6) / 2
+	if got != want {
+		t.Errorf("average excluding burst host = %v, want %v", got, want)
+	}
+
+	allExcluded := map[string]bool{"192.168.2.191": true, "192.168.2.100": true, "192.168.2.250": true}
+	if got := cli.VectorAverageExcludingHostsForTest(vec, allExcluded); got != 0 {
+		t.Errorf("fully excluded vector must average 0, got %v", got)
+	}
+}
+
+func TestBurstNodeInternalIPs_ReturnsLabelledNodeIPs(t *testing.T) {
+	mkNode := func(name, ip string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"horizon.dev/burst": "true"}},
+			Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+				{Type: corev1.NodeInternalIP, Address: ip},
+				{Type: corev1.NodeHostName, Address: name},
+			}},
+		}
+	}
+	plain := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "master"},
+		Status:     corev1.NodeStatus{Addresses: []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "192.168.2.191"}}},
+	}
+	kc := fake.NewSimpleClientset(
+		mkNode("horizon-burst-aaaa", "192.168.2.250"),
+		mkNode("horizon-burst-bbbb", "192.168.2.251"),
+		plain,
+	)
+
+	ips, err := cli.BurstNodeInternalIPsForTest(context.Background(), kc)
+	if err != nil {
+		t.Fatalf("BurstNodeInternalIPsForTest: %v", err)
+	}
+	if len(ips) != 2 || !ips["192.168.2.250"] || !ips["192.168.2.251"] {
+		t.Errorf("burst internal IPs = %v, want the two labelled node IPs only", ips)
+	}
+}
+
+func TestPendingPressureQuery_ExcludesManagedNamespace(t *testing.T) {
+	q := cli.PendingPressureQueryForTest("uat-sc7")
+	if !containsStr(q, `namespace!="uat-sc7"`) {
+		t.Errorf("query %q must exclude the managed namespace", q)
 	}
 }
 

@@ -241,10 +241,13 @@ func buildSnapshot(state WatchRuntimeState, score float64, now time.Time) watchM
 }
 
 const (
-	cpuPressureQuery     = `1 - avg by (instance)(rate(node_cpu_seconds_total{mode="idle"}[5m]))`
-	memPressureQuery     = `1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)`
-	pendingPressureQuery = `count(kube_pod_status_phase{phase="Pending"}==1) or vector(0)`
+	cpuPressureQuery = `1 - avg by (instance)(rate(node_cpu_seconds_total{mode="idle"}[5m]))`
+	memPressureQuery = `1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)`
 )
+
+func pendingPressureQuery(namespace string) string {
+	return fmt.Sprintf(`count(kube_pod_status_phase{phase="Pending",namespace!=%q}==1) or vector(0)`, namespace)
+}
 
 func runSinglePollCycle(ctx context.Context, deps *watchDeps, state *WatchRuntimeState) error {
 	var cpu, mem float64
@@ -252,9 +255,19 @@ func runSinglePollCycle(ctx context.Context, deps *watchDeps, state *WatchRuntim
 	if deps.prom != nil {
 		cpuVec, _ := deps.prom.QueryInstant(ctx, cpuPressureQuery)
 		memVec, _ := deps.prom.QueryInstant(ctx, memPressureQuery)
-		pendVec, _ := deps.prom.QueryInstant(ctx, pendingPressureQuery)
-		cpu = vectorAverage(cpuVec)
-		mem = vectorAverage(memVec)
+		pendVec, _ := deps.prom.QueryInstant(ctx, pendingPressureQuery(deps.workload))
+		if deps.kc != nil {
+			excludeHosts, err := burstNodeInternalIPs(ctx, deps.kc)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "watch: list burst node IPs: %v\n", err)
+				excludeHosts = map[string]bool{}
+			}
+			cpu = vectorAverageExcludingHosts(cpuVec, excludeHosts)
+			mem = vectorAverageExcludingHosts(memVec, excludeHosts)
+		} else {
+			cpu = vectorAverage(cpuVec)
+			mem = vectorAverage(memVec)
+		}
 		if len(pendVec) > 0 {
 			pending = int(pendVec[0].Value)
 		}
@@ -307,6 +320,27 @@ func vectorAverage(vec model.Vector) float64 {
 		sum += float64(s.Value)
 	}
 	return sum / float64(len(vec))
+}
+
+func vectorAverageExcludingHosts(vec model.Vector, excludeHosts map[string]bool) float64 {
+	var sum float64
+	count := 0
+	for _, s := range vec {
+		instance := string(s.Metric["instance"])
+		host := instance
+		if i := strings.IndexByte(instance, ':'); i >= 0 {
+			host = instance[:i]
+		}
+		if excludeHosts[host] {
+			continue
+		}
+		sum += float64(s.Value)
+		count++
+	}
+	if count == 0 {
+		return 0
+	}
+	return sum / float64(count)
 }
 
 func persistWatchState(ctx context.Context, kc kubernetes.Interface, s WatchRuntimeState) error {
@@ -546,6 +580,22 @@ func liveBurstNodeIDsOrdered(ctx context.Context, kc kubernetes.Interface) ([]st
 	return ids, nil
 }
 
+func burstNodeInternalIPs(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: nodeBurstLabel})
+	if err != nil {
+		return nil, err
+	}
+	ips := make(map[string]bool)
+	for _, n := range nodes.Items {
+		for _, addr := range n.Status.Addresses {
+			if addr.Type == corev1.NodeInternalIP {
+				ips[addr.Address] = true
+			}
+		}
+	}
+	return ips, nil
+}
+
 func adoptActiveBursts(ctx context.Context, kc kubernetes.Interface, ws k8s.WatchState) []string {
 	live, err := liveBurstNodeIDsOrdered(ctx, kc)
 	if err != nil {
@@ -752,6 +802,18 @@ func AdoptActiveBurstsForTest(ctx context.Context, kc kubernetes.Interface, ws k
 
 func NewWatchDepsForTest(kc kubernetes.Interface, prom promQuerier, factory pusherFactory, cfg *config.Config, workload string) *watchDeps {
 	return &watchDeps{kc: kc, prom: prom, pushFactory: factory, cfg: cfg, workload: workload}
+}
+
+func VectorAverageExcludingHostsForTest(vec model.Vector, excludeHosts map[string]bool) float64 {
+	return vectorAverageExcludingHosts(vec, excludeHosts)
+}
+
+func BurstNodeInternalIPsForTest(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
+	return burstNodeInternalIPs(ctx, kc)
+}
+
+func PendingPressureQueryForTest(namespace string) string {
+	return pendingPressureQuery(namespace)
 }
 
 func newWatchCmd(app *App) *cobra.Command {
