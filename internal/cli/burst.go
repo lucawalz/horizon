@@ -38,12 +38,11 @@ type veleroClient interface {
 }
 
 type burstDeps struct {
-	zt               zerotierAuthorizer
-	prov             hetznerProvider
-	kc               kubernetes.Interface
-	vc               veleroClient
-	skipPreflight    bool
-	preExistingNodes map[string]bool
+	zt            zerotierAuthorizer
+	prov          hetznerProvider
+	kc            kubernetes.Interface
+	vc            veleroClient
+	skipPreflight bool
 }
 
 func newBurstCmd(app *App) *cobra.Command {
@@ -127,14 +126,6 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	}
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	if deps.preExistingNodes == nil {
-		names, err := hetzner.ListNodeNames(ctx, deps.kc)
-		if err != nil {
-			return fmt.Errorf("burst: snapshot existing nodes: %w", err)
-		}
-		deps.preExistingNodes = names
-	}
 
 	var memberID string
 	var authorized bool
@@ -234,9 +225,8 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	r.Add(runner.Step{
 		Name: "wait-node-ready",
 		Run: func(ctx context.Context) error {
-			name, err := hetzner.WaitNewNodeReady(ctx, deps.kc, deps.preExistingNodes, 5*time.Minute, 5*time.Second)
-			burstNodeName = name
-			return err
+			burstNodeName = deps.prov.Hostname()
+			return hetzner.WaitNodeReady(ctx, deps.kc, burstNodeName, 5*time.Minute, 5*time.Second)
 		},
 		Rollback: func(ctx context.Context) error {
 			if burstNodeName == "" {
@@ -297,7 +287,6 @@ func RunBurstDryRunForTest(app *App) error { return runBurstDryRun(app) }
 func RunBurstForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface, vc veleroClient, workload string) error {
 	return runBurst(ctx, app, &burstDeps{
 		zt: zt, prov: prov, kc: kc, vc: vc,
-		skipPreflight:    true,
-		preExistingNodes: map[string]bool{},
+		skipPreflight: true,
 	}, workload)
 }

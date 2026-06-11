@@ -78,6 +78,39 @@ func WaitNewNodeReady(ctx context.Context, kc kubernetes.Interface, exclude map[
 	}
 }
 
+func WaitNodeReady(ctx context.Context, kc kubernetes.Interface, name string, timeout, poll time.Duration) error {
+	if poll <= 0 {
+		poll = 5 * time.Second
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		ready, err := nodeIsReady(pollCtx, kc, name)
+		if err != nil {
+			lastErr = err
+		} else if ready {
+			return nil
+		} else {
+			lastErr = fmt.Errorf("node %s not Ready", name)
+		}
+		select {
+		case <-pollCtx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("hetzner: wait node %s ready: timeout: %w", name, lastErr)
+			}
+			return fmt.Errorf("hetzner: wait node %s ready: timeout after %s", name, timeout)
+		case <-ticker.C:
+		}
+	}
+}
+
 func nodeIsReady(ctx context.Context, kc kubernetes.Interface, name string) (bool, error) {
 	n, err := kc.CoreV1().Nodes().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
