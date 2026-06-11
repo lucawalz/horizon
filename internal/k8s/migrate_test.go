@@ -325,44 +325,74 @@ func TestValidateNamespace(t *testing.T) {
 	}
 }
 
-func TestWaitPodsRunningOnNode_AllRunning(t *testing.T) {
-	pod := makePod("p1", "sentio-systems", "burst-1", corev1.PodRunning)
-	kc := fake.NewSimpleClientset(pod)
-	err := k8s.WaitPodsRunningOnNode(context.Background(), kc, "sentio-systems", "burst-1", 10*time.Millisecond, 1*time.Second)
-	if err != nil {
-		t.Errorf("WaitPodsRunningOnNode = %v, want nil", err)
+func burstNode(name, ns string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: map[string]string{k8s.NodeAffinityLabelKey: ns},
+		},
 	}
 }
 
-func TestWaitPodsRunningOnNode_Timeout(t *testing.T) {
-	pod := makePod("p1", "sentio-systems", "homelab-1", corev1.PodRunning)
-	kc := fake.NewSimpleClientset(pod)
-	err := k8s.WaitPodsRunningOnNode(context.Background(), kc, "sentio-systems", "burst-1", 10*time.Millisecond, 100*time.Millisecond)
+func TestWaitWorkloadOnBurstNodes_SpreadAcrossNodes(t *testing.T) {
+	ns := "sentio-systems"
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", ns),
+		burstNode("burst-2", ns),
+		makePod("p1", ns, "burst-1", corev1.PodRunning),
+		makePod("p2", ns, "burst-2", corev1.PodRunning),
+	)
+	err := k8s.WaitWorkloadOnBurstNodes(context.Background(), kc, ns, 10*time.Millisecond, 1*time.Second)
+	if err != nil {
+		t.Errorf("WaitWorkloadOnBurstNodes = %v, want nil", err)
+	}
+}
+
+func TestWaitWorkloadOnBurstNodes_PendingTimesOut(t *testing.T) {
+	ns := "sentio-systems"
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", ns),
+		makePod("p1", ns, "burst-1", corev1.PodRunning),
+		makePod("p2", ns, "burst-1", corev1.PodPending),
+	)
+	err := k8s.WaitWorkloadOnBurstNodes(context.Background(), kc, ns, 10*time.Millisecond, 100*time.Millisecond)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
-	if !strings.Contains(err.Error(), "wait-pods") {
-		t.Errorf("error %q does not contain 'wait-pods'", err.Error())
-	}
-	if !strings.Contains(err.Error(), "timeout") {
-		t.Errorf("error %q does not contain 'timeout'", err.Error())
+	if !strings.Contains(err.Error(), "wait-pods") || !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("error %q missing wait-pods/timeout", err.Error())
 	}
 }
 
-func TestWaitPodsRunningOnNode_DaemonSetIgnored(t *testing.T) {
-	appPod := makePod("app", "sentio-systems", "burst-1", corev1.PodRunning)
-	dsPod := makeDSPod("ds-pod", "sentio-systems", "homelab-1")
-	kc := fake.NewSimpleClientset(appPod, dsPod)
-	err := k8s.WaitPodsRunningOnNode(context.Background(), kc, "sentio-systems", "burst-1", 10*time.Millisecond, 1*time.Second)
-	if err != nil {
-		t.Errorf("WaitPodsRunningOnNode = %v, want nil", err)
-	}
-}
-
-func TestWaitPodsRunningOnNode_EmptyNamespace(t *testing.T) {
-	kc := fake.NewSimpleClientset()
-	err := k8s.WaitPodsRunningOnNode(context.Background(), kc, "sentio-systems", "burst-1", 10*time.Millisecond, 100*time.Millisecond)
+func TestWaitWorkloadOnBurstNodes_UnlabeledNodeTimesOut(t *testing.T) {
+	ns := "sentio-systems"
+	kc := fake.NewSimpleClientset(
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "homelab-1"}},
+		makePod("p1", ns, "homelab-1", corev1.PodRunning),
+	)
+	err := k8s.WaitWorkloadOnBurstNodes(context.Background(), kc, ns, 10*time.Millisecond, 100*time.Millisecond)
 	if err == nil {
-		t.Fatal("expected timeout error for empty namespace, got nil")
+		t.Fatal("expected timeout when pod sits on an unlabeled node")
+	}
+}
+
+func TestWaitWorkloadOnBurstNodes_DaemonSetIgnored(t *testing.T) {
+	ns := "sentio-systems"
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", ns),
+		makePod("app", ns, "burst-1", corev1.PodRunning),
+		makeDSPod("ds-pod", ns, "homelab-1"),
+	)
+	err := k8s.WaitWorkloadOnBurstNodes(context.Background(), kc, ns, 10*time.Millisecond, 1*time.Second)
+	if err != nil {
+		t.Errorf("WaitWorkloadOnBurstNodes = %v, want nil", err)
+	}
+}
+
+func TestWaitWorkloadOnBurstNodes_EmptyNamespace(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	err := k8s.WaitWorkloadOnBurstNodes(context.Background(), kc, "", 10*time.Millisecond, 100*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected error for empty namespace, got nil")
 	}
 }

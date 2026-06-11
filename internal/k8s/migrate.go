@@ -396,7 +396,7 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 
 func IsDaemonSetPod(pod *corev1.Pod) bool { return isDaemonSetPod(pod) }
 
-func WaitPodsRunningOnNode(ctx context.Context, kc kubernetes.Interface, namespace, nodeName string, poll, timeout time.Duration) error {
+func WaitWorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, poll, timeout time.Duration) error {
 	if namespace == "" {
 		return fmt.Errorf("wait-pods: namespace must not be empty")
 	}
@@ -405,24 +405,8 @@ func WaitPodsRunningOnNode(ctx context.Context, kc kubernetes.Interface, namespa
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
-		pods, err := kc.CoreV1().Pods(namespace).List(pollCtx, metav1.ListOptions{})
-		if err == nil {
-			allReady := false
-			counted := 0
-			for _, p := range pods.Items {
-				if isDaemonSetPod(&p) {
-					continue
-				}
-				counted++
-				if p.Spec.NodeName != nodeName || p.Status.Phase != corev1.PodRunning {
-					counted = -1
-					break
-				}
-			}
-			if counted > 0 {
-				allReady = true
-			}
-			if allReady {
+		if burstNodes, err := burstNodesForNamespace(pollCtx, kc, namespace); err == nil {
+			if ready, perr := workloadSpreadReady(pollCtx, kc, namespace, burstNodes); perr == nil && ready {
 				return nil
 			}
 		}
@@ -435,4 +419,37 @@ func WaitPodsRunningOnNode(ctx context.Context, kc kubernetes.Interface, namespa
 		case <-ticker.C:
 		}
 	}
+}
+
+func burstNodesForNamespace(ctx context.Context, kc kubernetes.Interface, namespace string) (map[string]bool, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	burst := map[string]bool{}
+	for i := range nodes.Items {
+		if nodes.Items[i].Labels[NodeAffinityLabelKey] == namespace {
+			burst[nodes.Items[i].Name] = true
+		}
+	}
+	return burst, nil
+}
+
+func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace string, burstNodes map[string]bool) (bool, error) {
+	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, err
+	}
+	counted := 0
+	for i := range pods.Items {
+		p := pods.Items[i]
+		if isDaemonSetPod(&p) {
+			continue
+		}
+		counted++
+		if p.Status.Phase != corev1.PodRunning || !burstNodes[p.Spec.NodeName] {
+			return false, nil
+		}
+	}
+	return counted > 0, nil
 }
