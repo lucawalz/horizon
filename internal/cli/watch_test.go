@@ -260,7 +260,7 @@ func TestReconcileActiveBurstIDs_PrunesPhantom(t *testing.T) {
 	got := cli.ReconcileActiveBurstIDsForTest(
 		[]string{"phantom"},
 		map[string]bool{},
-		map[string]bool{},
+		nil,
 	)
 	if len(got) != 0 {
 		t.Errorf("phantom id (exited, no node) must be pruned, got %v", got)
@@ -271,7 +271,7 @@ func TestReconcileActiveBurstIDs_KeepsInFlight(t *testing.T) {
 	got := cli.ReconcileActiveBurstIDsForTest(
 		[]string{"booting"},
 		map[string]bool{"booting": true},
-		map[string]bool{},
+		nil,
 	)
 	if len(got) != 1 || got[0] != "booting" {
 		t.Errorf("in-flight id (no node yet) must be kept, got %v", got)
@@ -282,10 +282,49 @@ func TestReconcileActiveBurstIDs_KeepsLiveNode(t *testing.T) {
 	got := cli.ReconcileActiveBurstIDsForTest(
 		[]string{"healthy"},
 		map[string]bool{},
-		map[string]bool{"healthy": true},
+		[]string{"healthy"},
 	)
 	if len(got) != 1 || got[0] != "healthy" {
 		t.Errorf("successful id (live node, subprocess exited) must be kept, got %v", got)
+	}
+}
+
+func TestReconcileActiveBurstIDs_DiscoversDroppedLiveNode(t *testing.T) {
+	got := cli.ReconcileActiveBurstIDsForTest(
+		[]string{},
+		map[string]bool{},
+		[]string{"3f5cbbf3"},
+	)
+	if len(got) != 1 || got[0] != "3f5cbbf3" {
+		t.Errorf("live node missing from prior list must be re-discovered, got %v", got)
+	}
+}
+
+func TestReconcileActiveBurstIDs_OrdersLiveNodesBeforeInFlight(t *testing.T) {
+	got := cli.ReconcileActiveBurstIDsForTest(
+		[]string{"booting"},
+		map[string]bool{"booting": true},
+		[]string{"oldlive", "newlive"},
+	)
+	want := []string{"oldlive", "newlive", "booting"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v (oldest-first: live nodes by creation, in-flight after)", got, want)
+		}
+	}
+}
+
+func TestReconcileActiveBurstIDs_NoDuplicateWhenLiveAndInFlight(t *testing.T) {
+	got := cli.ReconcileActiveBurstIDsForTest(
+		[]string{"joining"},
+		map[string]bool{"joining": true},
+		[]string{"joining"},
+	)
+	if len(got) != 1 || got[0] != "joining" {
+		t.Errorf("a burst both in-flight and live must be counted once, got %v", got)
 	}
 }
 
@@ -327,7 +366,7 @@ func TestScaleIn_FailedTeardownDoesNotForgetNode(t *testing.T) {
 		t.Fatal("a victim whose teardown failed must remain in ActiveBurstIDs")
 	}
 
-	kept := cli.ReconcileActiveBurstIDsForTest(state.ActiveBurstIDs, map[string]bool{}, map[string]bool{"aaaa1111": true})
+	kept := cli.ReconcileActiveBurstIDsForTest(state.ActiveBurstIDs, map[string]bool{}, []string{"aaaa1111"})
 	if len(kept) != 1 || kept[0] != "aaaa1111" {
 		t.Errorf("level-reconcile must retain victim while its node still exists, got %v", kept)
 	}
@@ -411,6 +450,109 @@ func TestRunWatch_Shutdown_OnSIGTERM(t *testing.T) {
 
 	if mp.calls < 1 {
 		t.Errorf("pusher calls = %d, want >= 1", mp.calls)
+	}
+}
+
+func burstNodeAt(id string, created time.Time) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "horizon-burst-" + id,
+			Labels:            map[string]string{"horizon.dev/burst": "true"},
+			CreationTimestamp: metav1.NewTime(created),
+		},
+		Status: corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+	}
+}
+
+func TestReconcileActiveState_SelfHealsDroppedLiveNode(t *testing.T) {
+	base := time.Now()
+	kc := fake.NewSimpleClientset(burstNodeAt("3f5cbbf3", base))
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{}}
+
+	cli.ReconcileActiveStateForTest(context.Background(), kc, nil, &state)
+
+	if len(state.ActiveBurstIDs) != 1 || state.ActiveBurstIDs[0] != "3f5cbbf3" {
+		t.Fatalf("dropped live node must be re-discovered, got %v", state.ActiveBurstIDs)
+	}
+}
+
+func TestReconcileActiveState_CapHoldsAgainstRealCount(t *testing.T) {
+	base := time.Now()
+	kc := fake.NewSimpleClientset(
+		burstNodeAt("aaaa1111", base),
+		burstNodeAt("bbbb2222", base.Add(time.Minute)),
+	)
+	thresholds := config.ThresholdConfig{Burst: 0.80, ScaleDown: 0.40, MaxBurstNodes: 2}
+
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{}, PressureCount: 5}
+	cli.ReconcileActiveStateForTest(context.Background(), kc, nil, &state)
+
+	if len(state.ActiveBurstIDs) != 2 {
+		t.Fatalf("real count must be 2 after reconcile, got %v", state.ActiveBurstIDs)
+	}
+	if cli.DecideScaleActionForTest(state, 0.95, thresholds) != cli.ScaleNone {
+		t.Error("cap must hold against the real reconciled count even under high pressure")
+	}
+}
+
+func TestReconcileActiveState_CapHoldsWithLivePlusInFlight(t *testing.T) {
+	base := time.Now()
+	kc := fake.NewSimpleClientset(burstNodeAt("aaaa1111", base))
+	thresholds := config.ThresholdConfig{Burst: 0.80, ScaleDown: 0.40, MaxBurstNodes: 2}
+
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{"booting"}, PressureCount: 5}
+	cli.ReconcileActiveStateForTest(context.Background(), kc, []string{"booting"}, &state)
+
+	if len(state.ActiveBurstIDs) != 2 {
+		t.Fatalf("live + in-flight must count 2, got %v", state.ActiveBurstIDs)
+	}
+	if cli.DecideScaleActionForTest(state, 0.95, thresholds) != cli.ScaleNone {
+		t.Error("cap must hold while one node is live and one is provisioning")
+	}
+}
+
+func TestReconcileActiveState_OldestFirstByCreationTimestamp(t *testing.T) {
+	base := time.Now()
+	kc := fake.NewSimpleClientset(
+		burstNodeAt("newer", base.Add(time.Hour)),
+		burstNodeAt("oldest", base),
+		burstNodeAt("middle", base.Add(time.Minute)),
+	)
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{"newer", "oldest", "middle"}}
+
+	cli.ReconcileActiveStateForTest(context.Background(), kc, nil, &state)
+
+	if cli.SelectVictimForScaleInForTest(state) != "oldest" {
+		t.Errorf("victim must be oldest by creationTimestamp, got %q from %v", cli.SelectVictimForScaleInForTest(state), state.ActiveBurstIDs)
+	}
+}
+
+func TestReconcileActiveState_FreesSlotForFailedBurst(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	state := cli.WatchRuntimeState{ActiveBurstIDs: []string{"failed"}}
+
+	cli.ReconcileActiveStateForTest(context.Background(), kc, nil, &state)
+
+	if len(state.ActiveBurstIDs) != 0 {
+		t.Errorf("failed burst (no node, not in-flight) must free its slot, got %v", state.ActiveBurstIDs)
+	}
+}
+
+func TestAdoptActiveBursts_DiscoversLiveNodeOnRestart(t *testing.T) {
+	base := time.Now()
+	kc := fake.NewSimpleClientset(
+		burstNodeAt("survivor", base),
+		burstNodeAt("unknown", base.Add(time.Minute)),
+	)
+	ws := k8s.WatchState{ActiveBurstIDs: []string{"survivor"}}
+
+	got := cli.AdoptActiveBurstsForTest(context.Background(), kc, ws)
+
+	if len(got) != 2 {
+		t.Fatalf("adoption must discover all live burst nodes, got %v", got)
+	}
+	if got[0] != "survivor" || got[1] != "unknown" {
+		t.Errorf("adopted set must be oldest-first by creationTimestamp, got %v", got)
 	}
 }
 

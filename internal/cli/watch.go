@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/prometheus/common/model"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
@@ -519,42 +521,44 @@ func (m *subprocessManager) waitAll(timeout time.Duration) {
 	}
 }
 
-func liveBurstNodeIDs(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
+func liveBurstNodeIDsOrdered(ctx context.Context, kc kubernetes.Interface) ([]string, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: nodeBurstLabel})
 	if err != nil {
 		return nil, err
 	}
-	ids := map[string]bool{}
+	items := make([]corev1.Node, 0, len(nodes.Items))
 	for _, n := range nodes.Items {
 		if strings.HasPrefix(n.Name, burstHostnamePrefix) {
-			ids[strings.TrimPrefix(n.Name, burstHostnamePrefix)] = true
+			items = append(items, n)
 		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		ti, tj := items[i].CreationTimestamp.Time, items[j].CreationTimestamp.Time
+		if ti.Equal(tj) {
+			return items[i].Name < items[j].Name
+		}
+		return ti.Before(tj)
+	})
+	ids := make([]string, 0, len(items))
+	for _, n := range items {
+		ids = append(ids, strings.TrimPrefix(n.Name, burstHostnamePrefix))
 	}
 	return ids, nil
 }
 
 func adoptActiveBursts(ctx context.Context, kc kubernetes.Interface, ws k8s.WatchState) []string {
-	if len(ws.ActiveBurstIDs) == 0 {
-		return nil
-	}
-	live, err := liveBurstNodeIDs(ctx, kc)
+	live, err := liveBurstNodeIDsOrdered(ctx, kc)
 	if err != nil {
 		return ws.ActiveBurstIDs
 	}
-	keep := make([]string, 0, len(ws.ActiveBurstIDs))
-	for _, id := range ws.ActiveBurstIDs {
-		if live[id] {
-			keep = append(keep, id)
-		}
-	}
-	return keep
+	return reconcileActiveBurstIDs(ws.ActiveBurstIDs, nil, live)
 }
 
 func reconcileActiveState(ctx context.Context, kc kubernetes.Interface, mgr *subprocessManager, state *WatchRuntimeState) {
-	if kc == nil || len(state.ActiveBurstIDs) == 0 {
+	if kc == nil {
 		return
 	}
-	liveNodes, err := liveBurstNodeIDs(ctx, kc)
+	liveNodes, err := liveBurstNodeIDsOrdered(ctx, kc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "watch: reconcile active bursts: list nodes: %v\n", err)
 		return
@@ -565,14 +569,33 @@ func reconcileActiveState(ctx context.Context, kc kubernetes.Interface, mgr *sub
 	}
 }
 
-func reconcileActiveBurstIDs(ids []string, inFlight, liveNodes map[string]bool) []string {
-	keep := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if inFlight[id] || liveNodes[id] {
-			keep = append(keep, id)
+func reconcileActiveBurstIDs(prior []string, inFlight map[string]bool, liveNodesOrdered []string) []string {
+	live := make(map[string]bool, len(liveNodesOrdered))
+	for _, id := range liveNodesOrdered {
+		live[id] = true
+	}
+	active := make([]string, 0, len(liveNodesOrdered)+len(inFlight))
+	active = append(active, liveNodesOrdered...)
+	seen := make(map[string]bool, len(liveNodesOrdered))
+	for _, id := range liveNodesOrdered {
+		seen[id] = true
+	}
+	for _, id := range prior {
+		if seen[id] || live[id] {
+			continue
+		}
+		if inFlight[id] {
+			active = append(active, id)
+			seen[id] = true
 		}
 	}
-	return keep
+	for id := range inFlight {
+		if !seen[id] && !live[id] {
+			active = append(active, id)
+			seen[id] = true
+		}
+	}
+	return active
 }
 
 func newRandomBurstID() (string, error) {
@@ -705,14 +728,26 @@ func SelectVictimForScaleInForTest(state WatchRuntimeState) string {
 	return selectVictimForScaleIn(state)
 }
 
-func ReconcileActiveBurstIDsForTest(ids []string, inFlight, liveNodes map[string]bool) []string {
-	return reconcileActiveBurstIDs(ids, inFlight, liveNodes)
+func ReconcileActiveBurstIDsForTest(prior []string, inFlight map[string]bool, liveNodesOrdered []string) []string {
+	return reconcileActiveBurstIDs(prior, inFlight, liveNodesOrdered)
 }
 
 func PerformScaleInForTest(ctx context.Context, teardownFn func(context.Context, string) error, state *WatchRuntimeState, t config.ThresholdConfig) {
 	mgr := newSubprocessManager("")
 	mgr.teardownFn = teardownFn
 	performScaleIn(ctx, mgr, state, t)
+}
+
+func ReconcileActiveStateForTest(ctx context.Context, kc kubernetes.Interface, inFlight []string, state *WatchRuntimeState) {
+	mgr := newSubprocessManager("")
+	for _, id := range inFlight {
+		mgr.bursts[id] = &managedBurst{}
+	}
+	reconcileActiveState(ctx, kc, mgr, state)
+}
+
+func AdoptActiveBurstsForTest(ctx context.Context, kc kubernetes.Interface, ws k8s.WatchState) []string {
+	return adoptActiveBursts(ctx, kc, ws)
 }
 
 func NewWatchDepsForTest(kc kubernetes.Interface, prom promQuerier, factory pusherFactory, cfg *config.Config, workload string) *watchDeps {
