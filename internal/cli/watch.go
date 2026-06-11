@@ -43,6 +43,7 @@ const (
 
 const (
 	pollInterval        = 30 * time.Second
+	scaleOutCooldown    = 2 * pollInterval
 	shutdownGracePeriod = 3 * time.Minute
 	waitPollInterval    = 100 * time.Millisecond
 	nodeBurstLabel      = "horizon.dev/burst=true"
@@ -200,6 +201,12 @@ func performScaleIn(ctx context.Context, mgr *subprocessManager, state *WatchRun
 		return
 	}
 	cooldown()
+}
+
+func recordScaleOut(state *WatchRuntimeState, burstID string, now time.Time) {
+	state.ActiveBurstIDs = append(state.ActiveBurstIDs, burstID)
+	state.LastBurstStart = now
+	state.CooldownUntil = now.Add(scaleOutCooldown)
 }
 
 func selectVictimForScaleIn(state WatchRuntimeState) string {
@@ -716,9 +723,7 @@ func runWatch(parent context.Context, deps *watchDeps) error {
 				} else if err := mgr.spawn(ctx, workload, newID); err != nil {
 					fmt.Fprintf(os.Stderr, "watch: spawn: %v\n", err)
 				} else {
-					state.ActiveBurstIDs = append(state.ActiveBurstIDs, newID)
-					state.LastBurstStart = time.Now()
-					state.PressureCount = 0
+					recordScaleOut(&state, newID, time.Now())
 				}
 			case ScaleIn:
 				performScaleIn(ctx, mgr, &state, cfg.Thresholds)
@@ -814,6 +819,10 @@ func BurstNodeInternalIPsForTest(ctx context.Context, kc kubernetes.Interface) (
 
 func PendingPressureQueryForTest(namespace string) string {
 	return pendingPressureQuery(namespace)
+}
+
+func RecordScaleOutForTest(state *WatchRuntimeState, burstID string, now time.Time) {
+	recordScaleOut(state, burstID, now)
 }
 
 func newWatchCmd(app *App) *cobra.Command {

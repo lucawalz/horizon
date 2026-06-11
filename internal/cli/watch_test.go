@@ -606,6 +606,26 @@ func TestBurstNodeInternalIPs_ReturnsLabelledNodeIPs(t *testing.T) {
 	}
 }
 
+func TestRecordScaleOut_SetsCooldownKeepsPressureCount(t *testing.T) {
+	now := time.Now()
+	state := cli.WatchRuntimeState{PressureCount: 4, ActiveBurstIDs: []string{"old"}}
+
+	cli.RecordScaleOutForTest(&state, "new", now)
+
+	if state.PressureCount != 4 {
+		t.Errorf("PressureCount = %d, want unchanged 4", state.PressureCount)
+	}
+	if !state.CooldownUntil.After(now) {
+		t.Errorf("CooldownUntil = %v, want after %v", state.CooldownUntil, now)
+	}
+	if len(state.ActiveBurstIDs) != 2 || state.ActiveBurstIDs[1] != "new" {
+		t.Errorf("ActiveBurstIDs = %v, want new id appended", state.ActiveBurstIDs)
+	}
+	if state.LastBurstStart != now {
+		t.Errorf("LastBurstStart = %v, want %v", state.LastBurstStart, now)
+	}
+}
+
 func TestPendingPressureQuery_ExcludesManagedNamespace(t *testing.T) {
 	q := cli.PendingPressureQueryForTest("uat-sc7")
 	if !containsStr(q, `namespace!="uat-sc7"`) {
