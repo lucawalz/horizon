@@ -557,6 +557,29 @@ func TestAdoptActiveBursts_DiscoversLiveNodeOnRestart(t *testing.T) {
 	}
 }
 
+func TestInFailureBackoff_WindowBoundary(t *testing.T) {
+	mgr := cli.NewSubprocessManagerForTest()
+	now := time.Now()
+	cli.RecordBurstExitForTest(mgr, "boom", context.DeadlineExceeded)
+
+	if !cli.InFailureBackoffForTest(mgr, now, 5*time.Minute) {
+		t.Error("must be in backoff immediately after a failure")
+	}
+	if cli.InFailureBackoffForTest(mgr, now.Add(6*time.Minute), 5*time.Minute) {
+		t.Error("must not be in backoff after the window elapses")
+	}
+}
+
+func TestRecordBurstExit_TerminatingDoesNotTripBackoff(t *testing.T) {
+	mgr := cli.NewSubprocessManagerForTest()
+	cli.MarkTerminatingForTest(mgr, "intentional")
+	cli.RecordBurstExitForTest(mgr, "intentional", context.Canceled)
+
+	if cli.InFailureBackoffForTest(mgr, time.Now(), 5*time.Minute) {
+		t.Error("an intentionally terminated burst must not arm the failure backoff")
+	}
+}
+
 func TestVectorAverageExcludingHosts_DropsBurstInstances(t *testing.T) {
 	vec := model.Vector{
 		sampleAt("192.168.2.191:9100", 0.4),

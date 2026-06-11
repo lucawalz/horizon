@@ -53,6 +53,7 @@ const (
 	downSubcommand      = "down"
 	burstIDFlag         = "--burst-id"
 	burstIDByteLen      = 4
+	burstFailureBackoff = 5 * time.Minute
 )
 
 type ScaleAction int
@@ -388,14 +389,20 @@ type managedBurst struct {
 }
 
 type subprocessManager struct {
-	mu         sync.Mutex
-	bursts     map[string]*managedBurst
-	stateDir   string
-	teardownFn func(ctx context.Context, burstID string) error
+	mu          sync.Mutex
+	bursts      map[string]*managedBurst
+	stateDir    string
+	teardownFn  func(ctx context.Context, burstID string) error
+	lastFailure time.Time
+	terminating map[string]bool
 }
 
 func newSubprocessManager(stateDir string) *subprocessManager {
-	m := &subprocessManager{bursts: make(map[string]*managedBurst), stateDir: stateDir}
+	m := &subprocessManager{
+		bursts:      make(map[string]*managedBurst),
+		stateDir:    stateDir,
+		terminating: make(map[string]bool),
+	}
 	m.teardownFn = m.spawnDown
 	return m
 }
@@ -444,13 +451,27 @@ func (m *subprocessManager) spawn(ctx context.Context, workload, burstID string)
 	m.mu.Unlock()
 
 	go func() {
-		_ = cmd.Wait()
-		m.mu.Lock()
-		delete(m.bursts, burstID)
-		m.mu.Unlock()
+		err := cmd.Wait()
+		m.recordBurstExit(burstID, err)
 		_ = os.Remove(pidPath)
 	}()
 	return nil
+}
+
+func (m *subprocessManager) recordBurstExit(burstID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err != nil && !m.terminating[burstID] {
+		m.lastFailure = time.Now()
+	}
+	delete(m.terminating, burstID)
+	delete(m.bursts, burstID)
+}
+
+func (m *subprocessManager) inFailureBackoff(now time.Time, window time.Duration) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return !m.lastFailure.IsZero() && now.Before(m.lastFailure.Add(window))
 }
 
 func (m *subprocessManager) teardown(ctx context.Context, burstID string) error {
@@ -497,7 +518,8 @@ func (m *subprocessManager) inFlightBurstIDs() map[string]bool {
 func (m *subprocessManager) signalAll(sig syscall.Signal) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, mb := range m.bursts {
+	for id, mb := range m.bursts {
+		m.terminating[id] = true
 		if mb.cmd != nil && mb.cmd.Process != nil {
 			_ = mb.cmd.Process.Signal(sig)
 		}
@@ -507,6 +529,9 @@ func (m *subprocessManager) signalAll(sig syscall.Signal) {
 func (m *subprocessManager) signalAndWait(burstID string, sig syscall.Signal, timeout time.Duration) error {
 	m.mu.Lock()
 	mb, ok := m.bursts[burstID]
+	if ok {
+		m.terminating[burstID] = true
+	}
 	m.mu.Unlock()
 	if !ok {
 		return nil
@@ -717,6 +742,10 @@ func runWatch(parent context.Context, deps *watchDeps) error {
 			}
 			switch decideScaleAction(state, avg, cfg.Thresholds) {
 			case ScaleOut:
+				if mgr.inFailureBackoff(time.Now(), burstFailureBackoff) {
+					fmt.Fprintf(os.Stderr, "watch: scale-out suppressed: recent burst failure\n")
+					break
+				}
 				newID, err := newRandomBurstID()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "watch: burst id: %v\n", err)
@@ -823,6 +852,24 @@ func PendingPressureQueryForTest(namespace string) string {
 
 func RecordScaleOutForTest(state *WatchRuntimeState, burstID string, now time.Time) {
 	recordScaleOut(state, burstID, now)
+}
+
+func NewSubprocessManagerForTest() *subprocessManager {
+	return newSubprocessManager("")
+}
+
+func RecordBurstExitForTest(m *subprocessManager, burstID string, err error) {
+	m.recordBurstExit(burstID, err)
+}
+
+func MarkTerminatingForTest(m *subprocessManager, burstID string) {
+	m.mu.Lock()
+	m.terminating[burstID] = true
+	m.mu.Unlock()
+}
+
+func InFailureBackoffForTest(m *subprocessManager, now time.Time, window time.Duration) bool {
+	return m.inFailureBackoff(now, window)
 }
 
 func newWatchCmd(app *App) *cobra.Command {
