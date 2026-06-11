@@ -26,11 +26,11 @@ const (
 var burstSteps = []string{
 	"Create Velero backup of target namespace",
 	"Run terraform apply (provider: hetzner)",
+	"Persist burst state file",
 	"Authorize burst node in ZeroTier network",
 	"Wait for node Ready",
-	"Persist burst state file",
 	"Migrate workload to cloud node (label, affinity, evict)",
-	"Wait for workload pods Running on cloud node",
+	"Wait for workload pods Running on cloud nodes",
 }
 
 type veleroClient interface {
@@ -180,6 +180,34 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	})
 
 	r.Add(runner.Step{
+		Name: "write-state",
+		Run: func(ctx context.Context) error {
+			stateDir, err := stateDirOrTestOverride()
+			if err != nil {
+				return err
+			}
+			st := BurstState{
+				BurstID:          deps.prov.BurstID(),
+				Hostname:         deps.prov.Hostname(),
+				ZeroTierMemberID: deps.prov.ZeroTierMemberID(),
+				HetznerServerID:  deps.prov.ServerID(),
+			}
+			if err := WriteState(stateDir, st); err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stdout, "burst_id: %s\n", st.BurstID)
+			return nil
+		},
+		Rollback: func(ctx context.Context) error {
+			stateDir, err := stateDirOrTestOverride()
+			if err != nil {
+				return err
+			}
+			return DeleteState(stateDir, deps.prov.BurstID())
+		},
+	})
+
+	r.Add(runner.Step{
 		Name: "zerotier-auth",
 		Run: func(ctx context.Context) error {
 			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseJoining)
@@ -219,28 +247,6 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	})
 
 	r.Add(runner.Step{
-		Name: "write-state",
-		Run: func(ctx context.Context) error {
-			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseMigrating)
-			stateDir, err := stateDirOrTestOverride()
-			if err != nil {
-				return err
-			}
-			st := BurstState{
-				BurstID:          deps.prov.BurstID(),
-				Hostname:         burstNodeName,
-				ZeroTierMemberID: memberID,
-				HetznerServerID:  deps.prov.ServerID(),
-			}
-			if err := WriteState(stateDir, st); err != nil {
-				return err
-			}
-			fmt.Fprintf(os.Stdout, "burst_id: %s\n", st.BurstID)
-			return nil
-		},
-	})
-
-	r.Add(runner.Step{
 		Name: "migrate-workload",
 		Run: func(ctx context.Context) error {
 			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseMigrating)
@@ -259,7 +265,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	r.Add(runner.Step{
 		Name: "wait-pods-running",
 		Run: func(ctx context.Context) error {
-			if err := k8s.WaitPodsRunningOnNode(ctx, deps.kc, workload, burstNodeName, 5*time.Second, 5*time.Minute); err != nil {
+			if err := k8s.WaitWorkloadOnBurstNodes(ctx, deps.kc, workload, 5*time.Second, 5*time.Minute); err != nil {
 				return err
 			}
 			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseRunning)
