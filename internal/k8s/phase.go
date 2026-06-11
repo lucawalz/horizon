@@ -11,12 +11,13 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
 	burstPhaseConfigMap = "horizon-state"
 	burstPhaseNamespace = "kube-system"
-	burstPhaseKey       = "burst_phase"
+	burstPhasesKey      = "burst_phases"
 )
 
 const (
@@ -29,36 +30,77 @@ const (
 	BurstPhaseTearingDown  = "TearingDown"
 )
 
-func WriteBurstPhase(ctx context.Context, kc kubernetes.Interface, phase string) error {
-	cm, err := kc.CoreV1().ConfigMaps(burstPhaseNamespace).Get(ctx, burstPhaseConfigMap, metav1.GetOptions{})
-	if k8serrors.IsNotFound(err) {
-		fresh := &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{Name: burstPhaseConfigMap, Namespace: burstPhaseNamespace},
-			Data:       map[string]string{burstPhaseKey: phase},
-		}
-		_, err = kc.CoreV1().ConfigMaps(burstPhaseNamespace).Create(ctx, fresh, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return fmt.Errorf("burst-phase: get configmap: %w", err)
-	}
-	if cm.Data == nil {
-		cm.Data = make(map[string]string)
-	}
-	cm.Data[burstPhaseKey] = phase
-	_, err = kc.CoreV1().ConfigMaps(burstPhaseNamespace).Update(ctx, cm, metav1.UpdateOptions{})
-	return err
+func WriteBurstPhase(ctx context.Context, kc kubernetes.Interface, burstID, phase string) error {
+	return mutateBurstPhases(ctx, kc, func(phases map[string]string) {
+		phases[burstID] = phase
+	})
 }
 
-func ReadBurstPhase(ctx context.Context, kc kubernetes.Interface) string {
+func ClearBurstPhase(ctx context.Context, kc kubernetes.Interface, burstID string) error {
+	return mutateBurstPhases(ctx, kc, func(phases map[string]string) {
+		delete(phases, burstID)
+	})
+}
+
+func ReadBurstPhases(ctx context.Context, kc kubernetes.Interface) (map[string]string, error) {
 	cm, err := kc.CoreV1().ConfigMaps(burstPhaseNamespace).Get(ctx, burstPhaseConfigMap, metav1.GetOptions{})
-	if err != nil || cm.Data == nil {
-		return BurstPhaseIdle
+	if k8serrors.IsNotFound(err) {
+		return map[string]string{}, nil
 	}
-	if v := cm.Data[burstPhaseKey]; v != "" {
-		return v
+	if err != nil {
+		return nil, fmt.Errorf("burst-phases: get configmap: %w", err)
 	}
-	return BurstPhaseIdle
+	return decodeBurstPhases(cm.Data), nil
+}
+
+func decodeBurstPhases(data map[string]string) map[string]string {
+	phases := map[string]string{}
+	if data == nil {
+		return phases
+	}
+	if v := data[burstPhasesKey]; v != "" {
+		_ = json.Unmarshal([]byte(v), &phases)
+	}
+	return phases
+}
+
+func mutateBurstPhases(ctx context.Context, kc kubernetes.Interface, mutate func(map[string]string)) error {
+	cms := kc.CoreV1().ConfigMaps(burstPhaseNamespace)
+	retriable := func(err error) bool {
+		return k8serrors.IsConflict(err) || k8serrors.IsAlreadyExists(err)
+	}
+	return retry.OnError(retry.DefaultRetry, retriable, func() error {
+		cm, err := cms.Get(ctx, burstPhaseConfigMap, metav1.GetOptions{})
+		if k8serrors.IsNotFound(err) {
+			phases := map[string]string{}
+			mutate(phases)
+			encoded, mErr := json.Marshal(phases)
+			if mErr != nil {
+				return fmt.Errorf("burst-phases: marshal: %w", mErr)
+			}
+			fresh := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Name: burstPhaseConfigMap, Namespace: burstPhaseNamespace},
+				Data:       map[string]string{burstPhasesKey: string(encoded)},
+			}
+			_, err = cms.Create(ctx, fresh, metav1.CreateOptions{})
+			return err
+		}
+		if err != nil {
+			return fmt.Errorf("burst-phases: get configmap: %w", err)
+		}
+		phases := decodeBurstPhases(cm.Data)
+		mutate(phases)
+		encoded, err := json.Marshal(phases)
+		if err != nil {
+			return fmt.Errorf("burst-phases: marshal: %w", err)
+		}
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		cm.Data[burstPhasesKey] = string(encoded)
+		_, err = cms.Update(ctx, cm, metav1.UpdateOptions{})
+		return err
+	})
 }
 
 const (

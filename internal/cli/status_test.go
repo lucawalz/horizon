@@ -13,19 +13,19 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestStatusBurstPhase(t *testing.T) {
+func TestStatusBurstNodes(t *testing.T) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "horizon-state", Namespace: "kube-system"},
-		Data:       map[string]string{"burst_phase": "Migrating"},
+		Data:       map[string]string{"burst_phases": `{"aabb1234":"Migrating"}`},
 	}
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset(cm)
 
 	out := captureStdout(func() {
-		cli.PrintBurstPhaseForTest(context.Background(), app)
+		cli.PrintBurstNodesForTest(context.Background(), app)
 	})
-	if !strings.Contains(out, "BurstPhase: Migrating") {
-		t.Errorf("expected output to contain 'BurstPhase: Migrating'; got:\n%s", out)
+	if !strings.Contains(out, "horizon-burst-aabb1234: Migrating") {
+		t.Errorf("expected per-node phase line; got:\n%s", out)
 	}
 }
 
@@ -63,14 +63,14 @@ func TestNodeMetricCell(t *testing.T) {
 	}
 }
 
-func TestStatusBurstPhase_FallbackIdle(t *testing.T) {
+func TestStatusBurstNodes_NoneActive(t *testing.T) {
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset()
 
 	out := captureStdout(func() {
-		cli.PrintBurstPhaseForTest(context.Background(), app)
+		cli.PrintBurstNodesForTest(context.Background(), app)
 	})
-	if !strings.Contains(out, "BurstPhase: Idle") {
-		t.Errorf("expected output to contain 'BurstPhase: Idle' fallback; got:\n%s", out)
+	if !strings.Contains(out, "Burst nodes: none active") {
+		t.Errorf("expected idle indicator; got:\n%s", out)
 	}
 }

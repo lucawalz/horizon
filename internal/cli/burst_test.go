@@ -168,9 +168,9 @@ func TestBurstStepOrder(t *testing.T) {
 	if len(vc.calls) != 1 {
 		t.Errorf("velero TriggerBackup calls = %v, want 1", vc.calls)
 	}
-	phase := k8s.ReadBurstPhase(context.Background(), kc)
-	if phase != k8s.BurstPhaseRunning {
-		t.Errorf("final BurstPhase = %q, want Running", phase)
+	phases, _ := k8s.ReadBurstPhases(context.Background(), kc)
+	if phases["aabb1234"] != k8s.BurstPhaseRunning {
+		t.Errorf("final phase = %q, want Running", phases["aabb1234"])
 	}
 }
 
@@ -199,9 +199,9 @@ func TestBurstRollback_OnTerraformFailure(t *testing.T) {
 	if prov.destroyCalls != 0 {
 		t.Errorf("destroy must not run when terraform-apply itself failed: %v", prov.destroyCalls)
 	}
-	phase := k8s.ReadBurstPhase(context.Background(), kc)
-	if phase != k8s.BurstPhaseIdle {
-		t.Errorf("BurstPhase after rollback = %q, want Idle (post-run cleanup)", phase)
+	phases, _ := k8s.ReadBurstPhases(context.Background(), kc)
+	if _, ok := phases["ccdd3344"]; ok {
+		t.Errorf("burst phase after rollback should be pruned, got %v", phases)
 	}
 }
 
@@ -226,9 +226,9 @@ func TestBurstSignalRollback(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
-	phase := k8s.ReadBurstPhase(context.Background(), kc)
-	if phase != k8s.BurstPhaseIdle {
-		t.Errorf("BurstPhase after signal rollback = %q, want Idle", phase)
+	phases, _ := k8s.ReadBurstPhases(context.Background(), kc)
+	if _, ok := phases["ddeeff"]; ok {
+		t.Errorf("burst phase after signal rollback should be pruned, got %v", phases)
 	}
 }
 
@@ -263,7 +263,8 @@ func TestBurstWritesPhase(t *testing.T) {
 	if cmActions < 5 {
 		t.Errorf("ConfigMap actions = %d, want >= 5 (BackingUp, Provisioning, Joining, Migrating, Running)", cmActions)
 	}
-	if got := k8s.ReadBurstPhase(context.Background(), kc); got != k8s.BurstPhaseRunning {
-		t.Errorf("final phase = %q, want Running", got)
+	phases, _ := k8s.ReadBurstPhases(context.Background(), kc)
+	if phases["eeff5566"] != k8s.BurstPhaseRunning {
+		t.Errorf("final phase = %q, want Running", phases["eeff5566"])
 	}
 }

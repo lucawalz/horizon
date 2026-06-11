@@ -282,7 +282,7 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 	}
 }
 
-func TestDownResetsBurstPhaseToIdle(t *testing.T) {
+func TestDownPrunesBurstPhase(t *testing.T) {
 	stateDir := t.TempDir()
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
@@ -296,8 +296,11 @@ func TestDownResetsBurstPhaseToIdle(t *testing.T) {
 	seededState(t, stateDir, st)
 
 	kc := fake.NewSimpleClientset()
-	if err := k8s.WriteBurstPhase(context.Background(), kc, k8s.BurstPhaseTearingDown); err != nil {
-		t.Fatalf("seed BurstPhase: %v", err)
+	if err := k8s.WriteBurstPhase(context.Background(), kc, "aabb5555", k8s.BurstPhaseTearingDown); err != nil {
+		t.Fatalf("seed burst phase: %v", err)
+	}
+	if err := k8s.WriteBurstPhase(context.Background(), kc, "ccdd6666", k8s.BurstPhaseRunning); err != nil {
+		t.Fatalf("seed sibling phase: %v", err)
 	}
 
 	zt := &mockZeroTier{}
@@ -307,8 +310,14 @@ func TestDownResetsBurstPhaseToIdle(t *testing.T) {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 
-	phase := k8s.ReadBurstPhase(context.Background(), kc)
-	if phase != k8s.BurstPhaseIdle {
-		t.Errorf("BurstPhase after down = %q, want Idle", phase)
+	phases, err := k8s.ReadBurstPhases(context.Background(), kc)
+	if err != nil {
+		t.Fatalf("ReadBurstPhases: %v", err)
+	}
+	if _, ok := phases["aabb5555"]; ok {
+		t.Errorf("torn-down burst should be pruned, got %v", phases)
+	}
+	if phases["ccdd6666"] != k8s.BurstPhaseRunning {
+		t.Errorf("sibling burst phase must survive, got %q", phases["ccdd6666"])
 	}
 }

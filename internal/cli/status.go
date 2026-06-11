@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -68,12 +69,12 @@ func runStatus(app *App) error {
 
 	threshold := app.Config.Thresholds.Burst
 
-	fmt.Printf("CPU: %.2f/%.2f %s  Mem: %.2f/%.2f %s  Pending: %d\n",
+	fmt.Printf("CPU: %.2f/%.2f %s  Mem: %.2f/%.2f %s  Pending pods: %d\n",
 		cpuScore, threshold, pressureDot(cpuScore, threshold),
 		memScore, threshold, pressureDot(memScore, threshold),
 		pendingCount,
 	)
-	printBurstPhase(ctx, app)
+	printBurstNodes(ctx, app)
 	fmt.Println()
 
 	return printNodeTable(ctx, app, cpuVec, memVec)
@@ -182,12 +183,25 @@ func pressureDot(score, threshold float64) string {
 	return color.GreenString("●")
 }
 
-func printBurstPhase(ctx context.Context, app *App) {
-	fmt.Printf("BurstPhase: %s\n", k8s.ReadBurstPhase(ctx, app.KubeClient))
+func printBurstNodes(ctx context.Context, app *App) {
+	phases, err := k8s.ReadBurstPhases(ctx, app.KubeClient)
+	if err != nil || len(phases) == 0 {
+		fmt.Println("Burst nodes: none active")
+		return
+	}
+	ids := make([]string, 0, len(phases))
+	for id := range phases {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	fmt.Println("Burst nodes:")
+	for _, id := range ids {
+		fmt.Printf("  %s%s: %s\n", burstHostnamePrefix, id, phases[id])
+	}
 }
 
-func PrintBurstPhaseForTest(ctx context.Context, app *App) {
-	printBurstPhase(ctx, app)
+func PrintBurstNodesForTest(ctx context.Context, app *App) {
+	printBurstNodes(ctx, app)
 }
 
 func NodeMetricCellForTest(vec model.Vector, nodeIP string) string {

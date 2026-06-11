@@ -147,7 +147,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	r.Add(runner.Step{
 		Name: "velero-backup",
 		Run: func(ctx context.Context) error {
-			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseBackingUp)
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseBackingUp)
 			name := fmt.Sprintf("horizon-burst-%s-%d", workload, time.Now().Unix())
 			return deps.vc.TriggerBackup(ctx, workload, name, 5*time.Second, 10*time.Minute)
 		},
@@ -156,7 +156,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	r.Add(runner.Step{
 		Name: "terraform-apply",
 		Run: func(ctx context.Context) error {
-			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseProvisioning)
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseProvisioning)
 			sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
 			k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
 			k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
@@ -182,7 +182,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	r.Add(runner.Step{
 		Name: "zerotier-auth",
 		Run: func(ctx context.Context) error {
-			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseJoining)
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseJoining)
 			memberID = deps.prov.ZeroTierMemberID()
 			if err := deps.zt.Authorize(ctx, networkID, memberID, deps.prov.Hostname()); err != nil {
 				return fmt.Errorf("zerotier-auth: authorize: %w", err)
@@ -221,7 +221,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	r.Add(runner.Step{
 		Name: "write-state",
 		Run: func(ctx context.Context) error {
-			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseMigrating)
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseMigrating)
 			stateDir, err := stateDirOrTestOverride()
 			if err != nil {
 				return err
@@ -243,7 +243,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	r.Add(runner.Step{
 		Name: "migrate-workload",
 		Run: func(ctx context.Context) error {
-			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseMigrating)
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseMigrating)
 			state, err := k8s.Migrate(ctx, deps.kc, workload, burstNodeName)
 			savedMigrate = state
 			return err
@@ -251,7 +251,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 		Rollback: func(ctx context.Context) error {
 			rbCtx, cancel := context.WithTimeout(ctx, migrateRollbackTimeout)
 			defer cancel()
-			_ = k8s.WriteBurstPhase(rbCtx, deps.kc, k8s.BurstPhaseTearingDown)
+			_ = k8s.WriteBurstPhase(rbCtx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseTearingDown)
 			return k8s.RollbackMigrate(rbCtx, deps.kc, savedMigrate)
 		},
 	})
@@ -262,7 +262,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 			if err := k8s.WaitPodsRunningOnNode(ctx, deps.kc, workload, burstNodeName, 5*time.Second, 5*time.Minute); err != nil {
 				return err
 			}
-			_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseRunning)
+			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseRunning)
 			return nil
 		},
 	})
@@ -270,7 +270,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	if err := r.Run(ctx); err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = k8s.WriteBurstPhase(cleanupCtx, deps.kc, k8s.BurstPhaseIdle)
+		_ = k8s.ClearBurstPhase(cleanupCtx, deps.kc, deps.prov.BurstID())
 		return err
 	}
 	return nil

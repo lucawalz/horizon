@@ -162,7 +162,7 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 	if err := r.Run(ctx); err != nil {
 		return err
 	}
-	_ = k8s.WriteBurstPhase(ctx, deps.kc, k8s.BurstPhaseIdle)
+	_ = k8s.ClearBurstPhase(ctx, deps.kc, st.BurstID)
 	return nil
 }
 

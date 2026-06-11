@@ -65,7 +65,7 @@ func TestWatchState_CoexistsWithBurstPhase(t *testing.T) {
 	kc := fake.NewSimpleClientset()
 	ctx := context.Background()
 
-	if err := k8s.WriteBurstPhase(ctx, kc, k8s.BurstPhaseRunning); err != nil {
+	if err := k8s.WriteBurstPhase(ctx, kc, "aabb1234", k8s.BurstPhaseRunning); err != nil {
 		t.Fatalf("WriteBurstPhase: %v", err)
 	}
 
@@ -73,9 +73,12 @@ func TestWatchState_CoexistsWithBurstPhase(t *testing.T) {
 		t.Fatalf("WriteWatchState: %v", err)
 	}
 
-	phase := k8s.ReadBurstPhase(ctx, kc)
-	if phase != k8s.BurstPhaseRunning {
-		t.Errorf("BurstPhase: got %q, want Running", phase)
+	phases, err := k8s.ReadBurstPhases(ctx, kc)
+	if err != nil {
+		t.Fatalf("ReadBurstPhases: %v", err)
+	}
+	if phases["aabb1234"] != k8s.BurstPhaseRunning {
+		t.Errorf("BurstPhase: got %q, want Running", phases["aabb1234"])
 	}
 
 	ws, err := k8s.ReadWatchState(ctx, kc)
