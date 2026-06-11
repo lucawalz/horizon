@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/lucawalz/horizon/internal/config"
@@ -51,7 +53,10 @@ func newDownCmd(app *App) *cobra.Command {
 			}
 			st, err := ReadState(stateDir, resolved)
 			if err != nil {
-				return fmt.Errorf("down: read state: %w", err)
+				if !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("down: read state: %w", err)
+				}
+				st = BurstState{BurstID: resolved, Hostname: "horizon-burst-" + resolved}
 			}
 			deps, err := newDownDeps(app, resolved)
 			if err != nil {
@@ -148,14 +153,31 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 	r.Add(runner.Step{
 		Name: "delete-k3s-node",
 		Run: func(ctx context.Context) error {
-			return hetzner.DeleteNode(ctx, deps.kc, st.Hostname)
+			workload := burstWorkloadLabel(ctx, deps.kc, st.Hostname)
+			if err := hetzner.DeleteNode(ctx, deps.kc, st.Hostname); err != nil {
+				return err
+			}
+			if workload == "" {
+				return nil
+			}
+			remaining, err := burstNodeCountForWorkload(ctx, deps.kc, workload)
+			if err != nil {
+				return err
+			}
+			if remaining > 0 {
+				return nil
+			}
+			return k8s.ReconcileStrandedAffinity(ctx, deps.kc, workload)
 		},
 	})
 
 	r.Add(runner.Step{
 		Name: "delete-state-file",
 		Run: func(ctx context.Context) error {
-			return DeleteState(stateDir, st.BurstID)
+			if err := DeleteState(stateDir, st.BurstID); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			return nil
 		},
 	})
 
@@ -206,6 +228,31 @@ func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname strin
 		}
 	}
 	return nil
+}
+
+func burstWorkloadLabel(ctx context.Context, kc kubernetes.Interface, hostname string) string {
+	if kc == nil {
+		return ""
+	}
+	n, err := kc.CoreV1().Nodes().Get(ctx, hostname, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	return n.Labels[k8s.NodeAffinityLabelKey]
+}
+
+func burstNodeCountForWorkload(ctx context.Context, kc kubernetes.Interface, workload string) (int, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("count burst nodes for %s: %w", workload, err)
+	}
+	count := 0
+	for i := range nodes.Items {
+		if nodes.Items[i].Labels[k8s.NodeAffinityLabelKey] == workload {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func RunDownDryRunForTest(app *App) error {

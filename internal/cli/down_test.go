@@ -9,6 +9,7 @@ import (
 
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/k8s"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -279,6 +280,89 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 
 	if _, statErr := os.Stat(stateDir + "/aabb9999.json"); !os.IsNotExist(statErr) {
 		t.Error("state file should be deleted after successful down")
+	}
+}
+
+func TestDownStatelessDerivesHostname(t *testing.T) {
+	stateDir := t.TempDir()
+	restore := cli.SetStateDirForTest(stateDir)
+	defer restore()
+
+	burstID := "ab12cd34"
+	hostname := "horizon-burst-" + burstID
+	st := cli.BurstState{BurstID: burstID, Hostname: hostname}
+
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
+	kc := fake.NewSimpleClientset(node)
+
+	zt := &mockZeroTier{}
+	prov := &mockHetznerProvider{burstID: burstID, hostname: hostname}
+
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+		t.Fatalf("RunDownForTest: %v", err)
+	}
+	if prov.destroyCalls != 1 {
+		t.Errorf("Destroy calls = %d, want 1", prov.destroyCalls)
+	}
+	if len(zt.deauthCalls) != 0 || len(zt.deleteCalls) != 0 {
+		t.Errorf("ZT deauth must be skipped when member id unknown: %v %v", zt.deauthCalls, zt.deleteCalls)
+	}
+	if _, err := kc.CoreV1().Nodes().Get(context.Background(), hostname, metav1.GetOptions{}); err == nil {
+		t.Error("burst node should be deleted")
+	}
+}
+
+func TestDownUnpinsWorkloadOnLastBurstNode(t *testing.T) {
+	stateDir := t.TempDir()
+	restore := cli.SetStateDirForTest(stateDir)
+	defer restore()
+
+	burstID := "ba98fe76"
+	hostname := "horizon-burst-" + burstID
+	ns := "sentio-systems"
+	st := cli.BurstState{BurstID: burstID, Hostname: hostname}
+	seededState(t, stateDir, st)
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   hostname,
+			Labels: map[string]string{k8s.NodeAffinityLabelKey: ns},
+		},
+	}
+	pinned := &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key:      k8s.NodeAffinityLabelKey,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{ns},
+					}},
+				}},
+			},
+		},
+	}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: ns},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: pinned}},
+		},
+	}
+	kc := fake.NewSimpleClientset(node, dep)
+
+	zt := &mockZeroTier{}
+	prov := &mockHetznerProvider{burstID: burstID, hostname: hostname}
+
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+		t.Fatalf("RunDownForTest: %v", err)
+	}
+
+	got, err := kc.AppsV1().Deployments(ns).Get(context.Background(), "app", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	if a := got.Spec.Template.Spec.Affinity; a != nil && a.NodeAffinity != nil && a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		t.Errorf("workload still pinned after last burst node removed: %+v", a.NodeAffinity)
 	}
 }
 
