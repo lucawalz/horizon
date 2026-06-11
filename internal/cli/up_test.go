@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
@@ -18,8 +17,6 @@ import (
 )
 
 type mockZeroTier struct {
-	waitID         string
-	waitErr        error
 	authorizeErr   error
 	deauthorizeErr error
 	deleteErr      error
@@ -27,10 +24,6 @@ type mockZeroTier struct {
 	authorizeNames []string
 	deauthCalls    []string
 	deleteCalls    []string
-}
-
-func (m *mockZeroTier) WaitForMemberByIP(_ context.Context, _, _ string, _, _ time.Duration) (string, error) {
-	return m.waitID, m.waitErr
 }
 
 func (m *mockZeroTier) Authorize(_ context.Context, _, memberID, name string) error {
@@ -54,6 +47,7 @@ type mockHetznerProvider struct {
 	hostname     string
 	serverID     string
 	serverIP     string
+	memberID     string
 	applyErr     error
 	destroyCalls int
 	destroyErr   error
@@ -81,8 +75,9 @@ func (m *mockHetznerProvider) Destroy(_ context.Context) error {
 
 func (m *mockHetznerProvider) Hostname() string { return m.hostname }
 func (m *mockHetznerProvider) BurstID() string  { return m.burstID }
-func (m *mockHetznerProvider) ServerID() string { return m.serverID }
-func (m *mockHetznerProvider) ServerIP() string { return m.serverIP }
+func (m *mockHetznerProvider) ServerID() string         { return m.serverID }
+func (m *mockHetznerProvider) ServerIP() string         { return m.serverIP }
+func (m *mockHetznerProvider) ZeroTierMemberID() string { return m.memberID }
 
 func newTestApp() *cli.App {
 	return &cli.App{
@@ -149,11 +144,12 @@ func TestUpStepOrder(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1122"
-	zt := &mockZeroTier{waitID: "member-99"}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1122",
 		hostname: hostname,
 		serverID: "99",
+		memberID: "member-99",
 	}
 	kc := fake.NewSimpleClientset(readyNode(hostname))
 
@@ -178,10 +174,11 @@ func TestUpRollbackOnTerraformFailure(t *testing.T) {
 	defer restore()
 
 	tfErr := errors.New("terraform apply failed")
-	zt := &mockZeroTier{waitID: "should-not-be-used"}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{
 		burstID:  "ccdd3344",
 		hostname: "horizon-burst-ccdd3344",
+		memberID: "should-not-be-used",
 		applyErr: tfErr,
 	}
 
@@ -213,10 +210,11 @@ func TestUpRollbackOnZeroTierAuthFailure(t *testing.T) {
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
-	zt := &mockZeroTier{waitID: "member-77", authorizeErr: errors.New("zt 401")}
+	zt := &mockZeroTier{authorizeErr: errors.New("zt 401")}
 	prov := &mockHetznerProvider{
 		burstID:  "ddee5566",
 		hostname: "horizon-burst-ddee5566",
+		memberID: "member-77",
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
@@ -241,10 +239,11 @@ func TestUpRollbackOnWaitNodeReadyTimeout(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-eeff5566"
-	zt := &mockZeroTier{waitID: "member-late"}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{
 		burstID:  "eeff5566",
 		hostname: hostname,
+		memberID: "member-late",
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
@@ -279,11 +278,12 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1234"
-	zt := &mockZeroTier{waitID: "member-ok"}
+	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1234",
 		hostname: hostname,
 		serverID: "99",
+		memberID: "member-ok",
 	}
 	kc := fake.NewSimpleClientset(readyNode(hostname))
 

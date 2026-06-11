@@ -108,6 +108,35 @@ func TestProviderServerID(t *testing.T) {
 	}
 }
 
+func TestConstructorsDoNotGenerateIdentity(t *testing.T) {
+	cfg := newTestConfig()
+
+	p := hetzner.New(cfg, t.TempDir())
+	if p.ZeroTierMemberID() != "" {
+		t.Errorf("New must not generate an identity, got member id %q", p.ZeroTierMemberID())
+	}
+
+	pb, err := hetzner.NewWithBurstID(cfg, t.TempDir(), "deadbeef")
+	if err != nil {
+		t.Fatalf("NewWithBurstID: %v", err)
+	}
+	if pb.ZeroTierMemberID() != "" {
+		t.Errorf("NewWithBurstID must not generate an identity, got member id %q", pb.ZeroTierMemberID())
+	}
+}
+
+func TestGenerateTFVarsWithoutIdentity(t *testing.T) {
+	cfg := newTestConfig()
+	p, err := hetzner.NewWithBurstID(cfg, t.TempDir(), "deadbeef")
+	if err != nil {
+		t.Fatalf("NewWithBurstID: %v", err)
+	}
+	p.SetRuntimeSecrets("nw-abc", "ssh-rsa AAAA", "https://10.147.20.1:6443", "tok")
+	if _, err := p.GenerateTFVars(); err != nil {
+		t.Fatalf("GenerateTFVars must not require an identity: %v", err)
+	}
+}
+
 func containsAll(s string, subs ...string) bool {
 	for _, sub := range subs {
 		found := false

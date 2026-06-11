@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -25,7 +24,6 @@ type Member struct {
 	Name            string
 	Authorized      bool
 	IPAssignments   []string
-	PhysicalAddress string
 }
 
 type Client struct {
@@ -151,7 +149,6 @@ func (c *Client) ListMembers(ctx context.Context, networkID string) ([]Member, e
 		ID              string `json:"id"`
 		NodeID          string `json:"nodeId"`
 		Name            string `json:"name"`
-		PhysicalAddress string `json:"physicalAddress"`
 		Config          struct {
 			Authorized    bool     `json:"authorized"`
 			IPAssignments []string `json:"ipAssignments"`
@@ -162,7 +159,7 @@ func (c *Client) ListMembers(ctx context.Context, networkID string) ([]Member, e
 	}
 	out := make([]Member, len(raw))
 	for i, m := range raw {
-		out[i] = Member{ID: m.ID, NodeID: m.NodeID, Name: m.Name, Authorized: m.Config.Authorized, IPAssignments: m.Config.IPAssignments, PhysicalAddress: m.PhysicalAddress}
+		out[i] = Member{ID: m.ID, NodeID: m.NodeID, Name: m.Name, Authorized: m.Config.Authorized, IPAssignments: m.Config.IPAssignments}
 	}
 	return out, nil
 }
@@ -224,50 +221,3 @@ func (c *Client) WaitForMemberByName(ctx context.Context, networkID, name string
 	}
 }
 
-func (c *Client) FindMemberByIP(ctx context.Context, networkID, ip string) (string, error) {
-	members, err := c.ListMembers(ctx, networkID)
-	if err != nil {
-		return "", err
-	}
-	for _, m := range members {
-		host, _, _ := strings.Cut(m.PhysicalAddress, "/")
-		if host == "" {
-			host = m.PhysicalAddress
-		}
-		if host == ip {
-			return m.NodeID, nil
-		}
-	}
-	return "", nil
-}
-
-func (c *Client) WaitForMemberByIP(ctx context.Context, networkID, ip string, timeout, poll time.Duration) (string, error) {
-	if poll <= 0 {
-		poll = 2 * time.Second
-	}
-	if timeout <= 0 {
-		timeout = 2 * time.Minute
-	}
-	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	ticker := time.NewTicker(poll)
-	defer ticker.Stop()
-	var lastErr error
-	for {
-		id, err := c.FindMemberByIP(deadlineCtx, networkID, ip)
-		if err == nil && id != "" {
-			return id, nil
-		}
-		if err != nil {
-			lastErr = err
-		}
-		select {
-		case <-deadlineCtx.Done():
-			if lastErr != nil {
-				return "", fmt.Errorf("zerotier: wait member ip %s: timeout: %w", ip, lastErr)
-			}
-			return "", fmt.Errorf("zerotier: wait member ip %s: timeout after %s", ip, timeout)
-		case <-ticker.C:
-		}
-	}
-}

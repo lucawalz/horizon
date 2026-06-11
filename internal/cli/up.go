@@ -18,7 +18,6 @@ type zerotierAuthorizer interface {
 	Authorize(ctx context.Context, networkID, memberID, name string) error
 	Deauthorize(ctx context.Context, networkID, memberID string) error
 	DeleteMember(ctx context.Context, networkID, memberID string) error
-	WaitForMemberByIP(ctx context.Context, networkID, ip string, timeout, poll time.Duration) (string, error)
 }
 
 type hetznerProvider interface {
@@ -30,6 +29,7 @@ type hetznerProvider interface {
 	BurstID() string
 	ServerID() string
 	ServerIP() string
+	ZeroTierMemberID() string
 }
 
 type upDeps struct {
@@ -144,13 +144,7 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 	r.Add(runner.Step{
 		Name: "zerotier-auth",
 		Run: func(ctx context.Context) error {
-			waitCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-			defer cancel()
-			id, err := deps.zt.WaitForMemberByIP(waitCtx, networkID, deps.prov.ServerIP(), 3*time.Minute, 5*time.Second)
-			if err != nil {
-				return fmt.Errorf("zerotier-auth: wait member: %w", err)
-			}
-			memberID = id
+			memberID = deps.prov.ZeroTierMemberID()
 			if err := deps.zt.Authorize(ctx, networkID, memberID, deps.prov.Hostname()); err != nil {
 				return fmt.Errorf("zerotier-auth: authorize: %w", err)
 			}

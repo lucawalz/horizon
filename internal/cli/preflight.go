@@ -10,6 +10,7 @@ import (
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/prometheus"
+	"github.com/lucawalz/horizon/internal/zerotier"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -26,6 +27,10 @@ var destructiveCmds = map[string]bool{
 func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.Interface, dryRun bool) error {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		return fmt.Errorf("pre-flight: terraform binary: not found in PATH")
+	}
+
+	if !zerotier.IDToolAvailable() {
+		return fmt.Errorf("pre-flight: zerotier-idtool binary: not found in PATH or %s", zerotier.FallbackIDToolPath)
 	}
 
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()

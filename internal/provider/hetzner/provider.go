@@ -13,6 +13,7 @@ import (
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/zerotier"
 )
 
 type Provider struct {
@@ -20,6 +21,8 @@ type Provider struct {
 	workDir           string
 	burstID           string
 	zerotierNetworkID string
+	zerotierIdentity  zerotier.Identity
+	identityGenerated bool
 	sshPublicKey      string
 	k3sURL            string
 	k3sToken          string
@@ -75,7 +78,23 @@ func (p *Provider) GenerateTFVars() (map[string]string, error) {
 	}, nil
 }
 
+func (p *Provider) ensureIdentity(ctx context.Context) error {
+	if p.identityGenerated {
+		return nil
+	}
+	id, err := zerotier.GenerateIdentity(ctx)
+	if err != nil {
+		return fmt.Errorf("hetzner: apply: generate zerotier identity: %w", err)
+	}
+	p.zerotierIdentity = id
+	p.identityGenerated = true
+	return nil
+}
+
 func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
+	if err := p.ensureIdentity(ctx); err != nil {
+		return err
+	}
 	tf, err := tfexec.NewTerraform(p.workDir, "terraform")
 	if err != nil {
 		return fmt.Errorf("hetzner: apply: new terraform: %w", err)
@@ -83,10 +102,12 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	tf.SetStdout(os.Stderr)
 	tf.SetStderr(os.Stderr)
 	if err := p.setBaseEnv(tf, map[string]string{
-		"HORIZON_ZEROTIER_NETWORK_ID": vars["zerotier_network_id"],
-		"HORIZON_K3S_URL":             vars["k3s_url"],
-		"HORIZON_K3S_TOKEN":           vars["k3s_token"],
-		"HORIZON_SSH_PUBLIC_KEY":      vars["ssh_public_key"],
+		"HORIZON_ZEROTIER_NETWORK_ID":      vars["zerotier_network_id"],
+		"HORIZON_ZEROTIER_IDENTITY_SECRET": p.zerotierIdentity.Secret,
+		"HORIZON_ZEROTIER_IDENTITY_PUBLIC": p.zerotierIdentity.Public,
+		"HORIZON_K3S_URL":                  vars["k3s_url"],
+		"HORIZON_K3S_TOKEN":                vars["k3s_token"],
+		"HORIZON_SSH_PUBLIC_KEY":           vars["ssh_public_key"],
 	}); err != nil {
 		return fmt.Errorf("hetzner: apply: set env: %w", err)
 	}
@@ -210,6 +231,8 @@ func (p *Provider) Hostname() string { return "horizon-burst-" + p.burstID }
 func (p *Provider) ServerID() string { return p.serverID }
 
 func (p *Provider) ServerIP() string { return p.serverIP }
+
+func (p *Provider) ZeroTierMemberID() string { return p.zerotierIdentity.MemberID }
 
 func (p *Provider) setBaseEnv(tf *tfexec.Terraform, extras map[string]string) error {
 	env := make(map[string]string)

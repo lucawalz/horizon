@@ -147,8 +147,8 @@ func TestBurstStepOrder(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1234"
-	zt := &mockZeroTier{waitID: "member-99"}
-	prov := &mockHetznerProvider{burstID: "aabb1234", hostname: hostname, serverID: "99"}
+	zt := &mockZeroTier{}
+	prov := &mockHetznerProvider{burstID: "aabb1234", hostname: hostname, serverID: "99", memberID: "member-99"}
 	kc := fake.NewSimpleClientset(
 		readyNode(hostname),
 		workloadPod("app1", "sentio-systems", hostname),
@@ -180,8 +180,8 @@ func TestBurstRollback_OnTerraformFailure(t *testing.T) {
 	defer restore()
 
 	tfErr := errors.New("terraform apply failed")
-	zt := &mockZeroTier{waitID: "should-not-be-used"}
-	prov := &mockHetznerProvider{burstID: "ccdd3344", hostname: "horizon-burst-ccdd3344", applyErr: tfErr}
+	zt := &mockZeroTier{}
+	prov := &mockHetznerProvider{burstID: "ccdd3344", hostname: "horizon-burst-ccdd3344", memberID: "should-not-be-used", applyErr: tfErr}
 	kc := fake.NewSimpleClientset()
 	vc := &mockVelero{}
 
@@ -210,8 +210,8 @@ func TestBurstSignalRollback(t *testing.T) {
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
-	zt := &mockZeroTier{waitID: "member-x"}
-	prov := &mockHetznerProvider{burstID: "ddeeff", hostname: "horizon-burst-ddeeff"}
+	zt := &mockZeroTier{}
+	prov := &mockHetznerProvider{burstID: "ddeeff", hostname: "horizon-burst-ddeeff", memberID: "member-x"}
 	kc := fake.NewSimpleClientset()
 	vc := &mockVelero{}
 
@@ -238,8 +238,8 @@ func TestBurstWritesPhase(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-eeff5566"
-	zt := &mockZeroTier{waitID: "member-1"}
-	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: hostname, serverID: "1"}
+	zt := &mockZeroTier{}
+	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: hostname, serverID: "1", memberID: "member-1"}
 	kc := fake.NewSimpleClientset(
 		readyNode(hostname),
 		workloadPod("p", "sentio-systems", hostname),
