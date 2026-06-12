@@ -34,10 +34,6 @@ var burstSteps = []string{
 	"Wait for workload pods Running on cloud nodes",
 }
 
-type veleroClient interface {
-	TriggerBackup(ctx context.Context, spec velerov1.BackupSpec, name string, poll, timeout time.Duration) error
-}
-
 type burstDeps struct {
 	zt            zerotierAuthorizer
 	prov          hetznerProvider

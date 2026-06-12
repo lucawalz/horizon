@@ -7,32 +7,14 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
-	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
-
-type mockVelero struct {
-	err   error
-	calls []string
-	specs []velerov1.BackupSpec
-}
-
-func (m *mockVelero) TriggerBackup(_ context.Context, spec velerov1.BackupSpec, name string, _, _ time.Duration) error {
-	ns := ""
-	if len(spec.IncludedNamespaces) > 0 {
-		ns = spec.IncludedNamespaces[0]
-	}
-	m.calls = append(m.calls, ns+"/"+name)
-	m.specs = append(m.specs, spec)
-	return m.err
-}
 
 func workloadPod(name, ns, node string) *corev1.Pod {
 	return &corev1.Pod{
@@ -160,7 +142,7 @@ func TestBurstStepOrder(t *testing.T) {
 		readyNode(hostname),
 		workloadPod("app1", "sentio-systems", hostname),
 	)
-	vc := &mockVelero{}
+	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
@@ -172,13 +154,10 @@ func TestBurstStepOrder(t *testing.T) {
 	if len(zt.authorizeCalls) != 1 || zt.authorizeCalls[0] != "member-99" {
 		t.Errorf("authorize calls = %v, want [member-99]", zt.authorizeCalls)
 	}
-	if len(vc.calls) != 1 {
-		t.Errorf("velero TriggerBackup calls = %v, want 1", vc.calls)
+	if !vc.waited {
+		t.Error("burst must trigger a velero backup")
 	}
-	if len(vc.specs) != 1 {
-		t.Fatalf("velero TriggerBackup specs = %v, want 1", vc.specs)
-	}
-	spec := vc.specs[0]
+	spec := vc.triggeredBackupSpec
 	if len(spec.IncludedNamespaces) != 1 || spec.IncludedNamespaces[0] != "sentio-systems" {
 		t.Errorf("backup IncludedNamespaces = %v, want [sentio-systems]", spec.IncludedNamespaces)
 	}
@@ -200,7 +179,7 @@ func TestBurstRollback_OnTerraformFailure(t *testing.T) {
 	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{burstID: "ccdd3344", hostname: "horizon-burst-ccdd3344", memberID: "should-not-be-used", applyErr: tfErr}
 	kc := fake.NewSimpleClientset()
-	vc := &mockVelero{}
+	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
@@ -230,7 +209,7 @@ func TestBurstSignalRollback(t *testing.T) {
 	zt := &mockZeroTier{}
 	prov := &mockHetznerProvider{burstID: "ddeeff", hostname: "horizon-burst-ddeeff", memberID: "member-x"}
 	kc := fake.NewSimpleClientset()
-	vc := &mockVelero{}
+	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
@@ -261,7 +240,7 @@ func TestBurstWritesPhase(t *testing.T) {
 		readyNode(hostname),
 		workloadPod("p", "sentio-systems", hostname),
 	)
-	vc := &mockVelero{}
+	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
 	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
