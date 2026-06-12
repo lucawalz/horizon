@@ -15,6 +15,7 @@ import (
 	"github.com/lucawalz/horizon/internal/velero"
 	"github.com/lucawalz/horizon/internal/zerotier"
 	"github.com/spf13/cobra"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -34,7 +35,7 @@ var burstSteps = []string{
 }
 
 type veleroClient interface {
-	TriggerBackup(ctx context.Context, workloadNamespace, name string, poll, timeout time.Duration) error
+	TriggerBackup(ctx context.Context, spec velerov1.BackupSpec, name string, poll, timeout time.Duration) error
 }
 
 type burstDeps struct {
@@ -140,7 +141,8 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 		Run: func(ctx context.Context) error {
 			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseBackingUp)
 			name := fmt.Sprintf("horizon-burst-%s-%d", workload, time.Now().Unix())
-			return deps.vc.TriggerBackup(ctx, workload, name, 5*time.Second, 10*time.Minute)
+			spec := velerov1.BackupSpec{IncludedNamespaces: []string{workload}, StorageLocation: "default"}
+			return deps.vc.TriggerBackup(ctx, spec, name, 5*time.Second, 10*time.Minute)
 		},
 	})
 

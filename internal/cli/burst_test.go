@@ -12,6 +12,7 @@ import (
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
+	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -20,10 +21,16 @@ import (
 type mockVelero struct {
 	err   error
 	calls []string
+	specs []velerov1.BackupSpec
 }
 
-func (m *mockVelero) TriggerBackup(_ context.Context, ns, name string, _, _ time.Duration) error {
+func (m *mockVelero) TriggerBackup(_ context.Context, spec velerov1.BackupSpec, name string, _, _ time.Duration) error {
+	ns := ""
+	if len(spec.IncludedNamespaces) > 0 {
+		ns = spec.IncludedNamespaces[0]
+	}
 	m.calls = append(m.calls, ns+"/"+name)
+	m.specs = append(m.specs, spec)
 	return m.err
 }
 
@@ -167,6 +174,16 @@ func TestBurstStepOrder(t *testing.T) {
 	}
 	if len(vc.calls) != 1 {
 		t.Errorf("velero TriggerBackup calls = %v, want 1", vc.calls)
+	}
+	if len(vc.specs) != 1 {
+		t.Fatalf("velero TriggerBackup specs = %v, want 1", vc.specs)
+	}
+	spec := vc.specs[0]
+	if len(spec.IncludedNamespaces) != 1 || spec.IncludedNamespaces[0] != "sentio-systems" {
+		t.Errorf("backup IncludedNamespaces = %v, want [sentio-systems]", spec.IncludedNamespaces)
+	}
+	if spec.StorageLocation != "default" {
+		t.Errorf("backup StorageLocation = %q, want default", spec.StorageLocation)
 	}
 	phases, _ := k8s.ReadBurstPhases(context.Background(), kc)
 	if phases["aabb1234"] != k8s.BurstPhaseRunning {

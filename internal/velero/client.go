@@ -54,21 +54,133 @@ func NewClientWithCRClient(cl crClient.Client) *Client {
 	return &Client{cl: cl}
 }
 
-func (c *Client) TriggerBackup(ctx context.Context, workloadNamespace, name string, poll, timeout time.Duration) error {
+func (c *Client) CreateBackup(ctx context.Context, spec velerov1.BackupSpec, name string) error {
 	backup := &velerov1.Backup{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: backupNamespace,
-		},
-		Spec: velerov1.BackupSpec{
-			IncludedNamespaces: []string{workloadNamespace},
-			StorageLocation:    defaultStorageLocation,
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: backupNamespace},
+		Spec:       spec,
 	}
 	if err := c.cl.Create(ctx, backup); err != nil {
 		return fmt.Errorf("velero: backup create %q: %w", name, err)
 	}
+	return nil
+}
 
+func (c *Client) TriggerBackup(ctx context.Context, spec velerov1.BackupSpec, name string, poll, timeout time.Duration) error {
+	if err := c.CreateBackup(ctx, spec, name); err != nil {
+		return err
+	}
+	return c.waitForPhase(ctx, "backup", name, poll, timeout, &velerov1.Backup{}, func(obj crClient.Object) (phaseOutcome, error) {
+		b := obj.(*velerov1.Backup)
+		return classifyBackup(name, b)
+	})
+}
+
+func (c *Client) CreateRestore(ctx context.Context, spec velerov1.RestoreSpec, name string) error {
+	restore := &velerov1.Restore{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: backupNamespace},
+		Spec:       spec,
+	}
+	if err := c.cl.Create(ctx, restore); err != nil {
+		return fmt.Errorf("velero: restore create %q: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) TriggerRestore(ctx context.Context, spec velerov1.RestoreSpec, name string, poll, timeout time.Duration) error {
+	if err := c.CreateRestore(ctx, spec, name); err != nil {
+		return err
+	}
+	return c.waitForPhase(ctx, "restore", name, poll, timeout, &velerov1.Restore{}, func(obj crClient.Object) (phaseOutcome, error) {
+		r := obj.(*velerov1.Restore)
+		return classifyRestore(name, r)
+	})
+}
+
+func (c *Client) ListBackups(ctx context.Context) ([]velerov1.Backup, error) {
+	var list velerov1.BackupList
+	if err := c.cl.List(ctx, &list, crClient.InNamespace(backupNamespace)); err != nil {
+		return nil, fmt.Errorf("velero: backup list: %w", err)
+	}
+	return list.Items, nil
+}
+
+func (c *Client) GetBackup(ctx context.Context, name string) (*velerov1.Backup, error) {
+	var backup velerov1.Backup
+	key := types.NamespacedName{Name: name, Namespace: backupNamespace}
+	if err := c.cl.Get(ctx, key, &backup); err != nil {
+		return nil, fmt.Errorf("velero: backup get %q: %w", name, err)
+	}
+	return &backup, nil
+}
+
+func (c *Client) DeleteBackup(ctx context.Context, name string) error {
+	req := &velerov1.DeleteBackupRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:    backupNamespace,
+			GenerateName: name + "-",
+		},
+		Spec: velerov1.DeleteBackupRequestSpec{BackupName: name},
+	}
+	if err := c.cl.Create(ctx, req); err != nil {
+		return fmt.Errorf("velero: delete backup request %q: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) ListRestores(ctx context.Context) ([]velerov1.Restore, error) {
+	var list velerov1.RestoreList
+	if err := c.cl.List(ctx, &list, crClient.InNamespace(backupNamespace)); err != nil {
+		return nil, fmt.Errorf("velero: restore list: %w", err)
+	}
+	return list.Items, nil
+}
+
+func (c *Client) GetRestore(ctx context.Context, name string) (*velerov1.Restore, error) {
+	var restore velerov1.Restore
+	key := types.NamespacedName{Name: name, Namespace: backupNamespace}
+	if err := c.cl.Get(ctx, key, &restore); err != nil {
+		return nil, fmt.Errorf("velero: restore get %q: %w", name, err)
+	}
+	return &restore, nil
+}
+
+type phaseOutcome int
+
+const (
+	phasePending phaseOutcome = iota
+	phaseSucceeded
+	phaseFailed
+)
+
+func classifyBackup(name string, b *velerov1.Backup) (phaseOutcome, error) {
+	switch b.Status.Phase {
+	case velerov1.BackupPhaseCompleted:
+		if b.Status.Errors != 0 {
+			return phaseFailed, fmt.Errorf("velero: backup %q completed with %d errors", name, b.Status.Errors)
+		}
+		return phaseSucceeded, nil
+	case velerov1.BackupPhaseFailed, velerov1.BackupPhasePartiallyFailed,
+		velerov1.BackupPhaseFailedValidation:
+		return phaseFailed, fmt.Errorf("velero: backup %q: phase %s", name, b.Status.Phase)
+	}
+	return phasePending, nil
+}
+
+func classifyRestore(name string, r *velerov1.Restore) (phaseOutcome, error) {
+	switch r.Status.Phase {
+	case velerov1.RestorePhaseCompleted:
+		if r.Status.Errors != 0 {
+			return phaseFailed, fmt.Errorf("velero: restore %q completed with %d errors", name, r.Status.Errors)
+		}
+		return phaseSucceeded, nil
+	case velerov1.RestorePhaseFailed, velerov1.RestorePhasePartiallyFailed,
+		velerov1.RestorePhaseFailedValidation:
+		return phaseFailed, fmt.Errorf("velero: restore %q: phase %s", name, r.Status.Phase)
+	}
+	return phasePending, nil
+}
+
+func (c *Client) waitForPhase(ctx context.Context, kind, name string, poll, timeout time.Duration, obj crClient.Object, classify func(crClient.Object) (phaseOutcome, error)) error {
 	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(poll)
@@ -76,23 +188,18 @@ func (c *Client) TriggerBackup(ctx context.Context, workloadNamespace, name stri
 
 	key := types.NamespacedName{Name: name, Namespace: backupNamespace}
 	for {
-		var current velerov1.Backup
-		if err := c.cl.Get(deadlineCtx, key, &current); err != nil {
-			return fmt.Errorf("velero: backup get %q: %w", name, err)
+		if err := c.cl.Get(deadlineCtx, key, obj); err != nil {
+			return fmt.Errorf("velero: %s get %q: %w", kind, name, err)
 		}
-		switch current.Status.Phase {
-		case velerov1.BackupPhaseCompleted:
-			if current.Status.Errors != 0 {
-				return fmt.Errorf("velero: backup %q completed with %d errors", name, current.Status.Errors)
-			}
+		switch outcome, err := classify(obj); outcome {
+		case phaseSucceeded:
 			return nil
-		case velerov1.BackupPhaseFailed, velerov1.BackupPhasePartiallyFailed,
-			velerov1.BackupPhaseFailedValidation:
-			return fmt.Errorf("velero: backup %q: phase %s", name, current.Status.Phase)
+		case phaseFailed:
+			return err
 		}
 		select {
 		case <-deadlineCtx.Done():
-			return fmt.Errorf("velero: backup %q: timeout after %s", name, timeout)
+			return fmt.Errorf("velero: %s %q: timeout after %s", kind, name, timeout)
 		case <-ticker.C:
 		}
 	}
