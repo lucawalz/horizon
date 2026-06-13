@@ -112,13 +112,13 @@ func TestWireGuardConfig(t *testing.T) {
 provider: hetzner
 infra_path: ` + dir + `
 wireguard:
-  hub_host: 192.168.20.1
+  hub_host: 10.20.0.1
   hub_user: root
   hub_public_key: DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=
   interface: wg0
   listen_port: 51820
   subnet: 10.100.0.0/24
-  master_ip: 192.168.20.10
+  master_ip: 10.20.0.10
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -129,8 +129,8 @@ wireguard:
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.WireGuard.HubHost != "192.168.20.1" {
-		t.Errorf("HubHost: got %q, want %q", cfg.WireGuard.HubHost, "192.168.20.1")
+	if cfg.WireGuard.HubHost != "10.20.0.1" {
+		t.Errorf("HubHost: got %q, want %q", cfg.WireGuard.HubHost, "10.20.0.1")
 	}
 	if cfg.WireGuard.HubPublicKey != "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=" {
 		t.Errorf("HubPublicKey: got %q", cfg.WireGuard.HubPublicKey)
@@ -141,8 +141,8 @@ wireguard:
 	if cfg.WireGuard.Subnet != "10.100.0.0/24" {
 		t.Errorf("Subnet: got %q, want %q", cfg.WireGuard.Subnet, "10.100.0.0/24")
 	}
-	if cfg.WireGuard.MasterIP != "192.168.20.10" {
-		t.Errorf("MasterIP: got %q, want %q", cfg.WireGuard.MasterIP, "192.168.20.10")
+	if cfg.WireGuard.MasterIP != "10.20.0.10" {
+		t.Errorf("MasterIP: got %q, want %q", cfg.WireGuard.MasterIP, "10.20.0.10")
 	}
 }
 

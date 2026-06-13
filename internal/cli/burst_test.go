@@ -145,7 +145,7 @@ func TestBurstStepOrder(t *testing.T) {
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	if err := cli.RunBurstForTest(context.Background(), newTestApp(), pm, prov, kc, vc, "sentio-systems"); err != nil {
@@ -182,7 +182,7 @@ func TestBurstRollback_OnTerraformFailure(t *testing.T) {
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	err := cli.RunBurstForTest(context.Background(), newTestApp(), pm, prov, kc, vc, "sentio-systems")
@@ -212,7 +212,7 @@ func TestBurstSignalRollback(t *testing.T) {
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -243,7 +243,7 @@ func TestBurstWritesPhase(t *testing.T) {
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	if err := cli.RunBurstForTest(context.Background(), newTestApp(), pm, prov, kc, vc, "sentio-systems"); err != nil {

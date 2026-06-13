@@ -18,7 +18,7 @@ func (f *fakeRunner) Run(_ context.Context, name string, args ...string) error {
 }
 
 func newTestManager(r commandRunner) *SSHPeerManager {
-	return &SSHPeerManager{Host: "192.168.20.1", User: "root", Iface: "wg0", ListenPort: 51820, runner: r}
+	return &SSHPeerManager{Host: "10.20.0.1", User: "root", Iface: "wg0", ListenPort: 51820, runner: r}
 }
 
 func TestAddPeerExactArgv(t *testing.T) {
@@ -37,7 +37,7 @@ func TestAddPeerExactArgv(t *testing.T) {
 		"ssh",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "BatchMode=yes",
-		"root@192.168.20.1",
+		"root@10.20.0.1",
 		"wg", "set", "wg0",
 		"peer", "PUBKEY==",
 		"endpoint", "203.0.113.7:51820",
@@ -60,7 +60,7 @@ func TestRemovePeerExactArgv(t *testing.T) {
 		"ssh",
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "BatchMode=yes",
-		"root@192.168.20.1",
+		"root@10.20.0.1",
 		"wg", "set", "wg0",
 		"peer", "PUBKEY==", "remove",
 	}

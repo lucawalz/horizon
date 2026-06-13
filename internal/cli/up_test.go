@@ -77,16 +77,16 @@ func newTestApp() *cli.App {
 	return &cli.App{
 		Config: &config.Config{
 			WireGuard: config.WireGuardConfig{
-				HubHost:      "192.168.20.1",
+				HubHost:      "10.20.0.1",
 				HubUser:      "root",
 				HubPublicKey: "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=",
 				Interface:    "wg0",
 				ListenPort:   51820,
 				Subnet:       "10.100.0.0/24",
-				MasterIP:     "192.168.20.10",
+				MasterIP:     "10.20.0.10",
 			},
 			K3s: config.K3sConfig{
-				URL:       "https://192.168.20.10:6443",
+				URL:       "https://10.20.0.10:6443",
 				URLEnv:    "HORIZON_K3S_URL",
 				TokenEnv:  "HORIZON_K3S_TOKEN",
 				SSHKeyEnv: "HORIZON_SSH_PUBLIC_KEY",
@@ -153,7 +153,7 @@ func TestUpStepOrder(t *testing.T) {
 	kc := fake.NewSimpleClientset(readyNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	if err := cli.RunUpForTest(context.Background(), newTestApp(), pm, prov, kc); err != nil {
@@ -179,7 +179,7 @@ func TestUpRollbackOnTerraformFailure(t *testing.T) {
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	err := cli.RunUpForTest(context.Background(), newTestApp(), pm, prov, fake.NewSimpleClientset())
@@ -214,7 +214,7 @@ func TestUpRollbackOnWGPeerAddFailure(t *testing.T) {
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	err := cli.RunUpForTest(context.Background(), newTestApp(), pm, prov, fake.NewSimpleClientset())
@@ -243,7 +243,7 @@ func TestUpRollbackOnWaitNodeReadyTimeout(t *testing.T) {
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -281,7 +281,7 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 	kc := fake.NewSimpleClientset(readyNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://10.20.0.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	out := captureStdout(func() {

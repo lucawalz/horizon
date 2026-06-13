@@ -23,13 +23,13 @@ func newTestConfig() *config.Config {
 			Location:    "fsn1",
 		},
 		WireGuard: config.WireGuardConfig{
-			HubHost:      "192.168.20.1",
+			HubHost:      "10.20.0.1",
 			HubUser:      "root",
 			HubPublicKey: "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=",
 			Interface:    "wg0",
 			ListenPort:   51820,
 			Subnet:       "10.100.0.0/24",
-			MasterIP:     "192.168.20.10",
+			MasterIP:     "10.20.0.10",
 		},
 	}
 }
@@ -39,7 +39,7 @@ func TestGenerateTFVars(t *testing.T) {
 
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
-	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://192.168.20.10:6443", "k3s-token-xyz")
+	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://10.20.0.10:6443", "k3s-token-xyz")
 
 	vars, err := p.GenerateTFVars()
 	if err != nil {
@@ -53,7 +53,7 @@ func TestGenerateTFVars(t *testing.T) {
 		"location":       "fsn1",
 		"flake_ref":      "main",
 		"ssh_public_key": "ssh-rsa AAAA",
-		"k3s_url":        "https://192.168.20.10:6443",
+		"k3s_url":        "https://10.20.0.10:6443",
 		"k3s_token":      "k3s-token-xyz",
 	}
 	for k, want := range required {
@@ -86,7 +86,7 @@ func TestGenerateTFVarsMissingHubKey(t *testing.T) {
 func TestGenerateTFVarsBurstIDStable(t *testing.T) {
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
-	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://192.168.20.10:6443", "tok")
+	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://10.20.0.10:6443", "tok")
 
 	v1, err := p.GenerateTFVars()
 	if err != nil {
@@ -136,7 +136,7 @@ func TestGenerateTFVarsWithoutKeypair(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWithBurstID: %v", err)
 	}
-	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://192.168.20.10:6443", "tok")
+	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://10.20.0.10:6443", "tok")
 	if _, err := p.GenerateTFVars(); err != nil {
 		t.Fatalf("GenerateTFVars must not require a keypair: %v", err)
 	}

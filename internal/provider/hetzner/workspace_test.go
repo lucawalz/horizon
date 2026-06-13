@@ -19,13 +19,13 @@ func newWorkspaceTestConfig() *config.Config {
 			Location:    "fsn1",
 		},
 		WireGuard: config.WireGuardConfig{
-			HubHost:      "192.168.20.1",
+			HubHost:      "10.20.0.1",
 			HubUser:      "root",
 			HubPublicKey: "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=",
 			Interface:    "wg0",
 			ListenPort:   51820,
 			Subnet:       "10.100.0.0/24",
-			MasterIP:     "192.168.20.10",
+			MasterIP:     "10.20.0.10",
 		},
 	}
 }

@@ -41,8 +41,8 @@ func TestPreFlightWireGuardHubHostMissing(t *testing.T) {
 	cfg := minimalConfig(t)
 	cfg.WireGuard.HubHost = ""
 	cfg.WireGuard.HubPublicKey = "hubkey"
-	cfg.WireGuard.MasterIP = "192.168.20.10"
-	cfg.K3s.URL = "https://192.168.20.10:6443"
+	cfg.WireGuard.MasterIP = "10.20.0.10"
+	cfg.K3s.URL = "https://10.20.0.10:6443"
 
 	t.Setenv("HCLOUD_TOKEN", "dummy")
 
@@ -54,10 +54,10 @@ func TestPreFlightWireGuardHubHostMissing(t *testing.T) {
 
 func TestPreFlightWireGuardHubPublicKeyMissing(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubHost = "10.20.0.1"
 	cfg.WireGuard.HubPublicKey = ""
-	cfg.WireGuard.MasterIP = "192.168.20.10"
-	cfg.K3s.URL = "https://192.168.20.10:6443"
+	cfg.WireGuard.MasterIP = "10.20.0.10"
+	cfg.K3s.URL = "https://10.20.0.10:6443"
 
 	t.Setenv("HCLOUD_TOKEN", "dummy")
 
@@ -69,9 +69,9 @@ func TestPreFlightWireGuardHubPublicKeyMissing(t *testing.T) {
 
 func TestPreFlightK3sURLStaleRejected(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubHost = "10.20.0.1"
 	cfg.WireGuard.HubPublicKey = "hubkey"
-	cfg.WireGuard.MasterIP = "192.168.20.10"
+	cfg.WireGuard.MasterIP = "10.20.0.10"
 	cfg.K3s.URL = "https://10.147.17.161:6443"
 
 	t.Setenv("HCLOUD_TOKEN", "dummy")
@@ -87,9 +87,9 @@ func TestPreFlightK3sURLStaleRejected(t *testing.T) {
 
 func TestPreFlightK3sURLEmpty(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubHost = "10.20.0.1"
 	cfg.WireGuard.HubPublicKey = "hubkey"
-	cfg.WireGuard.MasterIP = "192.168.20.10"
+	cfg.WireGuard.MasterIP = "10.20.0.10"
 	cfg.K3s.URL = ""
 	cfg.K3s.URLEnv = "HORIZON_K3S_URL_TEST_UNSET"
 
@@ -104,10 +104,10 @@ func TestPreFlightK3sURLEmpty(t *testing.T) {
 
 func TestPreFlightK3sURLDMZMasterAccepted(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubHost = "10.20.0.1"
 	cfg.WireGuard.HubPublicKey = "hubkey"
-	cfg.WireGuard.MasterIP = "192.168.20.10"
-	cfg.K3s.URL = "https://192.168.20.10:6443"
+	cfg.WireGuard.MasterIP = "10.20.0.10"
+	cfg.K3s.URL = "https://10.20.0.10:6443"
 
 	t.Setenv("HCLOUD_TOKEN", "dummy")
 
