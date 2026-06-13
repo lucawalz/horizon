@@ -834,10 +834,6 @@ func AdoptActiveBurstsForTest(ctx context.Context, kc kubernetes.Interface, ws k
 	return adoptActiveBursts(ctx, kc, ws)
 }
 
-func NewWatchDepsForTest(kc kubernetes.Interface, prom promQuerier, factory pusherFactory, cfg *config.Config, workload string) *watchDeps {
-	return &watchDeps{kc: kc, prom: prom, pushFactory: factory, cfg: cfg, workload: workload}
-}
-
 func VectorAverageExcludingHostsForTest(vec model.Vector, excludeHosts map[string]bool) float64 {
 	return vectorAverageExcludingHosts(vec, excludeHosts)
 }
@@ -913,5 +909,3 @@ func newWatchDeps(app *App, workload string) (*watchDeps, error) {
 		workload:    workload,
 	}, nil
 }
-
-func NewWatchCmdForTest(app *App) *cobra.Command { return newWatchCmd(app) }

@@ -67,7 +67,6 @@ func TestRunSinglePollCycle_HealsStrandCreatedMidSession(t *testing.T) {
 type mockPusher struct {
 	calls   int
 	lastErr error
-	metrics []map[string]float64
 }
 
 func (m *mockPusher) PushContext(_ context.Context) error {
