@@ -20,4 +20,4 @@ A small `Provider` interface defines the seam: `Apply`, `Destroy`, `Status`, and
 
 ## Consequences
 
-The orchestration logic reads against a stable contract and stays testable with a fake provider. Adding a second cloud is implementing the interface, not editing the burst flow. The honest caveat is YAGNI: with a single implementation the interface is an unproven abstraction, and Hetzner-only concepts like ZeroTier identity and Terraform workspaces still live in the concrete type, so a real second backend may yet reshape the contract.
+The orchestration logic reads against a stable contract and stays testable with a fake provider. Adding a second cloud is implementing the interface, not editing the burst flow. The honest caveat is YAGNI: with a single implementation the interface is an unproven abstraction, and Hetzner-only concepts like the WireGuard keypair and Terraform workspaces still live in the concrete type, so a real second backend may yet reshape the contract.

@@ -8,7 +8,7 @@ A homelab burst orchestrator: it watches a K3s cluster for resource pressure and
 
 ## Description
 
-horizon is a command-line controller that gives a small Kubernetes cluster elastic headroom. It watches the cluster for CPU and memory pressure and, when a workload needs more room than the local nodes can provide, provisions a temporary node on Hetzner Cloud, joins it to the cluster over a ZeroTier overlay, moves the workload onto it, and tears the node down once pressure subsides.
+horizon is a command-line controller that gives a small Kubernetes cluster elastic headroom. It watches the cluster for CPU and memory pressure and, when a workload needs more room than the local nodes can provide, provisions a temporary node on Hetzner Cloud, joins it to the cluster over a self-hosted WireGuard overlay, moves the workload onto it, and tears the node down once pressure subsides.
 
 The infrastructure side, the Terraform module and NixOS image for the burst node, lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository. horizon drives that module through its `infra_path` setting and does not own the cloud definitions itself.
 
@@ -26,7 +26,9 @@ horizon exists so a three-node home cluster can absorb occasional heavy jobs wit
 
 ## Architecture
 
-The watch loop polls Prometheus for cluster pressure. When the score stays above the burst threshold across several consecutive samples, horizon runs a burst: it backs up the target namespace with Velero, applies the bedrock Terraform module to create a Hetzner VM, authorizes that VM on the ZeroTier network, waits for it to register as a K3s node, and migrates the workload onto it. When pressure falls below the scale-down threshold, it drains and destroys the node.
+The watch loop polls Prometheus for cluster pressure. When the score stays above the burst threshold across several consecutive samples, horizon runs a burst: it backs up the target namespace with Velero, applies the bedrock Terraform module to create a Hetzner VM, registers that VM as a WireGuard peer on the home hub, waits for it to register as a K3s node, and migrates the workload onto it. When pressure falls below the scale-down threshold, it drains and destroys the node.
+
+The WireGuard hub runs on the home Pi router and dials out to each burst node's public Hetzner address, so the home network needs no inbound port forward. horizon registers each peer on the hub over SSH.
 
 ```mermaid
 flowchart LR
@@ -34,7 +36,7 @@ flowchart LR
   watch -->|pressure high| burst[burst]
   burst --> tf[Terraform module in bedrock]
   tf --> vm[Hetzner VM]
-  vm -. ZeroTier + K3s agent .-> cluster[(K3s cluster)]
+  vm -. WireGuard + K3s agent .-> cluster[(K3s cluster)]
   burst -->|migrate workload| cluster
   watch -->|pressure low| down[down]
   down --> cluster
@@ -45,7 +47,7 @@ flowchart LR
 - Go 1.26 or newer to build.
 - A reachable Kubernetes/K3s cluster running kube-prometheus-stack (Prometheus and Pushgateway) and Velero.
 - The Terraform CLI (1.9 or newer) and a local checkout of the bedrock repository.
-- A Hetzner Cloud project and a ZeroTier network, with their API tokens available as environment variables.
+- A Hetzner Cloud project with its API token available as an environment variable, and a self-hosted WireGuard hub on the home router with SSH access for peer registration.
 
 ## Installation
 
@@ -108,15 +110,15 @@ horizon drain <node>
 
 ## Configuration
 
-The config file sets the provider, the path to the bedrock Terraform module, the scaling thresholds, and the provider and overlay credentials. Secrets are read from environment variables rather than committed: `HCLOUD_TOKEN`, `ZEROTIER_API_TOKEN`, and the K3s join values. A template is in [`config.example.yaml`](config.example.yaml).
+The config file sets the provider, the path to the bedrock Terraform module, the scaling thresholds, and the provider and overlay settings. Secrets are read from environment variables rather than committed: `HCLOUD_TOKEN` and the K3s join values. A template is in [`config.example.yaml`](config.example.yaml).
 
 Key fields:
 
 - `infra_path`: path to the bedrock `terraform/hetzner` module that horizon applies.
 - `thresholds`: the `burst` and `scale_down` scores, the sliding `window` size, `cooldown_minutes`, and `max_burst_nodes`.
 - `hetzner`: `server_type` and `location` for the burst VM.
-- `zerotier`: `network_id` and the master's address on the overlay.
-- `k3s`: `url`, the master's API endpoint on the ZeroTier network, plus the join token supplied from the environment.
+- `wireguard`: `hub_host`, `hub_user`, and `hub_public_key` for the home hub, plus the `interface`, `listen_port`, `subnet`, and the master's `master_ip` on the DMZ.
+- `k3s`: `url`, the master's API endpoint on the DMZ, plus the join token supplied from the environment.
 
 ## How it works
 
@@ -132,7 +134,7 @@ internal/cli/         cobra commands (status, up, down, burst, drain, watch)
 internal/config/      configuration loading and schema
 internal/provider/    provider interface and the Hetzner implementation
 internal/k8s/         cluster client, drain, workload migration, phase state
-internal/zerotier/    ZeroTier network membership
+internal/wireguard/   WireGuard keypairs and hub peer registration
 internal/prometheus/  pressure queries over a port-forward
 internal/velero/      pre-burst backups
 internal/runner/      sequential step runner with rollback

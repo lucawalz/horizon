@@ -7,7 +7,7 @@ date: 2026-05-02
 
 ## Context
 
-A burst is a multi-step, long-running operation: back up the namespace, apply Terraform to create a VM, authorize it on ZeroTier, wait for it to register as a K3s node, then migrate the workload. Each step takes time and several touch cloud resources that cost money. A crash, a signal, or a network failure partway through must not leave a half-built burst that nobody can see and nothing cleans up: an orphaned Hetzner VM keeps billing whether or not the cluster knows it exists.
+A burst is a multi-step, long-running operation: back up the namespace, apply Terraform to create a VM, register it as a WireGuard peer on the hub, wait for it to register as a K3s node, then migrate the workload. Each step takes time and several touch cloud resources that cost money. A crash, a signal, or a network failure partway through must not leave a half-built burst that nobody can see and nothing cleans up: an orphaned Hetzner VM keeps billing whether or not the cluster knows it exists.
 
 ## Decision
 

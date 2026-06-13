@@ -34,7 +34,7 @@ Format: `<type>/<description>`
 | Type | Alias | Use case | Example |
 |------|-------|----------|---------|
 | `feat/` | `feature/` | New features | `feat/watch-daemon-hysteresis` |
-| `fix/` | `bugfix/` | Bug fixes | `fix/zerotier-member-revocation` |
+| `fix/` | `bugfix/` | Bug fixes | `fix/wireguard-peer-revocation` |
 | `hotfix/` | - | Urgent fixes | `hotfix/terraform-state-leak` |
 | `release/` | - | Release preparation | `release/v0.2.0` |
 | `chore/` | - | Non-code tasks (deps, docs) | `chore/update-dependencies` |
@@ -48,7 +48,7 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 **Format**: `<type>[optional scope]: <description>`
 
 - Description: brief, imperative, lowercase, 7–12 words
-- Scope: component name (`cli`, `provider`, `runner`, `k8s`, `zerotier`, …)
+- Scope: component name (`cli`, `provider`, `runner`, `k8s`, `wireguard`, …)
 - No period at end of subject line
 - Subject line only, no body, no bullet points
 

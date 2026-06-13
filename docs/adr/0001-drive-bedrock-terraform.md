@@ -7,7 +7,7 @@ date: 2026-04-25
 
 ## Context
 
-A burst needs a real cloud node: a Hetzner VM, provisioned from a NixOS image, joined to the cluster over ZeroTier. That infrastructure is already declared in the companion bedrock repository, where the rest of the homelab estate lives. horizon is the runtime controller that decides when to add and remove capacity. The question is whether horizon should carry its own copy of the cloud definitions or reach into bedrock's.
+A burst needs a real cloud node: a Hetzner VM, provisioned from a NixOS image, joined to the cluster over WireGuard. That infrastructure is already declared in the companion bedrock repository, where the rest of the homelab estate lives. horizon is the runtime controller that decides when to add and remove capacity. The question is whether horizon should carry its own copy of the cloud definitions or reach into bedrock's.
 
 ## Decision
 
