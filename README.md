@@ -36,7 +36,9 @@ flowchart LR
   watch -->|pressure high| burst[burst]
   burst --> tf[Terraform module in bedrock]
   tf --> vm[Hetzner VM]
-  vm -. WireGuard + K3s agent .-> cluster[(K3s cluster)]
+  burst -->|register peer over SSH| hub[WireGuard hub on the home router]
+  vm -. WireGuard + K3s agent .-> hub
+  hub --- cluster[(K3s cluster)]
   burst -->|migrate workload| cluster
   watch -->|pressure low| down[down]
   down --> cluster
@@ -73,9 +75,9 @@ CPU: 0.08/0.80 ●  Mem: 0.16/0.80 ●  Pending: 0
 BurstPhase: Idle
 
 NAME       ROLE     CPU%   MEM%   PODS   STATUS   IP
-master     master   13%    17%    26     Ready    10.0.0.1
-worker-1   worker   6%     8%     16     Ready    10.0.0.2
-worker-2   worker   4%     23%    27     Ready    10.0.0.3
+master     master   13%    17%    26     Ready    10.20.0.10
+worker-1   worker   6%     8%     16     Ready    10.20.0.11
+worker-2   worker   4%     23%    27     Ready    10.20.0.12
 ```
 
 Run the autoscaler in the foreground:
