@@ -27,7 +27,7 @@ golangci-lint run ./...
 
 ## Branch naming
 
-horizon follows [Conventional Branch](https://conventional-branch.github.io/).
+horizon follows [Conventional Branch](https://conventionalbranch.org/).
 
 Format: `<type>/<description>`
 
