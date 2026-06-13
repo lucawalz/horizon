@@ -13,13 +13,17 @@ hetzner:
   server_type: cpx22
   location: hel1
 
-zerotier:
-  network_id: ""
-  api_token_env: ZEROTIER_API_TOKEN
-  master_ip: ""
+wireguard:
+  hub_host: "192.168.20.1"
+  hub_user: "root"
+  hub_public_key: ""
+  interface: "wg0"
+  listen_port: 51820
+  subnet: "10.100.0.0/24"
+  master_ip: "192.168.20.10"
 
 k3s:
-  url: ""
+  url: "https://192.168.20.10:6443"
   url_env: HORIZON_K3S_URL
   token_env: HORIZON_K3S_TOKEN
   ssh_public_key_env: HORIZON_SSH_PUBLIC_KEY

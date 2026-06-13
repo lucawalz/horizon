@@ -37,66 +37,62 @@ func TestPreFlightDryRunSkipsCredentials(t *testing.T) {
 	}
 }
 
-func TestPreFlightZeroTierAPITokenMissing(t *testing.T) {
+func TestPreFlightWireGuardHubHostMissing(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
-	cfg.ZeroTier.NetworkID = "abc123"
-	cfg.K3s.URL = "https://10.147.20.1:6443"
+	cfg.WireGuard.HubHost = ""
+	cfg.WireGuard.HubPublicKey = "hubkey"
+	cfg.WireGuard.MasterIP = "192.168.20.10"
+	cfg.K3s.URL = "https://192.168.20.10:6443"
 
-	t.Setenv("ZEROTIER_API_TOKEN", "")
+	t.Setenv("HCLOUD_TOKEN", "dummy")
+
+	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "hub_host") {
+		t.Errorf("expected hub_host error, got %v", err)
+	}
+}
+
+func TestPreFlightWireGuardHubPublicKeyMissing(t *testing.T) {
+	cfg := minimalConfig(t)
+	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubPublicKey = ""
+	cfg.WireGuard.MasterIP = "192.168.20.10"
+	cfg.K3s.URL = "https://192.168.20.10:6443"
+
+	t.Setenv("HCLOUD_TOKEN", "dummy")
+
+	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
+	if err == nil || !strings.Contains(err.Error(), "hub_public_key") {
+		t.Errorf("expected hub_public_key error, got %v", err)
+	}
+}
+
+func TestPreFlightK3sURLStaleRejected(t *testing.T) {
+	cfg := minimalConfig(t)
+	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubPublicKey = "hubkey"
+	cfg.WireGuard.MasterIP = "192.168.20.10"
+	cfg.K3s.URL = "https://10.147.17.161:6443"
+
 	t.Setenv("HCLOUD_TOKEN", "dummy")
 
 	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
 	if err == nil {
-		t.Fatal("expected error when ZEROTIER_API_TOKEN unset")
+		t.Fatal("expected error for stale K3S_URL not matching master_ip")
 	}
-	if !strings.Contains(err.Error(), "zerotier") || !strings.Contains(err.Error(), "ZEROTIER_API_TOKEN") {
-		t.Errorf("error = %q, want contains 'zerotier' and 'ZEROTIER_API_TOKEN'", err.Error())
-	}
-}
-
-func TestPreFlightZeroTierNetworkIDMissing(t *testing.T) {
-	cfg := minimalConfig(t)
-	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
-	cfg.ZeroTier.NetworkID = ""
-	cfg.K3s.URL = "https://10.147.20.1:6443"
-
-	t.Setenv("ZEROTIER_API_TOKEN", "any")
-	t.Setenv("HCLOUD_TOKEN", "dummy")
-
-	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
-	if err == nil || !strings.Contains(err.Error(), "network_id") {
-		t.Errorf("expected network_id error, got %v", err)
-	}
-}
-
-func TestPreFlightK3sURLLAN(t *testing.T) {
-	cfg := minimalConfig(t)
-	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
-	cfg.ZeroTier.NetworkID = "abc"
-	cfg.K3s.URL = "https://192.168.2.191:6443"
-
-	t.Setenv("ZEROTIER_API_TOKEN", "any")
-	t.Setenv("HCLOUD_TOKEN", "dummy")
-
-	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
-	if err == nil {
-		t.Fatal("expected error for LAN K3S_URL")
-	}
-	want := "pre-flight: k3s: K3S_URL https://192.168.2.191:6443 is a LAN address — use the master's ZeroTier IP"
-	if err.Error() != want {
-		t.Errorf("got %q\nwant %q", err.Error(), want)
+	if !strings.Contains(err.Error(), "master_ip") {
+		t.Errorf("error %q must mention master_ip", err.Error())
 	}
 }
 
 func TestPreFlightK3sURLEmpty(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
-	cfg.ZeroTier.NetworkID = "abc"
+	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubPublicKey = "hubkey"
+	cfg.WireGuard.MasterIP = "192.168.20.10"
 	cfg.K3s.URL = ""
 	cfg.K3s.URLEnv = "HORIZON_K3S_URL_TEST_UNSET"
 
-	t.Setenv("ZEROTIER_API_TOKEN", "any")
 	t.Setenv("HCLOUD_TOKEN", "dummy")
 	t.Setenv("HORIZON_K3S_URL_TEST_UNSET", "")
 
@@ -106,33 +102,17 @@ func TestPreFlightK3sURLEmpty(t *testing.T) {
 	}
 }
 
-func TestPreFlightK3sURLZeroTier192Accepted(t *testing.T) {
+func TestPreFlightK3sURLDMZMasterAccepted(t *testing.T) {
 	cfg := minimalConfig(t)
-	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
-	cfg.ZeroTier.NetworkID = "abc"
-	cfg.ZeroTier.MasterIP = "192.168.100.1"
-	cfg.K3s.URL = "https://192.168.100.1:6443"
+	cfg.WireGuard.HubHost = "192.168.20.1"
+	cfg.WireGuard.HubPublicKey = "hubkey"
+	cfg.WireGuard.MasterIP = "192.168.20.10"
+	cfg.K3s.URL = "https://192.168.20.10:6443"
 
-	t.Setenv("ZEROTIER_API_TOKEN", "any")
 	t.Setenv("HCLOUD_TOKEN", "dummy")
 
 	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
-	if err != nil && strings.Contains(err.Error(), "K3S_URL") {
-		t.Errorf("192.168.x.x matching ZeroTier master_ip must not be flagged as LAN: %v", err)
-	}
-}
-
-func TestPreFlightK3sURLZeroTierAccepted(t *testing.T) {
-	cfg := minimalConfig(t)
-	cfg.ZeroTier.APITokenEnv = "ZEROTIER_API_TOKEN"
-	cfg.ZeroTier.NetworkID = "abc"
-	cfg.K3s.URL = "https://10.147.20.1:6443"
-
-	t.Setenv("ZEROTIER_API_TOKEN", "any")
-	t.Setenv("HCLOUD_TOKEN", "dummy")
-
-	err := cli.RunPreFlight(context.Background(), cfg, nil, false)
-	if err != nil && strings.Contains(err.Error(), "K3S_URL") {
-		t.Errorf("10.147.x.x must not be flagged as LAN: %v", err)
+	if err != nil && strings.Contains(err.Error(), "master_ip") {
+		t.Errorf("DMZ master IP matching master_ip must be accepted: %v", err)
 	}
 }

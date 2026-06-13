@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"net/url"
 	"os/exec"
-	"strings"
 
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/prometheus"
-	"github.com/lucawalz/horizon/internal/zerotier"
+	"github.com/lucawalz/horizon/internal/wireguard"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -27,10 +26,6 @@ var destructiveCmds = map[string]bool{
 func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.Interface, dryRun bool) error {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		return fmt.Errorf("pre-flight: terraform binary: not found in PATH")
-	}
-
-	if !zerotier.IDToolAvailable() {
-		return fmt.Errorf("pre-flight: zerotier-idtool binary: not found in PATH or %s", zerotier.FallbackIDToolPath)
 	}
 
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
@@ -77,37 +72,33 @@ func RunPreFlight(ctx context.Context, cfg *config.Config, clientset kubernetes.
 			return fmt.Errorf("pre-flight: hetzner: HCLOUD_TOKEN environment variable is not set")
 		}
 
-		ztTokenEnv := cfg.ZeroTier.APITokenEnv
-		if ztTokenEnv == "" {
-			ztTokenEnv = "ZEROTIER_API_TOKEN"
+		if cfg.WireGuard.HubHost == "" {
+			return fmt.Errorf("pre-flight: wireguard: hub_host is empty in config")
 		}
-		if config.Resolve(ztTokenEnv, cfg.ZeroTier.APIToken) == "" {
-			return fmt.Errorf("pre-flight: zerotier: %s environment variable is not set", ztTokenEnv)
-		}
-		if cfg.ZeroTier.NetworkID == "" {
-			return fmt.Errorf("pre-flight: zerotier: network_id is empty in config")
+		if cfg.WireGuard.HubPublicKey == "" {
+			return fmt.Errorf("pre-flight: wireguard: hub_public_key is empty in config")
 		}
 
 		k3sURL := config.Resolve(cfg.K3s.URLEnv, cfg.K3s.URL)
 		if k3sURL == "" {
-			return fmt.Errorf("pre-flight: k3s: K3S_URL is empty — set k3s.url or %s to the master's ZeroTier IP", cfg.K3s.URLEnv)
+			return fmt.Errorf("pre-flight: k3s: K3S_URL is empty — set k3s.url or %s to the master DMZ IP", cfg.K3s.URLEnv)
 		}
-		if isLANAddress(k3sURL, cfg.ZeroTier.MasterIP) {
-			return fmt.Errorf("pre-flight: k3s: K3S_URL %s is a LAN address — use the master's ZeroTier IP", k3sURL)
+		if !urlHostMatches(k3sURL, cfg.WireGuard.MasterIP) {
+			return fmt.Errorf("pre-flight: k3s: K3S_URL %s host must equal wireguard.master_ip %s", k3sURL, cfg.WireGuard.MasterIP)
+		}
+
+		if err := wireguard.HubReachable(ctx, cfg.WireGuard.HubHost, cfg.WireGuard.HubUser); err != nil {
+			return fmt.Errorf("pre-flight: wireguard: %w", err)
 		}
 	}
 
 	return nil
 }
 
-func isLANAddress(rawURL, ztMasterIP string) bool {
+func urlHostMatches(rawURL, masterIP string) bool {
 	u, err := url.Parse(rawURL)
 	if err != nil || u.Host == "" {
 		return false
 	}
-	host := u.Hostname()
-	if ztMasterIP != "" && host == ztMasterIP {
-		return false
-	}
-	return strings.HasPrefix(host, "192.168.")
+	return masterIP != "" && u.Hostname() == masterIP
 }

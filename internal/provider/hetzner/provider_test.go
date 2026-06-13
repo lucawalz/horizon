@@ -22,9 +22,14 @@ func newTestConfig() *config.Config {
 			ServerType:  "cx22",
 			Location:    "fsn1",
 		},
-		ZeroTier: config.ZeroTierConfig{
-			NetworkID:   "nw-abc",
-			APITokenEnv: "ZEROTIER_API_TOKEN",
+		WireGuard: config.WireGuardConfig{
+			HubHost:      "192.168.20.1",
+			HubUser:      "root",
+			HubPublicKey: "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=",
+			Interface:    "wg0",
+			ListenPort:   51820,
+			Subnet:       "10.100.0.0/24",
+			MasterIP:     "192.168.20.10",
 		},
 	}
 }
@@ -34,23 +39,22 @@ func TestGenerateTFVars(t *testing.T) {
 
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
-	p.SetRuntimeSecrets("nw-abc", "ssh-rsa AAAA", "https://10.147.20.1:6443", "k3s-token-xyz")
+	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://192.168.20.10:6443", "k3s-token-xyz")
 
 	vars, err := p.GenerateTFVars()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(vars) != 8 {
-		t.Fatalf("expected 8 keys, got %d: %v", len(vars), vars)
+	if len(vars) != 7 {
+		t.Fatalf("expected 7 keys, got %d: %v", len(vars), vars)
 	}
 	required := map[string]string{
-		"server_type":         "cx22",
-		"location":            "fsn1",
-		"flake_ref":           "main",
-		"ssh_public_key":      "ssh-rsa AAAA",
-		"zerotier_network_id": "nw-abc",
-		"k3s_url":             "https://10.147.20.1:6443",
-		"k3s_token":           "k3s-token-xyz",
+		"server_type":    "cx22",
+		"location":       "fsn1",
+		"flake_ref":      "main",
+		"ssh_public_key": "ssh-rsa AAAA",
+		"k3s_url":        "https://192.168.20.10:6443",
+		"k3s_token":      "k3s-token-xyz",
 	}
 	for k, want := range required {
 		if got := vars[k]; got != want {
@@ -60,29 +64,29 @@ func TestGenerateTFVars(t *testing.T) {
 	if vars["burst_id"] == "" {
 		t.Error("burst_id must be non-empty")
 	}
-	for _, forbidden := range []string{"headscale_preauthkey", "headscale_server_url"} {
+	for _, forbidden := range []string{"headscale_preauthkey", "headscale_server_url", "zerotier_network_id"} {
 		if _, ok := vars[forbidden]; ok {
 			t.Errorf("forbidden legacy key %q present in TFVars", forbidden)
 		}
 	}
 }
 
-func TestGenerateTFVarsMissingNetworkID(t *testing.T) {
+func TestGenerateTFVarsMissingHubKey(t *testing.T) {
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
 	_, err := p.GenerateTFVars()
 	if err == nil {
-		t.Fatal("expected error when zerotier network_id missing")
+		t.Fatal("expected error when wireguard hub public key missing")
 	}
-	if !containsAll(err.Error(), "zerotier", "network_id") {
-		t.Errorf("error %q must contain 'zerotier' and 'network_id'", err.Error())
+	if !containsAll(err.Error(), "wireguard", "hub public key") {
+		t.Errorf("error %q must contain 'wireguard' and 'hub public key'", err.Error())
 	}
 }
 
 func TestGenerateTFVarsBurstIDStable(t *testing.T) {
 	cfg := newTestConfig()
 	p := hetzner.New(cfg, t.TempDir())
-	p.SetRuntimeSecrets("nw-abc", "ssh-rsa AAAA", "https://10.147.20.1:6443", "tok")
+	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://192.168.20.10:6443", "tok")
 
 	v1, err := p.GenerateTFVars()
 	if err != nil {
@@ -109,32 +113,32 @@ func TestProviderServerID(t *testing.T) {
 	}
 }
 
-func TestConstructorsDoNotGenerateIdentity(t *testing.T) {
+func TestConstructorsDoNotGenerateKeypair(t *testing.T) {
 	cfg := newTestConfig()
 
 	p := hetzner.New(cfg, t.TempDir())
-	if p.ZeroTierMemberID() != "" {
-		t.Errorf("New must not generate an identity, got member id %q", p.ZeroTierMemberID())
+	if p.WireGuardPublicKey() != "" {
+		t.Errorf("New must not generate a keypair, got public key %q", p.WireGuardPublicKey())
 	}
 
 	pb, err := hetzner.NewWithBurstID(cfg, t.TempDir(), "deadbeef")
 	if err != nil {
 		t.Fatalf("NewWithBurstID: %v", err)
 	}
-	if pb.ZeroTierMemberID() != "" {
-		t.Errorf("NewWithBurstID must not generate an identity, got member id %q", pb.ZeroTierMemberID())
+	if pb.WireGuardPublicKey() != "" {
+		t.Errorf("NewWithBurstID must not generate a keypair, got public key %q", pb.WireGuardPublicKey())
 	}
 }
 
-func TestGenerateTFVarsWithoutIdentity(t *testing.T) {
+func TestGenerateTFVarsWithoutKeypair(t *testing.T) {
 	cfg := newTestConfig()
 	p, err := hetzner.NewWithBurstID(cfg, t.TempDir(), "deadbeef")
 	if err != nil {
 		t.Fatalf("NewWithBurstID: %v", err)
 	}
-	p.SetRuntimeSecrets("nw-abc", "ssh-rsa AAAA", "https://10.147.20.1:6443", "tok")
+	p.SetRuntimeSecrets("hubkey", "10.100.0.5", "ssh-rsa AAAA", "https://192.168.20.10:6443", "tok")
 	if _, err := p.GenerateTFVars(); err != nil {
-		t.Fatalf("GenerateTFVars must not require an identity: %v", err)
+		t.Fatalf("GenerateTFVars must not require a keypair: %v", err)
 	}
 }
 

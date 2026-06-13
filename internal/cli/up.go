@@ -9,19 +9,13 @@ import (
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
-	"github.com/lucawalz/horizon/internal/zerotier"
+	"github.com/lucawalz/horizon/internal/wireguard"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 )
 
-type zerotierAuthorizer interface {
-	Authorize(ctx context.Context, networkID, memberID, name string) error
-	Deauthorize(ctx context.Context, networkID, memberID string) error
-	DeleteMember(ctx context.Context, networkID, memberID string) error
-}
-
 type hetznerProvider interface {
-	SetRuntimeSecrets(zerotierNetworkID, sshPublicKey, k3sURL, k3sToken string)
+	SetRuntimeSecrets(hubPublicKey, wgIP, sshPublicKey, k3sURL, k3sToken string)
 	GenerateTFVars() (map[string]string, error)
 	Apply(ctx context.Context, vars map[string]string) error
 	Destroy(ctx context.Context) error
@@ -29,11 +23,12 @@ type hetznerProvider interface {
 	BurstID() string
 	ServerID() string
 	ServerIP() string
-	ZeroTierMemberID() string
+	WireGuardPublicKey() string
+	WireGuardIP() string
 }
 
 type upDeps struct {
-	zt               zerotierAuthorizer
+	pm               wireguard.PeerManager
 	prov             hetznerProvider
 	kc               kubernetes.Interface
 	skipPreflight    bool
@@ -43,7 +38,7 @@ type upDeps struct {
 var upSteps = []string{
 	"Pre-flight checks",
 	"Run terraform apply (provider: hetzner)",
-	"Authorize burst node in ZeroTier network",
+	"Register burst node as WireGuard peer on hub",
 	"Wait for node Ready",
 	"Persist burst state file (~/.local/state/horizon/<burst_id>.json)",
 }
@@ -69,13 +64,10 @@ func newUpCmd(app *App) *cobra.Command {
 }
 
 func newUpDeps(app *App) (*upDeps, error) {
-	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
-	if token == "" {
-		return nil, fmt.Errorf("up: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
-	}
-	zt := zerotier.NewClient("", token)
+	wg := app.Config.WireGuard
+	pm := wireguard.NewSSHPeerManager(wg.HubHost, wg.HubUser, wg.Interface, wg.ListenPort)
 	prov := hetzner.New(app.Config, app.Config.InfraPath)
-	return &upDeps{zt: zt, prov: prov, kc: app.KubeClient}, nil
+	return &upDeps{pm: pm, prov: prov, kc: app.KubeClient}, nil
 }
 
 func runUpDryRun(app *App) error {
@@ -99,10 +91,9 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 		deps.preExistingNodes = names
 	}
 
-	var memberID string
-	var authorized bool
+	var wgIP string
+	var peerAdded bool
 	var burstNodeName string
-	networkID := app.Config.ZeroTier.NetworkID
 
 	r := &runner.Runner{}
 
@@ -126,10 +117,12 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 				return fmt.Errorf("terraform-apply: missing %s, %s, or %s",
 					app.Config.K3s.SSHKeyEnv, app.Config.K3s.URLEnv, app.Config.K3s.TokenEnv)
 			}
-			if networkID == "" {
-				return fmt.Errorf("terraform-apply: zerotier.network_id is empty in config")
+			ip, err := wireguard.AllocateIP(app.Config.WireGuard.Subnet, deps.prov.BurstID())
+			if err != nil {
+				return fmt.Errorf("terraform-apply: %w", err)
 			}
-			deps.prov.SetRuntimeSecrets(networkID, sshPub, k3sURL, k3sToken)
+			wgIP = ip
+			deps.prov.SetRuntimeSecrets(app.Config.WireGuard.HubPublicKey, wgIP, sshPub, k3sURL, k3sToken)
 			vars, err := deps.prov.GenerateTFVars()
 			if err != nil {
 				return err
@@ -142,25 +135,26 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 	})
 
 	r.Add(runner.Step{
-		Name: "zerotier-auth",
+		Name: "wg-peer-add",
 		Run: func(ctx context.Context) error {
-			memberID = deps.prov.ZeroTierMemberID()
-			if err := deps.zt.Authorize(ctx, networkID, memberID, deps.prov.Hostname()); err != nil {
-				return fmt.Errorf("zerotier-auth: authorize: %w", err)
+			if err := deps.pm.AddPeer(ctx, wireguard.Peer{
+				PublicKey:     deps.prov.WireGuardPublicKey(),
+				Endpoint:      deps.prov.ServerIP(),
+				AllowedIP:     wgIP + "/32",
+				KeepaliveSecs: peerKeepaliveSecs,
+			}); err != nil {
+				return fmt.Errorf("wg-peer-add: %w", err)
 			}
-			authorized = true
+			peerAdded = true
 			return nil
 		},
 		Rollback: func(ctx context.Context) error {
-			rbCtx, cancel := context.WithTimeout(ctx, zerotierCleanupTimeout)
+			rbCtx, cancel := context.WithTimeout(ctx, wireguardCleanupTimeout)
 			defer cancel()
-			if memberID == "" {
+			if !peerAdded {
 				return nil
 			}
-			if authorized {
-				_ = deps.zt.Deauthorize(rbCtx, networkID, memberID)
-			}
-			return deps.zt.DeleteMember(rbCtx, networkID, memberID)
+			return deps.pm.RemovePeer(rbCtx, deps.prov.WireGuardPublicKey())
 		},
 	})
 
@@ -187,10 +181,11 @@ func runUp(ctx context.Context, app *App, deps *upDeps) error {
 				return err
 			}
 			st := BurstState{
-				BurstID:          deps.prov.BurstID(),
-				Hostname:         burstNodeName,
-				ZeroTierMemberID: memberID,
-				HetznerServerID:  deps.prov.ServerID(),
+				BurstID:         deps.prov.BurstID(),
+				Hostname:        burstNodeName,
+				WireGuardIP:     wgIP,
+				WireGuardPubKey: deps.prov.WireGuardPublicKey(),
+				HetznerServerID: deps.prov.ServerID(),
 			}
 			if err := WriteState(stateDir, st); err != nil {
 				return err
@@ -222,8 +217,8 @@ func RunUpDryRunForTest(app *App) error {
 	return runUpDryRun(app)
 }
 
-func RunUpForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface) error {
-	return runUp(ctx, app, &upDeps{zt: zt, prov: prov, kc: kc, skipPreflight: true, preExistingNodes: map[string]bool{}})
+func RunUpForTest(ctx context.Context, app *App, pm wireguard.PeerManager, prov hetznerProvider, kc kubernetes.Interface) error {
+	return runUp(ctx, app, &upDeps{pm: pm, prov: prov, kc: kc, skipPreflight: true, preExistingNodes: map[string]bool{}})
 }
 
 func SetStateDirForTest(dir string) (restore func()) {

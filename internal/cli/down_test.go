@@ -28,8 +28,8 @@ func TestDownDryRun(t *testing.T) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "Remove burst node from ZeroTier network") {
-		t.Errorf("dry-run output missing zerotier-deauth label:\n%s", out)
+	if !strings.Contains(out, "Remove burst node WireGuard peer from hub") {
+		t.Errorf("dry-run output missing wg-peer-remove label:\n%s", out)
 	}
 	if !strings.Contains(out, "[dry-run] No actions executed.") {
 		t.Errorf("missing trailing line:\n%s", out)
@@ -49,29 +49,26 @@ func TestDownStepOrder(t *testing.T) {
 	defer restore()
 
 	st := cli.BurstState{
-		BurstID:          "aabb1122",
-		Hostname:         "horizon-burst-aabb1122",
-		ZeroTierMemberID: "member-7",
-		HetznerServerID:  "42",
+		BurstID:         "aabb1122",
+		Hostname:        "horizon-burst-aabb1122",
+		WireGuardPubKey: "member-7",
+		HetznerServerID: "42",
 	}
 	seededState(t, stateDir, st)
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: "aabb1122", hostname: "horizon-burst-aabb1122"}
 	kc := fake.NewSimpleClientset()
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 
 	if prov.destroyCalls != 1 {
 		t.Errorf("Destroy calls = %d, want 1", prov.destroyCalls)
 	}
-	if len(zt.deauthCalls) != 1 || zt.deauthCalls[0] != "member-7" {
-		t.Errorf("Deauthorize calls = %v, want [member-7]", zt.deauthCalls)
-	}
-	if len(zt.deleteCalls) != 1 || zt.deleteCalls[0] != "member-7" {
-		t.Errorf("DeleteMember calls = %v, want [member-7]", zt.deleteCalls)
+	if len(pm.removeCalls) != 1 || pm.removeCalls[0] != "member-7" {
+		t.Errorf("RemovePeer calls = %v, want [member-7]", pm.removeCalls)
 	}
 	if _, err := cli.ReadState(stateDir, "aabb1122"); err == nil {
 		t.Error("state file still exists after down")
@@ -95,10 +92,10 @@ func TestDownDestroysVMBeforeDeletingNode(t *testing.T) {
 
 	hostname := "horizon-burst-cc33dd44"
 	st := cli.BurstState{
-		BurstID:          "cc33dd44",
-		Hostname:         hostname,
-		ZeroTierMemberID: "member-9",
-		HetznerServerID:  "77",
+		BurstID:         "cc33dd44",
+		Hostname:        hostname,
+		WireGuardPubKey: "member-9",
+		HetznerServerID: "77",
 	}
 	seededState(t, stateDir, st)
 
@@ -110,13 +107,13 @@ func TestDownDestroysVMBeforeDeletingNode(t *testing.T) {
 		return false, nil, nil
 	})
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &recordingHetznerProvider{
 		mockHetznerProvider: mockHetznerProvider{burstID: "cc33dd44", hostname: hostname},
 		events:              &events,
 	}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 
@@ -146,25 +143,22 @@ func TestDownContinuesOnEmptyMemberID(t *testing.T) {
 	defer restore()
 
 	st := cli.BurstState{
-		BurstID:          "eeff5566",
-		Hostname:         "horizon-burst-eeff5566",
-		ZeroTierMemberID: "",
-		HetznerServerID:  "20",
+		BurstID:         "eeff5566",
+		Hostname:        "horizon-burst-eeff5566",
+		WireGuardPubKey: "",
+		HetznerServerID: "20",
 	}
 	seededState(t, stateDir, st)
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: "horizon-burst-eeff5566"}
 	kc := fake.NewSimpleClientset()
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("expected success when member id empty, got: %v", err)
 	}
-	if len(zt.deauthCalls) != 0 {
-		t.Errorf("Deauthorize called unexpectedly: %v", zt.deauthCalls)
-	}
-	if len(zt.deleteCalls) != 0 {
-		t.Errorf("DeleteMember called unexpectedly: %v", zt.deleteCalls)
+	if len(pm.removeCalls) != 0 {
+		t.Errorf("RemovePeer called unexpectedly: %v", pm.removeCalls)
 	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("Destroy still must run, got %d", prov.destroyCalls)
@@ -177,14 +171,14 @@ func TestDownNoBurstIDFlagSelectsSingleState(t *testing.T) {
 	defer restore()
 
 	st := cli.BurstState{
-		BurstID:          "ffff7777",
-		Hostname:         "horizon-burst-ffff7777",
-		ZeroTierMemberID: "m5",
-		HetznerServerID:  "30",
+		BurstID:         "ffff7777",
+		Hostname:        "horizon-burst-ffff7777",
+		WireGuardPubKey: "m5",
+		HetznerServerID: "30",
 	}
 	seededState(t, stateDir, st)
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: "ffff7777", hostname: "horizon-burst-ffff7777"}
 	kc := fake.NewSimpleClientset()
 
@@ -196,7 +190,7 @@ func TestDownNoBurstIDFlagSelectsSingleState(t *testing.T) {
 		t.Errorf("resolved = %q, want ffff7777", resolved)
 	}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 }
@@ -235,10 +229,10 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 
 	hostname := "horizon-burst-aabb9999"
 	st := cli.BurstState{
-		BurstID:          "aabb9999",
-		Hostname:         hostname,
-		ZeroTierMemberID: "m3",
-		HetznerServerID:  "50",
+		BurstID:         "aabb9999",
+		Hostname:        hostname,
+		WireGuardPubKey: "m3",
+		HetznerServerID: "50",
 	}
 	seededState(t, stateDir, st)
 
@@ -261,10 +255,10 @@ func TestDownEvictsNonDaemonSetPods(t *testing.T) {
 	}
 	kc := fake.NewSimpleClientset(node, deployPod, dsPod)
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: "aabb9999", hostname: hostname}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 
@@ -295,17 +289,17 @@ func TestDownStatelessDerivesHostname(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
 	kc := fake.NewSimpleClientset(node)
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: burstID, hostname: hostname}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("Destroy calls = %d, want 1", prov.destroyCalls)
 	}
-	if len(zt.deauthCalls) != 0 || len(zt.deleteCalls) != 0 {
-		t.Errorf("ZT deauth must be skipped when member id unknown: %v %v", zt.deauthCalls, zt.deleteCalls)
+	if len(pm.removeCalls) != 0 {
+		t.Errorf("peer removal must be skipped when pubkey unknown: %v", pm.removeCalls)
 	}
 	if _, err := kc.CoreV1().Nodes().Get(context.Background(), hostname, metav1.GetOptions{}); err == nil {
 		t.Error("burst node should be deleted")
@@ -350,10 +344,10 @@ func TestDownUnpinsWorkloadOnLastBurstNode(t *testing.T) {
 	}
 	kc := fake.NewSimpleClientset(node, dep)
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: burstID, hostname: hostname}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 
@@ -372,10 +366,10 @@ func TestDownPrunesBurstPhase(t *testing.T) {
 	defer restore()
 
 	st := cli.BurstState{
-		BurstID:          "aabb5555",
-		Hostname:         "horizon-burst-aabb5555",
-		ZeroTierMemberID: "m9",
-		HetznerServerID:  "60",
+		BurstID:         "aabb5555",
+		Hostname:        "horizon-burst-aabb5555",
+		WireGuardPubKey: "m9",
+		HetznerServerID: "60",
 	}
 	seededState(t, stateDir, st)
 
@@ -387,10 +381,10 @@ func TestDownPrunesBurstPhase(t *testing.T) {
 		t.Fatalf("seed sibling phase: %v", err)
 	}
 
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: "aabb5555", hostname: "horizon-burst-aabb5555"}
 
-	if err := cli.RunDownForTest(context.Background(), newTestApp(), zt, prov, kc, stateDir, st); err != nil {
+	if err := cli.RunDownForTest(context.Background(), newTestApp(), pm, prov, kc, stateDir, st); err != nil {
 		t.Fatalf("RunDownForTest: %v", err)
 	}
 

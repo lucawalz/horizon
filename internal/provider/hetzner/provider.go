@@ -14,23 +14,24 @@ import (
 
 	"github.com/hashicorp/terraform-exec/tfexec"
 	"github.com/lucawalz/horizon/internal/config"
-	"github.com/lucawalz/horizon/internal/zerotier"
+	"github.com/lucawalz/horizon/internal/wireguard"
 )
 
 const sharedInfraTimeout = 10 * time.Minute
 
 type Provider struct {
-	cfg               *config.Config
-	workDir           string
-	burstID           string
-	zerotierNetworkID string
-	zerotierIdentity  zerotier.Identity
-	identityGenerated bool
-	sshPublicKey      string
-	k3sURL            string
-	k3sToken          string
-	serverID          string
-	serverIP          string
+	cfg          *config.Config
+	workDir      string
+	burstID      string
+	wgKeypair    wireguard.Keypair
+	wgGenerated  bool
+	wgIP         string
+	hubPublicKey string
+	sshPublicKey string
+	k3sURL       string
+	k3sToken     string
+	serverID     string
+	serverIP     string
 }
 
 func New(cfg *config.Config, workDir string) *Provider {
@@ -52,16 +53,20 @@ func NewWithBurstID(cfg *config.Config, workDir, burstID string) (*Provider, err
 	return &Provider{cfg: cfg, workDir: workDir, burstID: burstID}, nil
 }
 
-func (p *Provider) SetRuntimeSecrets(zerotierNetworkID, sshPublicKey, k3sURL, k3sToken string) {
-	p.zerotierNetworkID = zerotierNetworkID
+func (p *Provider) SetRuntimeSecrets(hubPublicKey, wgIP, sshPublicKey, k3sURL, k3sToken string) {
+	p.hubPublicKey = hubPublicKey
+	p.wgIP = wgIP
 	p.sshPublicKey = sshPublicKey
 	p.k3sURL = k3sURL
 	p.k3sToken = k3sToken
 }
 
 func (p *Provider) GenerateTFVars() (map[string]string, error) {
-	if p.zerotierNetworkID == "" {
-		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing zerotier network_id (call SetRuntimeSecrets first)")
+	if p.hubPublicKey == "" {
+		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing wireguard hub public key (call SetRuntimeSecrets first)")
+	}
+	if p.wgIP == "" {
+		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing wireguard ip")
 	}
 	if p.sshPublicKey == "" {
 		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing ssh public key")
@@ -70,27 +75,26 @@ func (p *Provider) GenerateTFVars() (map[string]string, error) {
 		return nil, fmt.Errorf("hetzner: GenerateTFVars: missing k3s url or token")
 	}
 	return map[string]string{
-		"burst_id":            p.burstID,
-		"server_type":         p.cfg.Hetzner.ServerType,
-		"location":            p.cfg.Hetzner.Location,
-		"flake_ref":           "main",
-		"ssh_public_key":      p.sshPublicKey,
-		"zerotier_network_id": p.zerotierNetworkID,
-		"k3s_url":             p.k3sURL,
-		"k3s_token":           p.k3sToken,
+		"burst_id":       p.burstID,
+		"server_type":    p.cfg.Hetzner.ServerType,
+		"location":       p.cfg.Hetzner.Location,
+		"flake_ref":      "main",
+		"ssh_public_key": p.sshPublicKey,
+		"k3s_url":        p.k3sURL,
+		"k3s_token":      p.k3sToken,
 	}, nil
 }
 
-func (p *Provider) ensureIdentity(ctx context.Context) error {
-	if p.identityGenerated {
+func (p *Provider) ensureKeypair() error {
+	if p.wgGenerated {
 		return nil
 	}
-	id, err := zerotier.GenerateIdentity(ctx)
+	kp, err := wireguard.GenerateKeypair()
 	if err != nil {
-		return fmt.Errorf("hetzner: apply: generate zerotier identity: %w", err)
+		return fmt.Errorf("hetzner: apply: generate wireguard keypair: %w", err)
 	}
-	p.zerotierIdentity = id
-	p.identityGenerated = true
+	p.wgKeypair = kp
+	p.wgGenerated = true
 	return nil
 }
 
@@ -145,7 +149,7 @@ func (p *Provider) DestroySharedInfra(ctx context.Context) error {
 }
 
 func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
-	if err := p.ensureIdentity(ctx); err != nil {
+	if err := p.ensureKeypair(); err != nil {
 		return err
 	}
 	if err := p.EnsureSharedInfra(ctx); err != nil {
@@ -158,12 +162,12 @@ func (p *Provider) Apply(ctx context.Context, vars map[string]string) error {
 	tf.SetStdout(os.Stderr)
 	tf.SetStderr(os.Stderr)
 	if err := p.setBaseEnv(tf, map[string]string{
-		"HORIZON_ZEROTIER_NETWORK_ID":      vars["zerotier_network_id"],
-		"HORIZON_ZEROTIER_IDENTITY_SECRET": p.zerotierIdentity.Secret,
-		"HORIZON_ZEROTIER_IDENTITY_PUBLIC": p.zerotierIdentity.Public,
-		"HORIZON_K3S_URL":                  vars["k3s_url"],
-		"HORIZON_K3S_TOKEN":                vars["k3s_token"],
-		"HORIZON_SSH_PUBLIC_KEY":           vars["ssh_public_key"],
+		"HORIZON_WG_PRIVATE_KEY":    p.wgKeypair.PrivateKey,
+		"HORIZON_WG_ADDRESS":        p.wgIP + "/32",
+		"HORIZON_WG_HUB_PUBLIC_KEY": p.hubPublicKey,
+		"HORIZON_K3S_URL":           vars["k3s_url"],
+		"HORIZON_K3S_TOKEN":         vars["k3s_token"],
+		"HORIZON_SSH_PUBLIC_KEY":    vars["ssh_public_key"],
 	}); err != nil {
 		return fmt.Errorf("hetzner: apply: set env: %w", err)
 	}
@@ -288,7 +292,9 @@ func (p *Provider) ServerID() string { return p.serverID }
 
 func (p *Provider) ServerIP() string { return p.serverIP }
 
-func (p *Provider) ZeroTierMemberID() string { return p.zerotierIdentity.MemberID }
+func (p *Provider) WireGuardPublicKey() string { return p.wgKeypair.PublicKey }
+
+func (p *Provider) WireGuardIP() string { return p.wgIP }
 
 func (p *Provider) setBaseEnv(tf *tfexec.Terraform, extras map[string]string) error {
 	env := make(map[string]string)

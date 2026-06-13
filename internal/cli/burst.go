@@ -13,29 +13,30 @@ import (
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
 	"github.com/lucawalz/horizon/internal/velero"
-	"github.com/lucawalz/horizon/internal/zerotier"
+	"github.com/lucawalz/horizon/internal/wireguard"
 	"github.com/spf13/cobra"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
 const (
-	zerotierCleanupTimeout = 30 * time.Second
-	migrateRollbackTimeout = 30 * time.Second
+	wireguardCleanupTimeout = 30 * time.Second
+	migrateRollbackTimeout  = 30 * time.Second
+	peerKeepaliveSecs       = 25
 )
 
 var burstSteps = []string{
 	"Create Velero backup of target namespace",
 	"Run terraform apply (provider: hetzner)",
 	"Persist burst state file",
-	"Authorize burst node in ZeroTier network",
+	"Register burst node as WireGuard peer on hub",
 	"Wait for node Ready",
 	"Migrate workload to cloud node (label, affinity, evict)",
 	"Wait for workload pods Running on cloud nodes",
 }
 
 type burstDeps struct {
-	zt            zerotierAuthorizer
+	pm            wireguard.PeerManager
 	prov          hetznerProvider
 	kc            kubernetes.Interface
 	vc            veleroClient
@@ -82,11 +83,8 @@ func newBurstCmd(app *App) *cobra.Command {
 }
 
 func newBurstDeps(app *App, burstID string) (*burstDeps, error) {
-	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
-	if token == "" {
-		return nil, fmt.Errorf("burst: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
-	}
-	zt := zerotier.NewClient("", token)
+	wg := app.Config.WireGuard
+	pm := wireguard.NewSSHPeerManager(wg.HubHost, wg.HubUser, wg.Interface, wg.ListenPort)
 	prov, err := newBurstProvider(app, burstID)
 	if err != nil {
 		return nil, err
@@ -95,7 +93,7 @@ func newBurstDeps(app *App, burstID string) (*burstDeps, error) {
 	if err != nil {
 		return nil, fmt.Errorf("burst: velero client: %w", err)
 	}
-	return &burstDeps{zt: zt, prov: prov, kc: app.KubeClient, vc: vc}, nil
+	return &burstDeps{pm: pm, prov: prov, kc: app.KubeClient, vc: vc}, nil
 }
 
 func newBurstProvider(app *App, burstID string) (hetznerProvider, error) {
@@ -124,11 +122,10 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	var memberID string
-	var authorized bool
+	var wgIP string
+	var peerAdded bool
 	var burstNodeName string
 	var savedMigrate *k8s.SavedState
-	networkID := app.Config.ZeroTier.NetworkID
 
 	r := &runner.Runner{}
 
@@ -153,10 +150,12 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 				return fmt.Errorf("terraform-apply: missing %s, %s, or %s",
 					app.Config.K3s.SSHKeyEnv, app.Config.K3s.URLEnv, app.Config.K3s.TokenEnv)
 			}
-			if networkID == "" {
-				return fmt.Errorf("terraform-apply: zerotier.network_id is empty in config")
+			ip, err := wireguard.AllocateIP(app.Config.WireGuard.Subnet, deps.prov.BurstID())
+			if err != nil {
+				return fmt.Errorf("terraform-apply: %w", err)
 			}
-			deps.prov.SetRuntimeSecrets(networkID, sshPub, k3sURL, k3sToken)
+			wgIP = ip
+			deps.prov.SetRuntimeSecrets(app.Config.WireGuard.HubPublicKey, wgIP, sshPub, k3sURL, k3sToken)
 			vars, err := deps.prov.GenerateTFVars()
 			if err != nil {
 				return err
@@ -176,10 +175,11 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 				return err
 			}
 			st := BurstState{
-				BurstID:          deps.prov.BurstID(),
-				Hostname:         deps.prov.Hostname(),
-				ZeroTierMemberID: deps.prov.ZeroTierMemberID(),
-				HetznerServerID:  deps.prov.ServerID(),
+				BurstID:         deps.prov.BurstID(),
+				Hostname:        deps.prov.Hostname(),
+				WireGuardIP:     wgIP,
+				WireGuardPubKey: deps.prov.WireGuardPublicKey(),
+				HetznerServerID: deps.prov.ServerID(),
 			}
 			if err := WriteState(stateDir, st); err != nil {
 				return err
@@ -197,26 +197,27 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 	})
 
 	r.Add(runner.Step{
-		Name: "zerotier-auth",
+		Name: "wg-peer-add",
 		Run: func(ctx context.Context) error {
 			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseJoining)
-			memberID = deps.prov.ZeroTierMemberID()
-			if err := deps.zt.Authorize(ctx, networkID, memberID, deps.prov.Hostname()); err != nil {
-				return fmt.Errorf("zerotier-auth: authorize: %w", err)
+			if err := deps.pm.AddPeer(ctx, wireguard.Peer{
+				PublicKey:     deps.prov.WireGuardPublicKey(),
+				Endpoint:      deps.prov.ServerIP(),
+				AllowedIP:     wgIP + "/32",
+				KeepaliveSecs: peerKeepaliveSecs,
+			}); err != nil {
+				return fmt.Errorf("wg-peer-add: %w", err)
 			}
-			authorized = true
+			peerAdded = true
 			return nil
 		},
 		Rollback: func(ctx context.Context) error {
-			rbCtx, cancel := context.WithTimeout(ctx, zerotierCleanupTimeout)
+			rbCtx, cancel := context.WithTimeout(ctx, wireguardCleanupTimeout)
 			defer cancel()
-			if memberID == "" {
+			if !peerAdded {
 				return nil
 			}
-			if authorized {
-				_ = deps.zt.Deauthorize(rbCtx, networkID, memberID)
-			}
-			return deps.zt.DeleteMember(rbCtx, networkID, memberID)
+			return deps.pm.RemovePeer(rbCtx, deps.prov.WireGuardPublicKey())
 		},
 	})
 
@@ -282,9 +283,9 @@ func NewBurstProviderBurstIDForTest(app *App, burstID string) (string, error) {
 
 func RunBurstDryRunForTest(app *App) error { return runBurstDryRun(app) }
 
-func RunBurstForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface, vc veleroClient, workload string) error {
+func RunBurstForTest(ctx context.Context, app *App, pm wireguard.PeerManager, prov hetznerProvider, kc kubernetes.Interface, vc veleroClient, workload string) error {
 	return runBurst(ctx, app, &burstDeps{
-		zt: zt, prov: prov, kc: kc, vc: vc,
+		pm: pm, prov: prov, kc: kc, vc: vc,
 		skipPreflight: true,
 	}, workload)
 }

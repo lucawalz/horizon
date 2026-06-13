@@ -11,7 +11,7 @@ import (
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/runner"
-	"github.com/lucawalz/horizon/internal/zerotier"
+	"github.com/lucawalz/horizon/internal/wireguard"
 	"github.com/spf13/cobra"
 	policyv1 "k8s.io/api/policy/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,14 +20,14 @@ import (
 )
 
 type downDeps struct {
-	zt   zerotierAuthorizer
+	pm   wireguard.PeerManager
 	prov hetznerProvider
 	kc   kubernetes.Interface
 }
 
 var downSteps = []string{
 	"Cordon node and evict non-DaemonSet pods",
-	"Remove burst node from ZeroTier network",
+	"Remove burst node WireGuard peer from hub",
 	"Run terraform destroy (provider: hetzner)",
 	"Delete K3s node object from cluster",
 	"Delete burst state file",
@@ -36,7 +36,7 @@ var downSteps = []string{
 func newDownCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "down",
-		Short: "Tear down the burst node and revoke its ZeroTier membership",
+		Short: "Tear down the burst node and remove its WireGuard peer",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			if dryRun {
@@ -80,7 +80,7 @@ func runDownShared(ctx context.Context, app *App) error {
 	sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
 	k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
 	k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
-	prov.SetRuntimeSecrets(app.Config.ZeroTier.NetworkID, sshPub, k3sURL, k3sToken)
+	prov.SetRuntimeSecrets("", "", sshPub, k3sURL, k3sToken)
 	if err := prov.DestroySharedInfra(ctx); err != nil {
 		return err
 	}
@@ -89,16 +89,13 @@ func runDownShared(ctx context.Context, app *App) error {
 }
 
 func newDownDeps(app *App, burstID string) (*downDeps, error) {
-	token := config.Resolve(app.Config.ZeroTier.APITokenEnv, app.Config.ZeroTier.APIToken)
-	if token == "" {
-		return nil, fmt.Errorf("down: zerotier api token env %q is empty", app.Config.ZeroTier.APITokenEnv)
-	}
-	zt := zerotier.NewClient("", token)
+	wg := app.Config.WireGuard
+	pm := wireguard.NewSSHPeerManager(wg.HubHost, wg.HubUser, wg.Interface, wg.ListenPort)
 	prov, err := hetzner.NewWithBurstID(app.Config, app.Config.InfraPath, burstID)
 	if err != nil {
 		return nil, fmt.Errorf("down: provider: %w", err)
 	}
-	return &downDeps{zt: zt, prov: prov, kc: app.KubeClient}, nil
+	return &downDeps{pm: pm, prov: prov, kc: app.KubeClient}, nil
 }
 
 func resolveBurstID(stateDir, flag string) (string, error) {
@@ -131,7 +128,6 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 		ctx = context.Background()
 	}
 
-	networkID := app.Config.ZeroTier.NetworkID
 	r := &runner.Runner{}
 
 	r.Add(runner.Step{
@@ -144,16 +140,12 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 	})
 
 	r.Add(runner.Step{
-		Name: "zerotier-deauth",
+		Name: "wg-peer-remove",
 		Run: func(ctx context.Context) error {
-			if st.ZeroTierMemberID == "" {
+			if st.WireGuardPubKey == "" {
 				return nil
 			}
-			if networkID == "" {
-				return fmt.Errorf("zerotier-deauth: zerotier.network_id is empty in config")
-			}
-			_ = deps.zt.Deauthorize(ctx, networkID, st.ZeroTierMemberID)
-			return deps.zt.DeleteMember(ctx, networkID, st.ZeroTierMemberID)
+			return deps.pm.RemovePeer(ctx, st.WireGuardPubKey)
 		},
 	})
 
@@ -163,7 +155,13 @@ func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st 
 			sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
 			k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
 			k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
-			deps.prov.SetRuntimeSecrets(networkID, sshPub, k3sURL, k3sToken)
+			wgIP := st.WireGuardIP
+			if wgIP == "" {
+				if ip, err := wireguard.AllocateIP(app.Config.WireGuard.Subnet, st.BurstID); err == nil {
+					wgIP = ip
+				}
+			}
+			deps.prov.SetRuntimeSecrets(app.Config.WireGuard.HubPublicKey, wgIP, sshPub, k3sURL, k3sToken)
 			return deps.prov.Destroy(ctx)
 		},
 	})
@@ -277,8 +275,8 @@ func RunDownDryRunForTest(app *App) error {
 	return runDownDryRun(app)
 }
 
-func RunDownForTest(ctx context.Context, app *App, zt zerotierAuthorizer, prov hetznerProvider, kc kubernetes.Interface, stateDir string, st BurstState) error {
-	return runDown(ctx, app, &downDeps{zt: zt, prov: prov, kc: kc}, stateDir, st)
+func RunDownForTest(ctx context.Context, app *App, pm wireguard.PeerManager, prov hetznerProvider, kc kubernetes.Interface, stateDir string, st BurstState) error {
+	return runDown(ctx, app, &downDeps{pm: pm, prov: prov, kc: kc}, stateDir, st)
 }
 
 func ResolveBurstIDForTest(stateDir, flag string) (string, error) {

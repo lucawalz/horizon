@@ -40,8 +40,8 @@ func TestBurstDryRun(t *testing.T) {
 	if strings.Contains(out, "Tailscale") {
 		t.Errorf("dry-run output must not reference Tailscale (legacy):\n%s", out)
 	}
-	if !strings.Contains(out, "ZeroTier") {
-		t.Errorf("dry-run output missing ZeroTier step:\n%s", out)
+	if !strings.Contains(out, "WireGuard") {
+		t.Errorf("dry-run output missing WireGuard step:\n%s", out)
 	}
 	if !strings.Contains(out, "Migrate") {
 		t.Errorf("dry-run output missing Migrate step:\n%s", out)
@@ -136,8 +136,8 @@ func TestBurstStepOrder(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1234"
-	zt := &mockZeroTier{}
-	prov := &mockHetznerProvider{burstID: "aabb1234", hostname: hostname, serverID: "99", memberID: "member-99"}
+	pm := &mockPeerManager{}
+	prov := &mockHetznerProvider{burstID: "aabb1234", hostname: hostname, serverID: "99", pubKey: "pub-99"}
 	kc := fake.NewSimpleClientset(
 		readyNode(hostname),
 		workloadPod("app1", "sentio-systems", hostname),
@@ -145,14 +145,14 @@ func TestBurstStepOrder(t *testing.T) {
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	if err := cli.RunBurstForTest(context.Background(), newTestApp(), zt, prov, kc, vc, "sentio-systems"); err != nil {
+	if err := cli.RunBurstForTest(context.Background(), newTestApp(), pm, prov, kc, vc, "sentio-systems"); err != nil {
 		t.Fatalf("RunBurstForTest: %v", err)
 	}
-	if len(zt.authorizeCalls) != 1 || zt.authorizeCalls[0] != "member-99" {
-		t.Errorf("authorize calls = %v, want [member-99]", zt.authorizeCalls)
+	if len(pm.addCalls) != 1 || pm.addCalls[0] != "pub-99" {
+		t.Errorf("AddPeer calls = %v, want [pub-99]", pm.addCalls)
 	}
 	if !vc.waited {
 		t.Error("burst must trigger a velero backup")
@@ -176,21 +176,21 @@ func TestBurstRollback_OnTerraformFailure(t *testing.T) {
 	defer restore()
 
 	tfErr := errors.New("terraform apply failed")
-	zt := &mockZeroTier{}
-	prov := &mockHetznerProvider{burstID: "ccdd3344", hostname: "horizon-burst-ccdd3344", memberID: "should-not-be-used", applyErr: tfErr}
+	pm := &mockPeerManager{}
+	prov := &mockHetznerProvider{burstID: "ccdd3344", hostname: "horizon-burst-ccdd3344", pubKey: "should-not-be-used", applyErr: tfErr}
 	kc := fake.NewSimpleClientset()
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	err := cli.RunBurstForTest(context.Background(), newTestApp(), zt, prov, kc, vc, "sentio-systems")
+	err := cli.RunBurstForTest(context.Background(), newTestApp(), pm, prov, kc, vc, "sentio-systems")
 	if err == nil {
 		t.Fatal("expected error from terraform failure")
 	}
-	if len(zt.authorizeCalls) != 0 {
-		t.Errorf("authorize must not run when terraform fails: %v", zt.authorizeCalls)
+	if len(pm.addCalls) != 0 {
+		t.Errorf("AddPeer must not run when terraform fails: %v", pm.addCalls)
 	}
 	if prov.destroyCalls != 0 {
 		t.Errorf("destroy must not run when terraform-apply itself failed: %v", prov.destroyCalls)
@@ -206,19 +206,19 @@ func TestBurstSignalRollback(t *testing.T) {
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
-	zt := &mockZeroTier{}
-	prov := &mockHetznerProvider{burstID: "ddeeff", hostname: "horizon-burst-ddeeff", memberID: "member-x"}
+	pm := &mockPeerManager{}
+	prov := &mockHetznerProvider{burstID: "ddeeff", hostname: "horizon-burst-ddeeff", pubKey: "pub-x"}
 	kc := fake.NewSimpleClientset()
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := cli.RunBurstForTest(ctx, newTestApp(), zt, prov, kc, vc, "sentio-systems")
+	err := cli.RunBurstForTest(ctx, newTestApp(), pm, prov, kc, vc, "sentio-systems")
 	if err == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -234,8 +234,8 @@ func TestBurstWritesPhase(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-eeff5566"
-	zt := &mockZeroTier{}
-	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: hostname, serverID: "1", memberID: "member-1"}
+	pm := &mockPeerManager{}
+	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: hostname, serverID: "1", pubKey: "pub-1"}
 	kc := fake.NewSimpleClientset(
 		readyNode(hostname),
 		workloadPod("p", "sentio-systems", hostname),
@@ -243,10 +243,10 @@ func TestBurstWritesPhase(t *testing.T) {
 	vc := &fakeVeleroClient{}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	if err := cli.RunBurstForTest(context.Background(), newTestApp(), zt, prov, kc, vc, "sentio-systems"); err != nil {
+	if err := cli.RunBurstForTest(context.Background(), newTestApp(), pm, prov, kc, vc, "sentio-systems"); err != nil {
 		t.Fatalf("RunBurstForTest: %v", err)
 	}
 

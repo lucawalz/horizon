@@ -11,35 +11,27 @@ import (
 
 	"github.com/lucawalz/horizon/internal/cli"
 	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/wireguard"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-type mockZeroTier struct {
-	authorizeErr   error
-	deauthorizeErr error
-	deleteErr      error
-	authorizeCalls []string
-	authorizeNames []string
-	deauthCalls    []string
-	deleteCalls    []string
+type mockPeerManager struct {
+	addErr      error
+	removeErr   error
+	addCalls    []string
+	removeCalls []string
 }
 
-func (m *mockZeroTier) Authorize(_ context.Context, _, memberID, name string) error {
-	m.authorizeCalls = append(m.authorizeCalls, memberID)
-	m.authorizeNames = append(m.authorizeNames, name)
-	return m.authorizeErr
+func (m *mockPeerManager) AddPeer(_ context.Context, peer wireguard.Peer) error {
+	m.addCalls = append(m.addCalls, peer.PublicKey)
+	return m.addErr
 }
 
-func (m *mockZeroTier) Deauthorize(_ context.Context, _, memberID string) error {
-	m.deauthCalls = append(m.deauthCalls, memberID)
-	return m.deauthorizeErr
-}
-
-func (m *mockZeroTier) DeleteMember(_ context.Context, _, memberID string) error {
-	m.deleteCalls = append(m.deleteCalls, memberID)
-	return m.deleteErr
+func (m *mockPeerManager) RemovePeer(_ context.Context, publicKey string) error {
+	m.removeCalls = append(m.removeCalls, publicKey)
+	return m.removeErr
 }
 
 type mockHetznerProvider struct {
@@ -47,14 +39,15 @@ type mockHetznerProvider struct {
 	hostname     string
 	serverID     string
 	serverIP     string
-	memberID     string
+	pubKey       string
+	wgIP         string
 	applyErr     error
 	destroyCalls int
 	destroyErr   error
 	generateErr  error
 }
 
-func (m *mockHetznerProvider) SetRuntimeSecrets(zerotierNetworkID, sshPublicKey, k3sURL, k3sToken string) {
+func (m *mockHetznerProvider) SetRuntimeSecrets(hubPublicKey, wgIP, sshPublicKey, k3sURL, k3sToken string) {
 }
 
 func (m *mockHetznerProvider) GenerateTFVars() (map[string]string, error) {
@@ -73,21 +66,27 @@ func (m *mockHetznerProvider) Destroy(_ context.Context) error {
 	return m.destroyErr
 }
 
-func (m *mockHetznerProvider) Hostname() string { return m.hostname }
-func (m *mockHetznerProvider) BurstID() string  { return m.burstID }
-func (m *mockHetznerProvider) ServerID() string         { return m.serverID }
-func (m *mockHetznerProvider) ServerIP() string         { return m.serverIP }
-func (m *mockHetznerProvider) ZeroTierMemberID() string { return m.memberID }
+func (m *mockHetznerProvider) Hostname() string           { return m.hostname }
+func (m *mockHetznerProvider) BurstID() string            { return m.burstID }
+func (m *mockHetznerProvider) ServerID() string           { return m.serverID }
+func (m *mockHetznerProvider) ServerIP() string           { return m.serverIP }
+func (m *mockHetznerProvider) WireGuardPublicKey() string { return m.pubKey }
+func (m *mockHetznerProvider) WireGuardIP() string        { return m.wgIP }
 
 func newTestApp() *cli.App {
 	return &cli.App{
 		Config: &config.Config{
-			ZeroTier: config.ZeroTierConfig{
-				NetworkID:   "nw-test",
-				APITokenEnv: "ZEROTIER_API_TOKEN",
-				MasterIP:    "10.147.20.1",
+			WireGuard: config.WireGuardConfig{
+				HubHost:      "192.168.20.1",
+				HubUser:      "root",
+				HubPublicKey: "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=",
+				Interface:    "wg0",
+				ListenPort:   51820,
+				Subnet:       "10.100.0.0/24",
+				MasterIP:     "192.168.20.10",
 			},
 			K3s: config.K3sConfig{
+				URL:       "https://192.168.20.10:6443",
 				URLEnv:    "HORIZON_K3S_URL",
 				TokenEnv:  "HORIZON_K3S_TOKEN",
 				SSHKeyEnv: "HORIZON_SSH_PUBLIC_KEY",
@@ -130,8 +129,8 @@ func TestUpDryRun(t *testing.T) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "Authorize burst node in ZeroTier network") {
-		t.Errorf("dry-run output missing zerotier-auth label:\n%s", out)
+	if !strings.Contains(out, "Register burst node as WireGuard peer on hub") {
+		t.Errorf("dry-run output missing wg-peer-add label:\n%s", out)
 	}
 	if !strings.Contains(out, "[dry-run] No actions executed.") {
 		t.Errorf("missing trailing line:\n%s", out)
@@ -144,27 +143,24 @@ func TestUpStepOrder(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1122"
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1122",
 		hostname: hostname,
 		serverID: "99",
-		memberID: "member-99",
+		pubKey:   "pub-99",
 	}
 	kc := fake.NewSimpleClientset(readyNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	if err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, kc); err != nil {
+	if err := cli.RunUpForTest(context.Background(), newTestApp(), pm, prov, kc); err != nil {
 		t.Fatalf("RunUpForTest: %v", err)
 	}
-	if len(zt.authorizeCalls) != 1 || zt.authorizeCalls[0] != "member-99" {
-		t.Errorf("authorize calls = %v, want [member-99]", zt.authorizeCalls)
-	}
-	if len(zt.authorizeNames) != 1 || zt.authorizeNames[0] != hostname {
-		t.Errorf("authorize names = %v, want [%s]", zt.authorizeNames, hostname)
+	if len(pm.addCalls) != 1 || pm.addCalls[0] != "pub-99" {
+		t.Errorf("AddPeer calls = %v, want [pub-99]", pm.addCalls)
 	}
 }
 
@@ -174,27 +170,27 @@ func TestUpRollbackOnTerraformFailure(t *testing.T) {
 	defer restore()
 
 	tfErr := errors.New("terraform apply failed")
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{
 		burstID:  "ccdd3344",
 		hostname: "horizon-burst-ccdd3344",
-		memberID: "should-not-be-used",
+		pubKey:   "should-not-be-used",
 		applyErr: tfErr,
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, fake.NewSimpleClientset())
+	err := cli.RunUpForTest(context.Background(), newTestApp(), pm, prov, fake.NewSimpleClientset())
 	if err == nil {
 		t.Fatal("expected error from terraform failure")
 	}
-	if len(zt.authorizeCalls) != 0 {
-		t.Errorf("authorize must not run when terraform fails: %v", zt.authorizeCalls)
+	if len(pm.addCalls) != 0 {
+		t.Errorf("AddPeer must not run when terraform fails: %v", pm.addCalls)
 	}
-	if len(zt.deauthCalls) != 0 {
-		t.Errorf("deauthorize must not run when zerotier-auth never started: %v", zt.deauthCalls)
+	if len(pm.removeCalls) != 0 {
+		t.Errorf("RemovePeer must not run when wg-peer-add never started: %v", pm.removeCalls)
 	}
 	if prov.destroyCalls != 0 {
 		t.Errorf("destroy must not run when terraform-apply itself failed: %v", prov.destroyCalls)
@@ -205,28 +201,28 @@ func TestUpRollbackOnTerraformFailure(t *testing.T) {
 	}
 }
 
-func TestUpRollbackOnZeroTierAuthFailure(t *testing.T) {
+func TestUpRollbackOnWGPeerAddFailure(t *testing.T) {
 	stateDir := t.TempDir()
 	restore := cli.SetStateDirForTest(stateDir)
 	defer restore()
 
-	zt := &mockZeroTier{authorizeErr: errors.New("zt 401")}
+	pm := &mockPeerManager{addErr: errors.New("ssh failed")}
 	prov := &mockHetznerProvider{
 		burstID:  "ddee5566",
 		hostname: "horizon-burst-ddee5566",
-		memberID: "member-77",
+		pubKey:   "pub-77",
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
-	err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, fake.NewSimpleClientset())
+	err := cli.RunUpForTest(context.Background(), newTestApp(), pm, prov, fake.NewSimpleClientset())
 	if err == nil {
-		t.Fatal("expected error from zerotier-auth failure")
+		t.Fatal("expected error from wg-peer-add failure")
 	}
-	if len(zt.deauthCalls) != 0 {
-		t.Errorf("deauth must not run when authorize itself failed: %v", zt.deauthCalls)
+	if len(pm.removeCalls) != 0 {
+		t.Errorf("RemovePeer must not run when AddPeer itself failed: %v", pm.removeCalls)
 	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("destroy calls = %d, want 1 (terraform-apply rollback)", prov.destroyCalls)
@@ -239,29 +235,26 @@ func TestUpRollbackOnWaitNodeReadyTimeout(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-eeff5566"
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{
 		burstID:  "eeff5566",
 		hostname: hostname,
-		memberID: "member-late",
+		pubKey:   "pub-late",
 	}
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := cli.RunUpForTest(ctx, newTestApp(), zt, prov, fake.NewSimpleClientset())
+	err := cli.RunUpForTest(ctx, newTestApp(), pm, prov, fake.NewSimpleClientset())
 	if err == nil {
 		t.Fatal("expected error from wait-node-ready with cancelled context")
 	}
-	if len(zt.deauthCalls) != 1 || zt.deauthCalls[0] != "member-late" {
-		t.Errorf("deauth calls = %v, want [member-late]", zt.deauthCalls)
-	}
-	if len(zt.deleteCalls) != 1 || zt.deleteCalls[0] != "member-late" {
-		t.Errorf("delete calls = %v, want [member-late]", zt.deleteCalls)
+	if len(pm.removeCalls) != 1 || pm.removeCalls[0] != "pub-late" {
+		t.Errorf("RemovePeer calls = %v, want [pub-late]", pm.removeCalls)
 	}
 	if prov.destroyCalls != 1 {
 		t.Errorf("destroy calls = %d, want 1", prov.destroyCalls)
@@ -278,21 +271,21 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 	defer restore()
 
 	hostname := "horizon-burst-aabb1234"
-	zt := &mockZeroTier{}
+	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{
 		burstID:  "aabb1234",
 		hostname: hostname,
 		serverID: "99",
-		memberID: "member-ok",
+		pubKey:   "pub-ok",
 	}
 	kc := fake.NewSimpleClientset(readyNode(hostname))
 
 	t.Setenv("HORIZON_SSH_PUBLIC_KEY", "ssh-ed25519 AAAA")
-	t.Setenv("HORIZON_K3S_URL", "https://10.147.20.1:6443")
+	t.Setenv("HORIZON_K3S_URL", "https://192.168.20.10:6443")
 	t.Setenv("HORIZON_K3S_TOKEN", "tok")
 
 	out := captureStdout(func() {
-		if err := cli.RunUpForTest(context.Background(), newTestApp(), zt, prov, kc); err != nil {
+		if err := cli.RunUpForTest(context.Background(), newTestApp(), pm, prov, kc); err != nil {
 			t.Errorf("RunUpForTest: %v", err)
 		}
 	})
@@ -308,8 +301,11 @@ func TestUpWritesStateOnSuccess(t *testing.T) {
 	if st.BurstID != "aabb1234" {
 		t.Errorf("state.BurstID = %q", st.BurstID)
 	}
-	if st.ZeroTierMemberID != "member-ok" {
-		t.Errorf("state.ZeroTierMemberID = %q, want member-ok", st.ZeroTierMemberID)
+	if st.WireGuardPubKey != "pub-ok" {
+		t.Errorf("state.WireGuardPubKey = %q, want pub-ok", st.WireGuardPubKey)
+	}
+	if st.WireGuardIP == "" {
+		t.Error("state.WireGuardIP must be populated")
 	}
 	if st.HetznerServerID != "99" {
 		t.Errorf("state.HetznerServerID = %q, want 99", st.HetznerServerID)

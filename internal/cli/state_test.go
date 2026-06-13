@@ -13,10 +13,11 @@ import (
 func TestStateRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	st := cli.BurstState{
-		BurstID:          "abc1234",
-		Hostname:         "horizon-burst-abc1234",
-		ZeroTierMemberID: "7",
-		HetznerServerID:  "42",
+		BurstID:         "abc1234",
+		Hostname:        "horizon-burst-abc1234",
+		WireGuardIP:     "10.100.0.7",
+		WireGuardPubKey: "pub7",
+		HetznerServerID: "42",
 	}
 	if err := cli.WriteState(dir, st); err != nil {
 		t.Fatalf("WriteState: %v", err)
@@ -32,7 +33,7 @@ func TestStateRoundTrip(t *testing.T) {
 
 func TestStateJSONFieldNames(t *testing.T) {
 	dir := t.TempDir()
-	st := cli.BurstState{BurstID: "aabb1122", Hostname: "h", ZeroTierMemberID: "m99", HetznerServerID: "42"}
+	st := cli.BurstState{BurstID: "aabb1122", Hostname: "h", WireGuardIP: "10.100.0.9", WireGuardPubKey: "pub99", HetznerServerID: "42"}
 	if err := cli.WriteState(dir, st); err != nil {
 		t.Fatalf("WriteState: %v", err)
 	}
@@ -41,11 +42,14 @@ func TestStateJSONFieldNames(t *testing.T) {
 		t.Fatalf("read file: %v", err)
 	}
 	got := string(buf)
-	if !strings.Contains(got, `"zerotier_member_id": "m99"`) {
-		t.Errorf("missing zerotier_member_id: %s", got)
+	if !strings.Contains(got, `"wireguard_pubkey": "pub99"`) {
+		t.Errorf("missing wireguard_pubkey: %s", got)
 	}
-	if strings.Contains(got, "headscale_node_id") || strings.Contains(got, "headscale_preauth_key") {
-		t.Errorf("legacy headscale field present: %s", got)
+	if !strings.Contains(got, `"wireguard_ip": "10.100.0.9"`) {
+		t.Errorf("missing wireguard_ip: %s", got)
+	}
+	if strings.Contains(got, "zerotier_member_id") {
+		t.Errorf("legacy zerotier field present: %s", got)
 	}
 }
 

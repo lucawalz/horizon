@@ -106,15 +106,19 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-func TestZeroTierConfig(t *testing.T) {
+func TestWireGuardConfig(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
 infra_path: ` + dir + `
-zerotier:
-  network_id: abc123
-  api_token_env: ZEROTIER_API_TOKEN
-  master_ip: 10.147.20.1
+wireguard:
+  hub_host: 192.168.20.1
+  hub_user: root
+  hub_public_key: DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=
+  interface: wg0
+  listen_port: 51820
+  subnet: 10.100.0.0/24
+  master_ip: 192.168.20.10
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -125,18 +129,24 @@ zerotier:
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.ZeroTier.NetworkID != "abc123" {
-		t.Errorf("NetworkID: got %q, want %q", cfg.ZeroTier.NetworkID, "abc123")
+	if cfg.WireGuard.HubHost != "192.168.20.1" {
+		t.Errorf("HubHost: got %q, want %q", cfg.WireGuard.HubHost, "192.168.20.1")
 	}
-	if cfg.ZeroTier.APITokenEnv != "ZEROTIER_API_TOKEN" {
-		t.Errorf("APITokenEnv: got %q, want %q", cfg.ZeroTier.APITokenEnv, "ZEROTIER_API_TOKEN")
+	if cfg.WireGuard.HubPublicKey != "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=" {
+		t.Errorf("HubPublicKey: got %q", cfg.WireGuard.HubPublicKey)
 	}
-	if cfg.ZeroTier.MasterIP != "10.147.20.1" {
-		t.Errorf("MasterIP: got %q, want %q", cfg.ZeroTier.MasterIP, "10.147.20.1")
+	if cfg.WireGuard.ListenPort != 51820 {
+		t.Errorf("ListenPort: got %d, want 51820", cfg.WireGuard.ListenPort)
+	}
+	if cfg.WireGuard.Subnet != "10.100.0.0/24" {
+		t.Errorf("Subnet: got %q, want %q", cfg.WireGuard.Subnet, "10.100.0.0/24")
+	}
+	if cfg.WireGuard.MasterIP != "192.168.20.10" {
+		t.Errorf("MasterIP: got %q, want %q", cfg.WireGuard.MasterIP, "192.168.20.10")
 	}
 }
 
-func TestZeroTierConfigDefaults(t *testing.T) {
+func TestWireGuardConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
@@ -151,14 +161,14 @@ infra_path: ` + dir + `
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.ZeroTier.NetworkID != "" {
-		t.Errorf("NetworkID: got %q, want empty", cfg.ZeroTier.NetworkID)
+	if cfg.WireGuard.HubHost != "" {
+		t.Errorf("HubHost: got %q, want empty", cfg.WireGuard.HubHost)
 	}
-	if cfg.ZeroTier.APITokenEnv != "" {
-		t.Errorf("APITokenEnv: got %q, want empty", cfg.ZeroTier.APITokenEnv)
+	if cfg.WireGuard.HubPublicKey != "" {
+		t.Errorf("HubPublicKey: got %q, want empty", cfg.WireGuard.HubPublicKey)
 	}
-	if cfg.ZeroTier.MasterIP != "" {
-		t.Errorf("MasterIP: got %q, want empty", cfg.ZeroTier.MasterIP)
+	if cfg.WireGuard.ListenPort != 0 {
+		t.Errorf("ListenPort: got %d, want 0", cfg.WireGuard.ListenPort)
 	}
 }
 

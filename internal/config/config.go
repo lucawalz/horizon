@@ -23,11 +23,14 @@ type HetznerConfig struct {
 	Location    string `mapstructure:"location"`
 }
 
-type ZeroTierConfig struct {
-	NetworkID   string `mapstructure:"network_id"`
-	APITokenEnv string `mapstructure:"api_token_env"`
-	APIToken    string `mapstructure:"api_token"`
-	MasterIP    string `mapstructure:"master_ip"`
+type WireGuardConfig struct {
+	HubHost      string `mapstructure:"hub_host"`
+	HubUser      string `mapstructure:"hub_user"`
+	HubPublicKey string `mapstructure:"hub_public_key"`
+	Interface    string `mapstructure:"interface"`
+	ListenPort   int    `mapstructure:"listen_port"`
+	Subnet       string `mapstructure:"subnet"`
+	MasterIP     string `mapstructure:"master_ip"`
 }
 
 type AWSConfig struct {
@@ -35,12 +38,12 @@ type AWSConfig struct {
 }
 
 type K3sConfig struct {
-	URL         string `mapstructure:"url"`
-	URLEnv      string `mapstructure:"url_env"`
-	Token       string `mapstructure:"token"`
-	TokenEnv    string `mapstructure:"token_env"`
+	URL          string `mapstructure:"url"`
+	URLEnv       string `mapstructure:"url_env"`
+	Token        string `mapstructure:"token"`
+	TokenEnv     string `mapstructure:"token_env"`
 	SSHPublicKey string `mapstructure:"ssh_public_key"`
-	SSHKeyEnv   string `mapstructure:"ssh_public_key_env"`
+	SSHKeyEnv    string `mapstructure:"ssh_public_key_env"`
 }
 
 func Resolve(envName, inline string) string {
@@ -56,7 +59,7 @@ type Config struct {
 	Kubeconfig     string          `mapstructure:"kubeconfig"`
 	Thresholds     ThresholdConfig `mapstructure:"thresholds"`
 	Hetzner        HetznerConfig   `mapstructure:"hetzner"`
-	ZeroTier       ZeroTierConfig  `mapstructure:"zerotier"`
+	WireGuard      WireGuardConfig `mapstructure:"wireguard"`
 	K3s            K3sConfig       `mapstructure:"k3s"`
 	AWS            AWSConfig       `mapstructure:"aws"`
 	PushgatewayURL string          `mapstructure:"pushgateway_url"`

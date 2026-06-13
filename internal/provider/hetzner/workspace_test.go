@@ -18,9 +18,14 @@ func newWorkspaceTestConfig() *config.Config {
 			ServerType:  "cx22",
 			Location:    "fsn1",
 		},
-		ZeroTier: config.ZeroTierConfig{
-			NetworkID:   "nw-abc",
-			APITokenEnv: "ZEROTIER_API_TOKEN",
+		WireGuard: config.WireGuardConfig{
+			HubHost:      "192.168.20.1",
+			HubUser:      "root",
+			HubPublicKey: "DPHflo9uj/HXikf/3LXERxRe/t7KOueakDX5dMAdm3Y=",
+			Interface:    "wg0",
+			ListenPort:   51820,
+			Subnet:       "10.100.0.0/24",
+			MasterIP:     "192.168.20.10",
 		},
 	}
 }
