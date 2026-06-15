@@ -18,7 +18,8 @@ import (
 func newTestApp() *cli.App {
 	return &cli.App{
 		Config: &config.Config{
-			Pools: config.PoolDefaults{Namespace: "caph-system", Cluster: "burst", Name: "burst-workers"},
+			Cluster: "burst",
+			Pools:   config.PoolDefaults{Namespace: "caph-system", Cluster: "burst", Name: "burst-workers"},
 		},
 	}
 }

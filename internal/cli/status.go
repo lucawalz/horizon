@@ -3,20 +3,20 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"net"
 	"os"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/prometheus"
 	"github.com/prometheus/common/model"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,40 +24,63 @@ const (
 	cpuQuery     = `1 - avg by (instance)(rate(node_cpu_seconds_total{mode="idle"}[5m]))`
 	memQuery     = `1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)`
 	pendingQuery = `count(kube_pod_status_phase{phase="Pending"}==1) or vector(0)`
+
+	autoscalerStatusNamespace = "kube-system"
+	autoscalerStatusConfigMap = "cluster-autoscaler-status"
+	autoscalerStatusKey       = "status"
+
+	emptyCell = "-"
 )
 
 func newStatusCmd(app *App) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Print cluster pressure and node table",
+		Short: "Print read-only cluster pressure, pools, and autoscaler status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(app)
+			return runStatus(cmd.Context(), app, os.Stdout)
 		},
 	}
 }
 
-func runStatus(app *App) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func runStatus(ctx context.Context, app *App, w io.Writer) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
+	cpuVec, memVec := printPressureHeader(ctx, app, w)
+
+	if err := printNodeTable(ctx, app, w, cpuVec, memVec); err != nil {
+		fmt.Fprintf(w, "nodes: unavailable: %v\n", err)
+	}
+	fmt.Fprintln(w)
+
+	printPoolTable(ctx, app, w)
+	fmt.Fprintln(w)
+
+	printNudgeLine(ctx, app, w)
+	printAutoscalerLine(ctx, app, w)
+
+	return nil
+}
+
+func printPressureHeader(ctx context.Context, app *App, w io.Writer) (cpuVec, memVec model.Vector) {
 	pc, err := prometheus.NewClient(app.KubeClient, app.Config.Kubeconfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: prometheus unavailable: %v\n", err)
-		return printNodeTable(ctx, app, nil, nil)
+		fmt.Fprintf(w, "pressure: unavailable: %v\n", err)
+		return nil, nil
 	}
 	defer pc.Close()
 
-	cpuVec, err := pc.QueryInstant(ctx, cpuQuery)
+	cpuVec, err = pc.QueryInstant(ctx, cpuQuery)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: cpu query failed: %v\n", err)
+		fmt.Fprintf(w, "warning: cpu query failed: %v\n", err)
 	}
-	memVec, err := pc.QueryInstant(ctx, memQuery)
+	memVec, err = pc.QueryInstant(ctx, memQuery)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: mem query failed: %v\n", err)
+		fmt.Fprintf(w, "warning: mem query failed: %v\n", err)
 	}
 	pendingVec, err := pc.QueryInstant(ctx, pendingQuery)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: pending query failed: %v\n", err)
+		fmt.Fprintf(w, "warning: pending query failed: %v\n", err)
 	}
 
 	cpuScore := avgVector(cpuVec)
@@ -68,25 +91,21 @@ func runStatus(app *App) error {
 	}
 
 	threshold := app.Config.Thresholds.Burst
-
-	fmt.Printf("CPU: %.2f/%.2f %s  Mem: %.2f/%.2f %s  Pending pods: %d\n",
+	fmt.Fprintf(w, "CPU: %.2f/%.2f %s  Mem: %.2f/%.2f %s  Pending pods: %d\n",
 		cpuScore, threshold, pressureDot(cpuScore, threshold),
 		memScore, threshold, pressureDot(memScore, threshold),
 		pendingCount,
 	)
-	printBurstNodes(ctx, app)
-	fmt.Println()
-
-	return printNodeTable(ctx, app, cpuVec, memVec)
+	return cpuVec, memVec
 }
 
-func printNodeTable(ctx context.Context, app *App, cpuVec, memVec model.Vector) error {
+func printNodeTable(ctx context.Context, app *App, out io.Writer, cpuVec, memVec model.Vector) error {
 	nodes, err := app.KubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list nodes: %w", err)
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	defer w.Flush()
 
 	fmt.Fprintln(w, "NAME\tROLE\tCPU%\tMEM%\tPODS\tSTATUS\tIP")
@@ -108,6 +127,104 @@ func printNodeTable(ctx context.Context, app *App, cpuVec, memVec model.Vector) 
 			node.Name, role, nodeMetricCell(cpuVec, ip), nodeMetricCell(memVec, ip), podCount, status, ip)
 	}
 	return nil
+}
+
+func printPoolTable(ctx context.Context, app *App, out io.Writer) {
+	pools, err := app.CapiClient.ListPools(ctx, app.Config.Pools.Namespace)
+	if err != nil {
+		fmt.Fprintf(out, "pools: unavailable: %v\n", err)
+		return
+	}
+	if len(pools) == 0 {
+		fmt.Fprintln(out, "pools: none")
+		return
+	}
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	defer w.Flush()
+
+	fmt.Fprintln(w, "POOL\tDESIRED\tREADY\tMACHINE\tPHASE\tNODE\tPROVIDER-ID")
+
+	for _, pool := range pools {
+		desired := replicaCell(pool.Spec.Replicas)
+		ready := replicaCell(pool.Status.ReadyReplicas)
+
+		machines, err := app.CapiClient.ListMachines(ctx, app.Config.Pools.Namespace, pool.Name)
+		if err != nil {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				pool.Name, desired, ready, "error", err.Error(), emptyCell, emptyCell)
+			continue
+		}
+		if len(machines) == 0 {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				pool.Name, desired, ready, emptyCell, emptyCell, emptyCell, emptyCell)
+			continue
+		}
+		for _, m := range machines {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				pool.Name, desired, ready,
+				m.Name, valueOrDash(m.Status.Phase),
+				valueOrDash(m.Status.NodeRef.Name), valueOrDash(m.Spec.ProviderID))
+		}
+	}
+}
+
+func printNudgeLine(ctx context.Context, app *App, w io.Writer) {
+	initialized, err := app.CapiClient.IsControlPlaneInitialized(ctx, app.Config.Pools.Namespace, app.Config.Cluster)
+	if apierrors.IsNotFound(err) {
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(w, "control-plane: status unavailable: %v\n", err)
+		return
+	}
+	if !initialized {
+		fmt.Fprintf(w, "%s externally-managed control plane not marked initialized; Mode-A workers will not bootstrap until nudged\n",
+			color.YellowString("WARNING:"))
+		return
+	}
+	fmt.Fprintln(w, "control-plane: initialized")
+}
+
+func printAutoscalerLine(ctx context.Context, app *App, w io.Writer) {
+	cm, err := app.KubeClient.CoreV1().ConfigMaps(autoscalerStatusNamespace).Get(ctx, autoscalerStatusConfigMap, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		fmt.Fprintln(w, "autoscaler: not found")
+		return
+	}
+	if err != nil {
+		fmt.Fprintln(w, "autoscaler: status unavailable")
+		return
+	}
+	fmt.Fprintf(w, "autoscaler: %s\n", autoscalerActivity(cm.Data))
+}
+
+func autoscalerActivity(data map[string]string) string {
+	raw, ok := data[autoscalerStatusKey]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return "status unavailable"
+	}
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Cluster-wide:") || strings.HasPrefix(trimmed, "Health:") {
+			return trimmed
+		}
+	}
+	return strings.TrimSpace(strings.SplitN(raw, "\n", 2)[0])
+}
+
+func replicaCell(n *int32) string {
+	if n == nil {
+		return "0"
+	}
+	return fmt.Sprintf("%d", *n)
+}
+
+func valueOrDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return emptyCell
+	}
+	return s
 }
 
 func nodeMetricCell(vec model.Vector, nodeIP string) string {
@@ -183,25 +300,8 @@ func pressureDot(score, threshold float64) string {
 	return color.GreenString("●")
 }
 
-func printBurstNodes(ctx context.Context, app *App) {
-	phases, err := k8s.ReadBurstPhases(ctx, app.KubeClient)
-	if err != nil || len(phases) == 0 {
-		fmt.Println("Burst nodes: none active")
-		return
-	}
-	ids := make([]string, 0, len(phases))
-	for id := range phases {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	fmt.Println("Burst nodes:")
-	for _, id := range ids {
-		fmt.Printf("  %s%s: %s\n", burstHostnamePrefix, id, phases[id])
-	}
-}
-
-func PrintBurstNodesForTest(ctx context.Context, app *App) {
-	printBurstNodes(ctx, app)
+func RunStatusForTest(ctx context.Context, app *App, w io.Writer) error {
+	return runStatus(ctx, app, w)
 }
 
 func NodeMetricCellForTest(vec model.Vector, nodeIP string) string {
