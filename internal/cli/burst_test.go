@@ -24,6 +24,12 @@ func workloadPod(name, ns, node string) *corev1.Pod {
 	}
 }
 
+func poolNode(name, pool string) *corev1.Node {
+	n := readyNode(name)
+	n.Labels = map[string]string{k8s.PoolLabelKey: pool}
+	return n
+}
+
 func TestBurstDryRun(t *testing.T) {
 	app := &cli.App{Config: &config.Config{Provider: "hetzner"}}
 	out := captureStdout(func() {
@@ -139,7 +145,7 @@ func TestBurstStepOrder(t *testing.T) {
 	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: "aabb1234", hostname: hostname, serverID: "99", pubKey: "pub-99"}
 	kc := fake.NewSimpleClientset(
-		readyNode(hostname),
+		poolNode(hostname, "burst"),
 		workloadPod("app1", "sentio-systems", hostname),
 	)
 	vc := &fakeVeleroClient{}
@@ -237,7 +243,7 @@ func TestBurstWritesPhase(t *testing.T) {
 	pm := &mockPeerManager{}
 	prov := &mockHetznerProvider{burstID: "eeff5566", hostname: hostname, serverID: "1", pubKey: "pub-1"}
 	kc := fake.NewSimpleClientset(
-		readyNode(hostname),
+		poolNode(hostname, "burst"),
 		workloadPod("p", "sentio-systems", hostname),
 	)
 	vc := &fakeVeleroClient{}

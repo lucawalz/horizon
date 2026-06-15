@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const NodeAffinityLabelKey = "horizon.dev/burst-workload"
+const PoolLabelKey = "horizon.dev/pool"
 
 type savedSpec struct {
 	name             string
@@ -24,7 +24,6 @@ type savedSpec struct {
 type SavedState struct {
 	deployments  []savedSpec
 	statefulSets []savedSpec
-	nodeName     string
 	namespace    string
 }
 
@@ -56,22 +55,20 @@ func buildAffinityPatch(a *corev1.Affinity) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, nodeName string) (*SavedState, error) {
+func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelValue string) (*SavedState, error) {
 	if err := ValidateNamespace(namespace); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if poolLabelValue == "" {
+		return nil, fmt.Errorf("migrate: pool label value must not be empty")
+	}
 
-	labelPatch := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"labels": map[string]string{NodeAffinityLabelKey: namespace},
-		},
-	}
-	data, err := json.Marshal(labelPatch)
+	hasNode, err := poolNodePresent(ctx, kc, poolLabelValue)
 	if err != nil {
-		return nil, fmt.Errorf("migrate: marshal label patch: %w", err)
+		return nil, err
 	}
-	if _, err := kc.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, data, metav1.PatchOptions{}); err != nil {
-		return nil, fmt.Errorf("migrate: label node %q: %w", nodeName, err)
+	if !hasNode {
+		return nil, fmt.Errorf("migrate: no node carries label %s=%s", PoolLabelKey, poolLabelValue)
 	}
 
 	affinity := &corev1.Affinity{
@@ -79,9 +76,9 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, nodeName s
 			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
 					MatchExpressions: []corev1.NodeSelectorRequirement{{
-						Key:      NodeAffinityLabelKey,
+						Key:      PoolLabelKey,
 						Operator: corev1.NodeSelectorOpIn,
-						Values:   []string{namespace},
+						Values:   []string{poolLabelValue},
 					}},
 				}},
 			},
@@ -97,7 +94,7 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, nodeName s
 	if err != nil {
 		return nil, fmt.Errorf("migrate: list deployments in %q: %w", namespace, err)
 	}
-	state := &SavedState{nodeName: nodeName, namespace: namespace}
+	state := &SavedState{namespace: namespace}
 	for i := range deps.Items {
 		d := deps.Items[i]
 		var orig []byte
@@ -206,22 +203,6 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 		}
 	}
 
-	removePatch := map[string]interface{}{
-		"metadata": map[string]interface{}{
-			"labels": map[string]interface{}{NodeAffinityLabelKey: nil},
-		},
-	}
-	removeData, err := json.Marshal(removePatch)
-	if err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("rollback-migrate: marshal remove label patch: %w", err)
-		}
-	} else if _, err := kc.CoreV1().Nodes().Patch(ctx, state.nodeName, types.MergePatchType, removeData, metav1.PatchOptions{}); err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("rollback-migrate: remove node label: %w", err)
-		}
-	}
-
 	pods, err := kc.CoreV1().Pods(state.namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		if firstErr == nil {
@@ -245,7 +226,7 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 	return firstErr
 }
 
-func presentBurstWorkloadValues(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
+func presentPoolLabelValues(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("reconcile-affinity: list nodes: %w", err)
@@ -253,11 +234,24 @@ func presentBurstWorkloadValues(ctx context.Context, kc kubernetes.Interface) (m
 	present := map[string]bool{}
 	for i := range nodes.Items {
 		n := nodes.Items[i]
-		if v, ok := n.Labels[NodeAffinityLabelKey]; ok {
+		if v, ok := n.Labels[PoolLabelKey]; ok {
 			present[v] = true
 		}
 	}
 	return present, nil
+}
+
+func poolNodePresent(ctx context.Context, kc kubernetes.Interface, poolLabelValue string) (bool, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("migrate: list nodes: %w", err)
+	}
+	for i := range nodes.Items {
+		if nodes.Items[i].Labels[PoolLabelKey] == poolLabelValue {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func strippedNodeAffinity(a *corev1.Affinity, present map[string]bool) (*corev1.NodeAffinity, bool) {
@@ -304,7 +298,7 @@ func buildStrandedAffinityPatch(na *corev1.NodeAffinity) ([]byte, error) {
 
 func termStranded(term corev1.NodeSelectorTerm, present map[string]bool) bool {
 	for _, req := range term.MatchExpressions {
-		if req.Key != NodeAffinityLabelKey {
+		if req.Key != PoolLabelKey {
 			continue
 		}
 		for _, v := range req.Values {
@@ -325,7 +319,7 @@ func ReconcileStrandedAffinity(ctx context.Context, kc kubernetes.Interface, nam
 	if err := ValidateNamespace(namespace); err != nil {
 		return fmt.Errorf("reconcile-affinity: %w", err)
 	}
-	present, err := presentBurstWorkloadValues(ctx, kc)
+	present, err := presentPoolLabelValues(ctx, kc)
 	if err != nil {
 		return err
 	}
@@ -405,7 +399,7 @@ func WaitWorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, name
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for {
-		if burstNodes, err := burstNodesForNamespace(pollCtx, kc, namespace); err == nil {
+		if burstNodes, err := poolNodes(pollCtx, kc); err == nil {
 			if ready, perr := workloadSpreadReady(pollCtx, kc, namespace, burstNodes); perr == nil && ready {
 				return nil
 			}
@@ -421,14 +415,14 @@ func WaitWorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, name
 	}
 }
 
-func burstNodesForNamespace(ctx context.Context, kc kubernetes.Interface, namespace string) (map[string]bool, error) {
+func poolNodes(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
 	burst := map[string]bool{}
 	for i := range nodes.Items {
-		if nodes.Items[i].Labels[NodeAffinityLabelKey] == namespace {
+		if _, ok := nodes.Items[i].Labels[PoolLabelKey]; ok {
 			burst[nodes.Items[i].Name] = true
 		}
 	}

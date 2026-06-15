@@ -17,7 +17,7 @@ func burstAffinity(ns string) *corev1.Affinity {
 			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
 					MatchExpressions: []corev1.NodeSelectorRequirement{{
-						Key:      k8s.NodeAffinityLabelKey,
+						Key:      k8s.PoolLabelKey,
 						Operator: corev1.NodeSelectorOpIn,
 						Values:   []string{ns},
 					}},
@@ -74,7 +74,7 @@ func TestReconcileStrandedAffinity_KeepsWhenNodeLive(t *testing.T) {
 			Spec: corev1.PodSpec{Affinity: burstAffinity("sentio-systems")},
 		}},
 	}
-	burst := readyNode("horizon-burst-abcd", map[string]string{k8s.NodeAffinityLabelKey: "sentio-systems"})
+	burst := readyNode("horizon-burst-abcd", map[string]string{k8s.PoolLabelKey: "sentio-systems"})
 
 	kc := fake.NewSimpleClientset(dep, burst)
 
@@ -158,7 +158,7 @@ func TestReconcileStrandedAffinity_KeepsWhenNodePresentButNotReady(t *testing.T)
 		}},
 	}
 	notReady := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "horizon-burst-dead", Labels: map[string]string{k8s.NodeAffinityLabelKey: "sentio-systems"}},
+		ObjectMeta: metav1.ObjectMeta{Name: "horizon-burst-dead", Labels: map[string]string{k8s.PoolLabelKey: "sentio-systems"}},
 		Status: corev1.NodeStatus{
 			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionFalse}},
 		},

@@ -87,7 +87,7 @@ func TestRunWatch_HealsStrandedAffinityOnStartup(t *testing.T) {
 					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 						NodeSelectorTerms: []corev1.NodeSelectorTerm{{
 							MatchExpressions: []corev1.NodeSelectorRequirement{{
-								Key:      k8s.NodeAffinityLabelKey,
+								Key:      k8s.PoolLabelKey,
 								Operator: corev1.NodeSelectorOpIn,
 								Values:   []string{ns},
 							}},

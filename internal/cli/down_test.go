@@ -320,7 +320,7 @@ func TestDownUnpinsWorkloadOnLastBurstNode(t *testing.T) {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   hostname,
-			Labels: map[string]string{k8s.NodeAffinityLabelKey: ns},
+			Labels: map[string]string{k8s.PoolLabelKey: ns},
 		},
 	}
 	pinned := &corev1.Affinity{
@@ -328,7 +328,7 @@ func TestDownUnpinsWorkloadOnLastBurstNode(t *testing.T) {
 			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
 					MatchExpressions: []corev1.NodeSelectorRequirement{{
-						Key:      k8s.NodeAffinityLabelKey,
+						Key:      k8s.PoolLabelKey,
 						Operator: corev1.NodeSelectorOpIn,
 						Values:   []string{ns},
 					}},

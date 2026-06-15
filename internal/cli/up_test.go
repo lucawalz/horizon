@@ -76,6 +76,7 @@ func (m *mockHetznerProvider) WireGuardIP() string        { return m.wgIP }
 func newTestApp() *cli.App {
 	return &cli.App{
 		Config: &config.Config{
+			Pools: config.PoolDefaults{Cluster: "burst"},
 			WireGuard: config.WireGuardConfig{
 				HubHost:      "10.20.0.1",
 				HubUser:      "root",

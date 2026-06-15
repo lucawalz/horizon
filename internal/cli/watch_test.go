@@ -22,7 +22,7 @@ func TestRunSinglePollCycle_HealsStrandCreatedMidSession(t *testing.T) {
 		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 			NodeSelectorTerms: []corev1.NodeSelectorTerm{{
 				MatchExpressions: []corev1.NodeSelectorRequirement{{
-					Key:      k8s.NodeAffinityLabelKey,
+					Key:      k8s.PoolLabelKey,
 					Operator: corev1.NodeSelectorOpIn,
 					Values:   []string{ns},
 				}},
@@ -34,7 +34,7 @@ func TestRunSinglePollCycle_HealsStrandCreatedMidSession(t *testing.T) {
 		Spec:       appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: burstAff}}},
 	}
 	burstNode := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "horizon-burst-aaaa", Labels: map[string]string{k8s.NodeAffinityLabelKey: ns}},
+		ObjectMeta: metav1.ObjectMeta{Name: "horizon-burst-aaaa", Labels: map[string]string{k8s.PoolLabelKey: ns}},
 		Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
 	}
 

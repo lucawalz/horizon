@@ -254,7 +254,7 @@ func burstWorkloadLabel(ctx context.Context, kc kubernetes.Interface, hostname s
 	if err != nil {
 		return ""
 	}
-	return n.Labels[k8s.NodeAffinityLabelKey]
+	return n.Labels[k8s.PoolLabelKey]
 }
 
 func burstNodeCountForWorkload(ctx context.Context, kc kubernetes.Interface, workload string) (int, error) {
@@ -264,7 +264,7 @@ func burstNodeCountForWorkload(ctx context.Context, kc kubernetes.Interface, wor
 	}
 	count := 0
 	for i := range nodes.Items {
-		if nodes.Items[i].Labels[k8s.NodeAffinityLabelKey] == workload {
+		if nodes.Items[i].Labels[k8s.PoolLabelKey] == workload {
 			count++
 		}
 	}

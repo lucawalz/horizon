@@ -42,8 +42,10 @@ func makeDSPod(name, ns, node string) *corev1.Pod {
 	}
 }
 
+const poolValue = "burst"
+
 func TestMigrateEviction(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1"}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "sentio-systems"}}
 	appPod := makePod("app-pod", "sentio-systems", "homelab-1", corev1.PodRunning)
 	dsPod := makeDSPod("ds-pod", "sentio-systems", "homelab-1")
@@ -52,7 +54,7 @@ func TestMigrateEviction(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, appPod, dsPod, otherPod)
 	evictAndDelete(kc)
 
-	state, err := k8s.Migrate(context.Background(), kc, "sentio-systems", "burst-1")
+	state, err := k8s.Migrate(context.Background(), kc, "sentio-systems", poolValue)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -75,32 +77,47 @@ func TestMigrateEviction(t *testing.T) {
 	}
 }
 
-func TestMigrateNodeLabel(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1"}}
+func TestMigrateDoesNotRelabelNode(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 	kc := fake.NewSimpleClientset(node)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, "sentio-systems", "burst-1"); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, "sentio-systems", poolValue); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	n, err := kc.CoreV1().Nodes().Get(context.Background(), "burst-1", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get node: %v", err)
+	for _, a := range kc.Actions() {
+		if a.GetVerb() == "patch" && a.GetResource().Resource == "nodes" {
+			t.Errorf("Migrate must not patch nodes, got %v", a)
+		}
 	}
-	if got := n.Labels[k8s.NodeAffinityLabelKey]; got != "sentio-systems" {
-		t.Errorf("node label %q = %q, want sentio-systems", k8s.NodeAffinityLabelKey, got)
+}
+
+func TestMigrateFailsWhenNoPoolNode(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "homelab-1"}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "sentio-systems"}}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	_, err := k8s.Migrate(context.Background(), kc, "sentio-systems", poolValue)
+	if err == nil {
+		t.Fatal("expected error when no node carries the pool label")
+	}
+	for _, a := range kc.Actions() {
+		if a.GetVerb() == "patch" {
+			t.Errorf("Migrate must not mutate workloads before the pool-node check: %v", a)
+		}
 	}
 }
 
 func TestMigrateAffinityPatch(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1"}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: "sentio-systems"}}
 	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: "sentio-systems"}}
 	kc := fake.NewSimpleClientset(node, dep, sts)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, "sentio-systems", "burst-1"); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, "sentio-systems", poolValue); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -126,11 +143,11 @@ func TestMigrateAffinityPatch(t *testing.T) {
 			t.Errorf("deployment patch type = %v, want StrategicMergePatchType", pa.GetPatchType())
 		}
 		body := string(pa.GetPatch())
-		if !strings.Contains(body, "horizon.dev/burst-workload") {
-			t.Errorf("deployment patch missing label key: %s", body)
+		if !strings.Contains(body, k8s.PoolLabelKey) {
+			t.Errorf("deployment patch missing pool label key: %s", body)
 		}
-		if !strings.Contains(body, "sentio-systems") {
-			t.Errorf("deployment patch missing namespace value: %s", body)
+		if !strings.Contains(body, poolValue) {
+			t.Errorf("deployment patch missing pool value: %s", body)
 		}
 	}
 
@@ -142,17 +159,17 @@ func TestMigrateAffinityPatch(t *testing.T) {
 			t.Errorf("statefulset patch type = %v, want StrategicMergePatchType", pa.GetPatchType())
 		}
 		body := string(pa.GetPatch())
-		if !strings.Contains(body, "horizon.dev/burst-workload") {
-			t.Errorf("statefulset patch missing label key: %s", body)
+		if !strings.Contains(body, k8s.PoolLabelKey) {
+			t.Errorf("statefulset patch missing pool label key: %s", body)
 		}
-		if !strings.Contains(body, "sentio-systems") {
-			t.Errorf("statefulset patch missing namespace value: %s", body)
+		if !strings.Contains(body, poolValue) {
+			t.Errorf("statefulset patch missing pool value: %s", body)
 		}
 	}
 }
 
 func TestMigrateSavesOriginalAffinity(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1"}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 
 	originalAffinity := &corev1.Affinity{
 		PodAntiAffinity: &corev1.PodAntiAffinity{
@@ -180,7 +197,7 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep1, dep2)
 	evictAndDelete(kc)
 
-	state, err := k8s.Migrate(context.Background(), kc, "sentio-systems", "burst-1")
+	state, err := k8s.Migrate(context.Background(), kc, "sentio-systems", poolValue)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -199,7 +216,7 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 		body := string(pa.GetPatch())
 		switch pa.GetName() {
 		case "dep1":
-			if strings.Contains(body, "kubernetes.io/hostname") && !strings.Contains(body, "burst-workload") {
+			if strings.Contains(body, "kubernetes.io/hostname") && !strings.Contains(body, "nodeAffinity") {
 				var got map[string]interface{}
 				_ = json.Unmarshal(pa.GetPatch(), &got)
 				dep1RestoreFound = strings.Contains(body, string(origJSON[1:len(origJSON)-1]))
@@ -219,8 +236,8 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	}
 }
 
-func TestRollbackMigrate_RestoresAffinityAndRemovesLabel(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1"}}
+func TestRollbackMigrate_RestoresAffinityAndLeavesNode(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 
 	existingAffinity := &corev1.Affinity{
 		PodAntiAffinity: &corev1.PodAntiAffinity{
@@ -244,7 +261,7 @@ func TestRollbackMigrate_RestoresAffinityAndRemovesLabel(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep1, sts1)
 	evictAndDelete(kc)
 
-	state, err := k8s.Migrate(context.Background(), kc, "sentio-systems", "burst-1")
+	state, err := k8s.Migrate(context.Background(), kc, "sentio-systems", poolValue)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -252,43 +269,29 @@ func TestRollbackMigrate_RestoresAffinityAndRemovesLabel(t *testing.T) {
 		t.Fatalf("RollbackMigrate: %v", err)
 	}
 
-	var depPatches, nodePatches []k8stesting.PatchAction
+	var depPatches int
 	for _, a := range kc.Actions() {
 		if a.GetVerb() != "patch" {
 			continue
 		}
-		pa := a.(k8stesting.PatchAction)
-		switch a.GetResource().Resource {
-		case "deployments":
-			depPatches = append(depPatches, pa)
-		case "nodes":
-			nodePatches = append(nodePatches, pa)
+		if a.GetResource().Resource == "nodes" {
+			t.Errorf("rollback must not patch nodes: %v", a)
+		}
+		if a.GetResource().Resource == "deployments" {
+			depPatches++
 		}
 	}
 
-	if len(depPatches) < 2 {
-		t.Errorf("deployment patch count = %d, want >= 2", len(depPatches))
-	}
-	if len(nodePatches) < 2 {
-		t.Errorf("node patch count = %d, want >= 2", len(nodePatches))
-	}
-
-	foundRemoval := false
-	for _, pa := range nodePatches {
-		if pa.GetPatchType() == types.MergePatchType && strings.Contains(string(pa.GetPatch()), `"horizon.dev/burst-workload":null`) {
-			foundRemoval = true
-		}
-	}
-	if !foundRemoval {
-		t.Error("no node label removal patch found with null value")
+	if depPatches < 2 {
+		t.Errorf("deployment patch count = %d, want >= 2", depPatches)
 	}
 
 	n, err := kc.CoreV1().Nodes().Get(context.Background(), "burst-1", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get node: %v", err)
 	}
-	if _, exists := n.Labels[k8s.NodeAffinityLabelKey]; exists {
-		t.Error("node should not have burst-workload label after rollback")
+	if n.Labels[k8s.PoolLabelKey] != poolValue {
+		t.Error("node pool label must be left intact after rollback")
 	}
 }
 
@@ -329,7 +332,7 @@ func burstNode(name, ns string) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   name,
-			Labels: map[string]string{k8s.NodeAffinityLabelKey: ns},
+			Labels: map[string]string{k8s.PoolLabelKey: ns},
 		},
 	}
 }

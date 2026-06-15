@@ -239,7 +239,7 @@ func runBurst(parent context.Context, app *App, deps *burstDeps, workload string
 		Name: "migrate-workload",
 		Run: func(ctx context.Context) error {
 			_ = k8s.WriteBurstPhase(ctx, deps.kc, deps.prov.BurstID(), k8s.BurstPhaseMigrating)
-			state, err := k8s.Migrate(ctx, deps.kc, workload, burstNodeName)
+			state, err := k8s.Migrate(ctx, deps.kc, workload, app.Config.Pools.Cluster)
 			savedMigrate = state
 			return err
 		},
