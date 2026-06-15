@@ -109,3 +109,18 @@ func PidFilePath(burstID string) (string, error) {
 	}
 	return filepath.Join(dir, burstID+".pid"), nil
 }
+
+var testStateDirOverride string
+
+func SetStateDirForTest(dir string) (restore func()) {
+	prev := testStateDirOverride
+	testStateDirOverride = dir
+	return func() { testStateDirOverride = prev }
+}
+
+func stateDirOrTestOverride() (string, error) {
+	if testStateDirOverride != "" {
+		return testStateDirOverride, nil
+	}
+	return DefaultStateDir()
+}
