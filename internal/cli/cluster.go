@@ -10,13 +10,14 @@ import (
 )
 
 const (
-	infrastructureGroup   = "infrastructure.cluster.x-k8s.io"
-	bootstrapGroup        = "bootstrap.cluster.x-k8s.io"
-	defaultInfraKind      = "HCloudMachineTemplate"
-	defaultBootstrapKind  = "KThreesConfigTemplate"
-	defaultClusterVersion = "v1.31.0+k3s1"
-	defaultPodCIDR        = "10.42.0.0/16"
-	defaultServiceCIDR    = "10.43.0.0/16"
+	infrastructureGroup     = "infrastructure.cluster.x-k8s.io"
+	bootstrapGroup          = "bootstrap.cluster.x-k8s.io"
+	defaultInfraKind        = "HCloudMachineTemplate"
+	defaultClusterInfraKind = "HetznerCluster"
+	defaultBootstrapKind    = "KThreesConfigTemplate"
+	defaultClusterVersion   = "v1.31.0+k3s1"
+	defaultPodCIDR          = "10.42.0.0/16"
+	defaultServiceCIDR      = "10.43.0.0/16"
 )
 
 func newClusterCmd(app *App) *cobra.Command {
@@ -34,6 +35,10 @@ func newClusterCreateCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a CAPI-managed cluster; precedence: --dry-run (print only) > --write (write to bedrock tree) > live apply",
+		Long: "Create a CAPI-managed cluster. The infrastructure and bootstrap objects referenced by name " +
+			"(HetznerCluster, HCloudMachineTemplate, KThreesConfigTemplate) must already exist in the target namespace. " +
+			"RenderCluster emits the Cluster, control plane, and worker pool that reference them. " +
+			"Precedence: --dry-run (print only) > --write (write to bedrock tree) > live apply.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runClusterCreate(cmd, app)
 		},
@@ -44,6 +49,8 @@ func newClusterCreateCmd(app *App) *cobra.Command {
 	cmd.Flags().String("pod-cidr", defaultPodCIDR, "Pod network CIDR")
 	cmd.Flags().String("service-cidr", defaultServiceCIDR, "Service network CIDR")
 	cmd.Flags().Int32("replicas", 1, "Replica count for the control plane and worker pool")
+	cmd.Flags().String("cluster-infra-kind", defaultClusterInfraKind, "Cluster infrastructure object kind")
+	cmd.Flags().String("cluster-infra-name", "", "Cluster infrastructure object name (default <name>)")
 	cmd.Flags().String("infra-kind", defaultInfraKind, "Worker infrastructure template kind")
 	cmd.Flags().String("infra-name", "", "Worker infrastructure template name (default <name>-workers)")
 	cmd.Flags().String("cp-infra-kind", defaultInfraKind, "Control plane infrastructure template kind")
@@ -100,6 +107,11 @@ func clusterSpecFromFlags(cmd *cobra.Command, app *App) (capi.ClusterSpec, error
 	serviceCIDR, _ := cmd.Flags().GetString("service-cidr")
 	replicas, _ := cmd.Flags().GetInt32("replicas")
 
+	clusterInfraKind, _ := cmd.Flags().GetString("cluster-infra-kind")
+	clusterInfraName, _ := cmd.Flags().GetString("cluster-infra-name")
+	if clusterInfraName == "" {
+		clusterInfraName = name
+	}
 	infraKind, _ := cmd.Flags().GetString("infra-kind")
 	infraName, _ := cmd.Flags().GetString("infra-name")
 	if infraName == "" {
@@ -125,6 +137,11 @@ func clusterSpecFromFlags(cmd *cobra.Command, app *App) (capi.ClusterSpec, error
 		ServiceCIDR:      serviceCIDR,
 		Version:          version,
 		Replicas:         replicas,
+		ClusterInfrastructure: capi.TemplateRef{
+			APIGroup: infrastructureGroup,
+			Kind:     clusterInfraKind,
+			Name:     clusterInfraName,
+		},
 		Infrastructure: capi.TemplateRef{
 			APIGroup: infrastructureGroup,
 			Kind:     infraKind,

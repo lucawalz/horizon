@@ -58,6 +58,9 @@ func TestClusterCreateDryRunWritesNothing(t *testing.T) {
 	if !strings.Contains(out, "kind: Cluster") {
 		t.Errorf("dry-run output missing rendered cluster YAML:\n%s", out)
 	}
+	if !strings.Contains(out, "kind: HetznerCluster") {
+		t.Errorf("dry-run cluster infrastructureRef must reference HetznerCluster:\n%s", out)
+	}
 	if _, err := cc.GetCluster(context.Background(), "caph-system", "edge"); !apierrors.IsNotFound(err) {
 		t.Errorf("dry-run must not apply; GetCluster = %v, want NotFound", err)
 	}
@@ -108,8 +111,9 @@ func TestClusterDeleteRemovesCluster(t *testing.T) {
 		Name: "edge", Namespace: "caph-system", ClusterName: "edge",
 		ControlPlaneMode: capi.External, PodCIDR: "10.42.0.0/16", ServiceCIDR: "10.43.0.0/16",
 		Version: "v1.31.0+k3s1", Replicas: 1,
-		Infrastructure: capi.TemplateRef{APIGroup: "infrastructure.cluster.x-k8s.io", Kind: "HCloudMachineTemplate", Name: "edge-workers"},
-		Bootstrap:      capi.TemplateRef{APIGroup: "bootstrap.cluster.x-k8s.io", Kind: "KThreesConfigTemplate", Name: "edge"},
+		ClusterInfrastructure: capi.TemplateRef{APIGroup: "infrastructure.cluster.x-k8s.io", Kind: "HetznerCluster", Name: "edge"},
+		Infrastructure:        capi.TemplateRef{APIGroup: "infrastructure.cluster.x-k8s.io", Kind: "HCloudMachineTemplate", Name: "edge-workers"},
+		Bootstrap:             capi.TemplateRef{APIGroup: "bootstrap.cluster.x-k8s.io", Kind: "KThreesConfigTemplate", Name: "edge"},
 	}
 	if err := cc.ApplyCluster(context.Background(), spec); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)

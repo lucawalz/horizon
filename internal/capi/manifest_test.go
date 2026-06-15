@@ -19,6 +19,11 @@ func testClusterSpec(mode capi.ControlPlaneMode) capi.ClusterSpec {
 		ServiceCIDR:      "10.43.0.0/16",
 		Version:          "v1.35.2+k3s1",
 		Replicas:         3,
+		ClusterInfrastructure: capi.TemplateRef{
+			APIGroup: "infrastructure.cluster.x-k8s.io",
+			Kind:     "HetznerCluster",
+			Name:     "burst",
+		},
 		Infrastructure: capi.TemplateRef{
 			APIGroup: "infrastructure.cluster.x-k8s.io",
 			Kind:     "HCloudMachineTemplate",
@@ -98,6 +103,15 @@ func TestRenderClusterExternal(t *testing.T) {
 	if cluster.Spec.ControlPlaneRef.Name != "" {
 		t.Errorf("external cluster must not set controlPlaneRef, got %q", cluster.Spec.ControlPlaneRef.Name)
 	}
+	if got := cluster.Spec.InfrastructureRef.Kind; got != "HetznerCluster" {
+		t.Errorf("infrastructureRef kind = %q, want HetznerCluster", got)
+	}
+	if got := cluster.Spec.InfrastructureRef.APIGroup; got != "infrastructure.cluster.x-k8s.io" {
+		t.Errorf("infrastructureRef apiGroup = %q, want infrastructure.cluster.x-k8s.io", got)
+	}
+	if got := cluster.Spec.InfrastructureRef.Name; got != "burst" {
+		t.Errorf("infrastructureRef name = %q, want burst", got)
+	}
 	if got := cluster.Spec.ClusterNetwork.Pods.CIDRBlocks; len(got) != 1 || got[0] != "10.42.0.0/16" {
 		t.Errorf("pod cidr = %v", got)
 	}
@@ -108,6 +122,9 @@ func TestRenderClusterExternal(t *testing.T) {
 	}
 	if md.Name != "burst-workers" {
 		t.Errorf("worker md name = %q, want burst-workers", md.Name)
+	}
+	if got := md.Spec.Template.Spec.InfrastructureRef.Kind; got != "HCloudMachineTemplate" {
+		t.Errorf("worker md infrastructureRef kind = %q, want HCloudMachineTemplate", got)
 	}
 }
 
@@ -128,11 +145,17 @@ func TestRenderClusterManaged(t *testing.T) {
 	if got := cluster.Spec.ControlPlaneRef.Kind; got != "KThreesControlPlane" {
 		t.Errorf("controlPlaneRef kind = %q, want KThreesControlPlane", got)
 	}
+	if got := cluster.Spec.InfrastructureRef.Kind; got != "HetznerCluster" {
+		t.Errorf("infrastructureRef kind = %q, want HetznerCluster", got)
+	}
 
 	if !bytes.Contains(docs[1], []byte("kind: KThreesControlPlane")) {
 		t.Errorf("second doc is not a KThreesControlPlane:\n%s", docs[1])
 	}
 	if !bytes.Contains(docs[1], []byte("controlplane.cluster.x-k8s.io/v1beta2")) {
 		t.Errorf("control plane apiVersion missing:\n%s", docs[1])
+	}
+	if !bytes.Contains(docs[1], []byte("kind: HCloudMachineTemplate")) {
+		t.Errorf("control plane machineTemplate must reference HCloudMachineTemplate:\n%s", docs[1])
 	}
 }

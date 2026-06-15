@@ -27,17 +27,18 @@ const (
 )
 
 type ClusterSpec struct {
-	Name              string
-	Namespace         string
-	ClusterName       string
-	ControlPlaneMode  ControlPlaneMode
-	PodCIDR           string
-	ServiceCIDR       string
-	Version           string
-	Infrastructure    TemplateRef
-	ControlPlaneInfra TemplateRef
-	Bootstrap         TemplateRef
-	Replicas          int32
+	Name                  string
+	Namespace             string
+	ClusterName           string
+	ControlPlaneMode      ControlPlaneMode
+	PodCIDR               string
+	ServiceCIDR           string
+	Version               string
+	ClusterInfrastructure TemplateRef
+	Infrastructure        TemplateRef
+	ControlPlaneInfra     TemplateRef
+	Bootstrap             TemplateRef
+	Replicas              int32
 }
 
 func RenderPool(spec PoolSpec) ([]byte, error) {
@@ -65,7 +66,7 @@ func buildCluster(spec ClusterSpec) *clusterv1.Cluster {
 				Pods:     clusterv1.NetworkRanges{CIDRBlocks: []string{spec.PodCIDR}},
 				Services: clusterv1.NetworkRanges{CIDRBlocks: []string{spec.ServiceCIDR}},
 			},
-			InfrastructureRef: spec.Infrastructure.objectReference(),
+			InfrastructureRef: spec.ClusterInfrastructure.objectReference(),
 		},
 	}
 	if spec.ControlPlaneMode == Managed {
