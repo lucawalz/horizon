@@ -7,6 +7,7 @@ import (
 	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/version"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
@@ -23,8 +24,9 @@ type App struct {
 var app = &App{}
 
 var rootCmd = &cobra.Command{
-	Use:   "horizon",
-	Short: "Homelab burst orchestrator",
+	Use:     "horizon",
+	Short:   "Homelab burst orchestrator",
+	Version: version.Version(),
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -81,6 +83,7 @@ func init() {
 	rootCmd.AddCommand(newBackupCmd(app))
 	rootCmd.AddCommand(newRestoreCmd(app))
 	rootCmd.AddCommand(newClusterCmd(app))
+	rootCmd.AddCommand(newVersionCmd())
 }
 
 func Execute() {
