@@ -7,6 +7,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 func InCluster() bool {
@@ -59,6 +60,18 @@ func NewClientForContext(kubeconfigPath, contextName string) (kubernetes.Interfa
 	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
 		return nil, fmt.Errorf("k8s clientset: %w", err)
+	}
+	return clientset, nil
+}
+
+func NewMetricsClient(kubeconfigPath, contextName string) (metricsclient.Interface, error) {
+	restCfg, err := RestConfigForContext(kubeconfigPath, contextName)
+	if err != nil {
+		return nil, err
+	}
+	clientset, err := metricsclient.NewForConfig(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("metrics clientset: %w", err)
 	}
 	return clientset, nil
 }
