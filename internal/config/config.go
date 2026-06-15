@@ -22,6 +22,7 @@ type PoolDefaults struct {
 	Namespace   string            `mapstructure:"namespace"`
 	Cluster     string            `mapstructure:"cluster"`
 	DefaultType string            `mapstructure:"default_type"`
+	Version     string            `mapstructure:"version"`
 	Types       map[string]string `mapstructure:"types"`
 }
 
@@ -52,6 +53,7 @@ const (
 	defaultPoolNamespace = "caph-system"
 	defaultPoolCluster   = "burst"
 	defaultPoolType      = "reserved"
+	defaultPoolVersion   = "v1.35.2+k3s1"
 	elasticPoolType      = "elastic"
 	reservedPoolType     = "reserved"
 	elasticPoolName      = "elastic-workers"
@@ -102,6 +104,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.Pools.DefaultType == "" {
 		cfg.Pools.DefaultType = defaultPoolType
+	}
+	if cfg.Pools.Version == "" {
+		cfg.Pools.Version = defaultPoolVersion
 	}
 	if len(cfg.Pools.Types) == 0 {
 		cfg.Pools.Types = map[string]string{

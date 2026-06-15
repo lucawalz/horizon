@@ -7,6 +7,7 @@ bedrock_path: ""
 pools:
   namespace: caph-system
   default_type: reserved
+  version: v1.35.2+k3s1
   types:
     elastic: elastic-workers
     reserved: reserved-workers

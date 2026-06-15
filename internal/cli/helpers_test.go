@@ -23,6 +23,7 @@ func testPoolDefaults() config.PoolDefaults {
 		Namespace:   "caph-system",
 		Cluster:     "burst",
 		DefaultType: "reserved",
+		Version:     "v1.35.2+k3s1",
 		Types:       map[string]string{"elastic": "elastic-workers", "reserved": "reserved-workers"},
 	}
 }

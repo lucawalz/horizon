@@ -43,6 +43,23 @@ func TestClusterCreateLiveApply(t *testing.T) {
 	}
 }
 
+func TestClusterCreateDefaultsVersionFromConfig(t *testing.T) {
+	cc := capiClient(t)
+	app := clusterTestApp(t, cc)
+	cmd := cli.NewClusterCmdForTest(app)
+	cmd.SetArgs([]string{"create", "--name", "edge", "--dry-run"})
+	cmd.PersistentFlags().Bool("dry-run", true, "")
+
+	out := captureStdout(func() {
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("cluster create dry-run: %v", err)
+		}
+	})
+	if !strings.Contains(out, app.Config.Pools.Version) {
+		t.Errorf("rendered cluster should use config pool version %q:\n%s", app.Config.Pools.Version, out)
+	}
+}
+
 func TestClusterCreateDryRunWritesNothing(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(t, cc)

@@ -15,7 +15,6 @@ const (
 	defaultInfraKind        = "HCloudMachineTemplate"
 	defaultClusterInfraKind = "HetznerCluster"
 	defaultBootstrapKind    = "KThreesConfigTemplate"
-	defaultClusterVersion   = "v1.31.0+k3s1"
 	defaultPodCIDR          = "10.42.0.0/16"
 	defaultServiceCIDR      = "10.43.0.0/16"
 )
@@ -45,7 +44,7 @@ func newClusterCreateCmd(app *App) *cobra.Command {
 	}
 	cmd.Flags().String("name", "", "Cluster name (required)")
 	cmd.Flags().String("namespace", "", "Cluster namespace (default from config pools)")
-	cmd.Flags().String("version", defaultClusterVersion, "Kubernetes version")
+	cmd.Flags().String("version", "", "Kubernetes version (default from config pools)")
 	cmd.Flags().String("pod-cidr", defaultPodCIDR, "Pod network CIDR")
 	cmd.Flags().String("service-cidr", defaultServiceCIDR, "Service network CIDR")
 	cmd.Flags().Int32("replicas", 1, "Replica count for the control plane and worker pool")
@@ -100,6 +99,9 @@ func clusterSpecFromFlags(cmd *cobra.Command, app *App) (capi.ClusterSpec, error
 		namespace = app.Config.Pools.Namespace
 	}
 	version, _ := cmd.Flags().GetString("version")
+	if version == "" {
+		version = app.Config.Pools.Version
+	}
 	if version == "" {
 		return capi.ClusterSpec{}, fmt.Errorf("cluster create: --version is required")
 	}
