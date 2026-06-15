@@ -1,29 +1,18 @@
-provider: hetzner
-infra_path: ""
 kubeconfig: ""
 
+cluster: burst
+
+bedrock_path: ""
+
+pools:
+  namespace: caph-system
+  cluster: burst
+  name: burst-workers
+
+# display-only; the in-cluster autoscaler owns scaling decisions
 thresholds:
   burst: 0.80
   scale_down: 0.30
   window: 5
   cooldown_minutes: 10
-
-hetzner:
-  api_token_env: HCLOUD_TOKEN
-  server_type: cpx22
-  location: hel1
-
-wireguard:
-  hub_host: "10.20.0.1"
-  hub_user: "root"
-  hub_public_key: ""
-  interface: "wg0"
-  listen_port: 51820
-  subnet: "10.100.0.0/24"
-  master_ip: "10.20.0.10"
-
-k3s:
-  url: "https://10.20.0.10:6443"
-  url_env: HORIZON_K3S_URL
-  token_env: HORIZON_K3S_TOKEN
-  ssh_public_key_env: HORIZON_SSH_PUBLIC_KEY
+  max_burst_nodes: 3
