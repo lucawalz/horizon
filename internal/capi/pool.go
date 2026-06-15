@@ -12,6 +12,7 @@ import (
 
 const (
 	poolNameLabel    = "horizon.dev/pool-name"
+	poolTypeLabel    = "horizon.dev/pool-type"
 	managedByLabel   = "horizon.dev/managed-by"
 	managedByValue   = "horizon"
 	clusterNameLabel = clusterv1.ClusterNameLabel
@@ -25,12 +26,20 @@ type TemplateRef struct {
 
 type PoolSpec struct {
 	Name           string
+	Type           string
 	Namespace      string
 	ClusterName    string
 	Replicas       int32
 	Version        string
 	Infrastructure TemplateRef
 	Bootstrap      TemplateRef
+}
+
+func PoolType(md *clusterv1.MachineDeployment) string {
+	if md == nil {
+		return ""
+	}
+	return md.Labels[poolTypeLabel]
 }
 
 func (r TemplateRef) objectReference() clusterv1.ContractVersionedObjectReference {
@@ -46,6 +55,9 @@ func BuildMachineDeployment(spec PoolSpec) *clusterv1.MachineDeployment {
 		poolNameLabel:    spec.Name,
 		managedByLabel:   managedByValue,
 		clusterNameLabel: spec.ClusterName,
+	}
+	if spec.Type != "" {
+		labels[poolTypeLabel] = spec.Type
 	}
 	replicas := spec.Replicas
 	version := spec.Version
