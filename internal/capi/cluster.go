@@ -19,6 +19,18 @@ func (c *Client) GetCluster(ctx context.Context, namespace, name string) (*clust
 	return cluster, nil
 }
 
+func (c *Client) ListClusters(ctx context.Context, namespace string) ([]clusterv1.Cluster, error) {
+	list := &clusterv1.ClusterList{}
+	opts := []client.ListOption{
+		client.InNamespace(namespace),
+		client.MatchingLabels{managedByLabel: managedByValue},
+	}
+	if err := c.crClient().List(ctx, list, opts...); err != nil {
+		return nil, fmt.Errorf("capi: list clusters in %q: %w", namespace, err)
+	}
+	return list.Items, nil
+}
+
 func (c *Client) DeleteCluster(ctx context.Context, namespace, name string) error {
 	cluster := &clusterv1.Cluster{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},

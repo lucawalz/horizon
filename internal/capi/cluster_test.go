@@ -97,6 +97,26 @@ func TestApplyClusterManaged(t *testing.T) {
 	}
 }
 
+func TestListClusters(t *testing.T) {
+	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
+	c := capi.NewClientWithCRClient(cl)
+	spec := testClusterSpec(capi.Managed)
+	if err := c.ApplyCluster(context.Background(), spec); err != nil {
+		t.Fatalf("ApplyCluster: %v", err)
+	}
+
+	clusters, err := c.ListClusters(context.Background(), spec.Namespace)
+	if err != nil {
+		t.Fatalf("ListClusters: %v", err)
+	}
+	if len(clusters) != 1 {
+		t.Fatalf("ListClusters returned %d clusters, want 1", len(clusters))
+	}
+	if clusters[0].Name != spec.ClusterName {
+		t.Errorf("cluster name = %q, want %q", clusters[0].Name, spec.ClusterName)
+	}
+}
+
 func TestDeleteCluster(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
 	c := capi.NewClientWithCRClient(cl)

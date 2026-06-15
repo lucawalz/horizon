@@ -56,6 +56,7 @@ func init() {
 	rootCmd.AddCommand(newDrainCmd(app))
 	rootCmd.AddCommand(newBackupCmd(app))
 	rootCmd.AddCommand(newRestoreCmd(app))
+	rootCmd.AddCommand(newClusterCmd(app))
 }
 
 func Execute() {
