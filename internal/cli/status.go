@@ -4,28 +4,21 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
-	"net"
 	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/lucawalz/horizon/internal/prometheus"
-	"github.com/prometheus/common/model"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 const (
-	cpuQuery     = `1 - avg by (instance)(rate(node_cpu_seconds_total{mode="idle"}[5m]))`
-	memQuery     = `1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)`
-	pendingQuery = `count(kube_pod_status_phase{phase="Pending"}==1) or vector(0)`
-
 	autoscalerStatusNamespace = "kube-system"
 	autoscalerStatusConfigMap = "cluster-autoscaler-status"
 	autoscalerStatusKey       = "status"
@@ -47,9 +40,11 @@ func runStatus(ctx context.Context, app *App, w io.Writer) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	cpuVec, memVec := printPressureHeader(ctx, app, w)
+	nodeUsage := fetchNodeUsage(ctx, app, w)
 
-	if err := printNodeTable(ctx, app, w, cpuVec, memVec); err != nil {
+	printPressureHeader(ctx, app, w, nodeUsage)
+
+	if err := printNodeTable(ctx, app, w, nodeUsage); err != nil {
 		fmt.Fprintf(w, "nodes: unavailable: %v\n", err)
 	}
 	fmt.Fprintln(w)
@@ -63,33 +58,68 @@ func runStatus(ctx context.Context, app *App, w io.Writer) error {
 	return nil
 }
 
-func printPressureHeader(ctx context.Context, app *App, w io.Writer) (cpuVec, memVec model.Vector) {
-	pc, err := prometheus.NewClient(app.KubeClient, app.Config.Kubeconfig)
+type nodeUtilization struct {
+	cpuPercent int
+	memPercent int
+	present    bool
+}
+
+func fetchNodeUsage(ctx context.Context, app *App, w io.Writer) map[string]*metricsv1beta1.NodeMetrics {
+	list, err := app.MetricsClient.MetricsV1beta1().NodeMetricses().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		fmt.Fprintf(w, "warning: metrics-server unavailable: %v\n", err)
+		return nil
+	}
+	usage := make(map[string]*metricsv1beta1.NodeMetrics, len(list.Items))
+	for i := range list.Items {
+		usage[list.Items[i].Name] = &list.Items[i]
+	}
+	return usage
+}
+
+func nodeUtilizationFor(node corev1.Node, usage map[string]*metricsv1beta1.NodeMetrics) nodeUtilization {
+	metrics, ok := usage[node.Name]
+	if !ok {
+		return nodeUtilization{}
+	}
+	cpuUsed := metrics.Usage.Cpu().MilliValue()
+	cpuAlloc := node.Status.Allocatable.Cpu().MilliValue()
+	memUsed := metrics.Usage.Memory().Value()
+	memAlloc := node.Status.Allocatable.Memory().Value()
+	if cpuAlloc == 0 || memAlloc == 0 {
+		return nodeUtilization{}
+	}
+	return nodeUtilization{
+		cpuPercent: int(cpuUsed * 100 / cpuAlloc),
+		memPercent: int(memUsed * 100 / memAlloc),
+		present:    true,
+	}
+}
+
+func printPressureHeader(ctx context.Context, app *App, w io.Writer, usage map[string]*metricsv1beta1.NodeMetrics) {
+	nodes, err := app.KubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		fmt.Fprintf(w, "pressure: unavailable: %v\n", err)
-		return nil, nil
-	}
-	defer pc.Close()
-
-	cpuVec, err = pc.QueryInstant(ctx, cpuQuery)
-	if err != nil {
-		fmt.Fprintf(w, "warning: cpu query failed: %v\n", err)
-	}
-	memVec, err = pc.QueryInstant(ctx, memQuery)
-	if err != nil {
-		fmt.Fprintf(w, "warning: mem query failed: %v\n", err)
-	}
-	pendingVec, err := pc.QueryInstant(ctx, pendingQuery)
-	if err != nil {
-		fmt.Fprintf(w, "warning: pending query failed: %v\n", err)
+		return
 	}
 
-	cpuScore := avgVector(cpuVec)
-	memScore := avgVector(memVec)
-	pendingCount := 0
-	if len(pendingVec) > 0 {
-		pendingCount = int(pendingVec[0].Value)
+	var cpuSum, memSum, ready int
+	for _, node := range nodes.Items {
+		if nodeStatus(node) != "Ready" {
+			continue
+		}
+		util := nodeUtilizationFor(node, usage)
+		if !util.present {
+			continue
+		}
+		cpuSum += util.cpuPercent
+		memSum += util.memPercent
+		ready++
 	}
+
+	cpuScore := clusterScore(cpuSum, ready)
+	memScore := clusterScore(memSum, ready)
+	pendingCount := pendingPodCount(ctx, app, w)
 
 	threshold := app.Config.Thresholds.Burst
 	fmt.Fprintf(w, "CPU: %.2f/%.2f %s  Mem: %.2f/%.2f %s  Pending pods: %d\n",
@@ -97,10 +127,27 @@ func printPressureHeader(ctx context.Context, app *App, w io.Writer) (cpuVec, me
 		memScore, threshold, pressureDot(memScore, threshold),
 		pendingCount,
 	)
-	return cpuVec, memVec
 }
 
-func printNodeTable(ctx context.Context, app *App, out io.Writer, cpuVec, memVec model.Vector) error {
+func clusterScore(sumPercent, count int) float64 {
+	if count == 0 {
+		return 0.0
+	}
+	return float64(sumPercent) / float64(count) / 100.0
+}
+
+func pendingPodCount(ctx context.Context, app *App, w io.Writer) int {
+	pods, err := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
+		FieldSelector: "status.phase=Pending",
+	})
+	if err != nil {
+		fmt.Fprintf(w, "warning: pending pods query failed: %v\n", err)
+		return 0
+	}
+	return len(pods.Items)
+}
+
+func printNodeTable(ctx context.Context, app *App, out io.Writer, usage map[string]*metricsv1beta1.NodeMetrics) error {
 	nodes, err := app.KubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("list nodes: %w", err)
@@ -115,6 +162,7 @@ func printNodeTable(ctx context.Context, app *App, out io.Writer, cpuVec, memVec
 		role := nodeRole(node)
 		status := nodeStatus(node)
 		ip := getNodeIPv4(node)
+		util := nodeUtilizationFor(node, usage)
 
 		pods, _ := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
 			FieldSelector: "spec.nodeName=" + node.Name,
@@ -125,9 +173,16 @@ func printNodeTable(ctx context.Context, app *App, out io.Writer, cpuVec, memVec
 		}
 
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
-			node.Name, role, nodeMetricCell(cpuVec, ip), nodeMetricCell(memVec, ip), podCount, status, ip)
+			node.Name, role, percentCell(util.cpuPercent, util.present), percentCell(util.memPercent, util.present), podCount, status, ip)
 	}
 	return nil
+}
+
+func percentCell(percent int, present bool) string {
+	if !present {
+		return "N/A"
+	}
+	return fmt.Sprintf("%d%%", percent)
 }
 
 func printPoolTable(ctx context.Context, app *App, out io.Writer) {
@@ -235,27 +290,6 @@ func valueOrDash(s string) string {
 	return s
 }
 
-func nodeMetricCell(vec model.Vector, nodeIP string) string {
-	if nodeIP == "" || nodeIP == "N/A" {
-		return "N/A"
-	}
-	for _, s := range vec {
-		host, _, err := net.SplitHostPort(string(s.Metric["instance"]))
-		if err != nil {
-			host = string(s.Metric["instance"])
-		}
-		if host != nodeIP {
-			continue
-		}
-		v := float64(s.Value)
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return "N/A"
-		}
-		return fmt.Sprintf("%d%%", int(math.Round(v*100)))
-	}
-	return "N/A"
-}
-
 func getNodeIPv4(node corev1.Node) string {
 	for _, addr := range node.Status.Addresses {
 		if addr.Type == corev1.NodeInternalIP && !strings.Contains(addr.Address, ":") {
@@ -287,17 +321,6 @@ func nodeStatus(node corev1.Node) string {
 	return "Unknown"
 }
 
-func avgVector(vec model.Vector) float64 {
-	if len(vec) == 0 {
-		return 0.0
-	}
-	var sum float64
-	for _, s := range vec {
-		sum += float64(s.Value)
-	}
-	return sum / float64(len(vec))
-}
-
 func pressureDot(score, threshold float64) string {
 	if score >= threshold {
 		return color.RedString("●")
@@ -310,8 +333,4 @@ func pressureDot(score, threshold float64) string {
 
 func RunStatusForTest(ctx context.Context, app *App, w io.Writer) error {
 	return runStatus(ctx, app, w)
-}
-
-func NodeMetricCellForTest(vec model.Vector, nodeIP string) string {
-	return nodeMetricCell(vec, nodeIP)
 }

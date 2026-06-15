@@ -9,13 +9,15 @@ import (
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
+	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
 type App struct {
-	Config     *config.Config
-	KubeClient kubernetes.Interface
-	CapiClient *capi.Client
-	Cluster    string
+	Config        *config.Config
+	KubeClient    kubernetes.Interface
+	MetricsClient metricsclient.Interface
+	CapiClient    *capi.Client
+	Cluster       string
 }
 
 var app = &App{}
@@ -44,6 +46,12 @@ var rootCmd = &cobra.Command{
 			return fmt.Errorf("k8s client: %w", err)
 		}
 		app.KubeClient = kc
+
+		mc, err := k8s.NewMetricsClient(cfg.Kubeconfig, contextName)
+		if err != nil {
+			return fmt.Errorf("metrics client: %w", err)
+		}
+		app.MetricsClient = mc
 
 		cc, err := capi.NewClientForContext(cfg.Kubeconfig, contextName)
 		if err != nil {

@@ -3,12 +3,10 @@ package cli_test
 import (
 	"bytes"
 	"context"
-	"math"
 	"strings"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/cli"
-	"github.com/prometheus/common/model"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -152,36 +150,50 @@ func TestStatusAutoscalerMissingDegrades(t *testing.T) {
 	}
 }
 
-func sampleAt(instance string, value float64) *model.Sample {
-	return &model.Sample{
-		Metric: model.Metric{"instance": model.LabelValue(instance)},
-		Value:  model.SampleValue(value),
+func TestStatusNodeMetricsFromMetricsServer(t *testing.T) {
+	known := nodeWithAllocatable("worker-1", "4", "8Gi")
+	missing := nodeWithAllocatable("master", "4", "8Gi")
+	pending := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-pod", Namespace: "default"},
+		Status:     corev1.PodStatus{Phase: corev1.PodPending},
+	}
+
+	md := mdWithStatus("caph-system", "burst-workers", "burst", 1, 1)
+
+	app := newTestApp()
+	app.KubeClient = fake.NewSimpleClientset(known, missing, pending)
+	app.MetricsClient = metricsClient(t, nodeMetrics("worker-1", "1", "2Gi"))
+	app.CapiClient = capiClient(t, md, initializedCluster("caph-system", "burst", true))
+
+	out := runStatus(t, app)
+
+	if !strings.Contains(out, "worker-1") {
+		t.Fatalf("expected worker-1 row; got:\n%s", out)
+	}
+	for _, want := range []string{"worker-1", "25%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected node usage %q; got:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "master") || !strings.Contains(out, "N/A") {
+		t.Errorf("expected N/A for node without metrics; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Pending pods: 1") {
+		t.Errorf("expected pending pod count 1; got:\n%s", out)
 	}
 }
 
-func TestNodeMetricCell(t *testing.T) {
-	vec := model.Vector{
-		sampleAt("192.168.2.191:9100", 0.14),
-		sampleAt("192.168.2.100:9100", 0.5),
-		sampleAt("192.168.2.207:9100", math.NaN()),
-	}
+func TestStatusMetricsServerUnavailableDegrades(t *testing.T) {
+	node := nodeWithAllocatable("worker-1", "4", "8Gi")
+	md := mdWithStatus("caph-system", "burst-workers", "burst", 1, 1)
 
-	cases := []struct {
-		name   string
-		nodeIP string
-		want   string
-	}{
-		{"matched", "192.168.2.191", "14%"},
-		{"matched rounds", "192.168.2.100", "50%"},
-		{"nan falls soft", "192.168.2.207", "N/A"},
-		{"no series", "192.168.2.42", "N/A"},
-		{"empty ip", "", "N/A"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := cli.NodeMetricCellForTest(vec, tc.nodeIP); got != tc.want {
-				t.Errorf("NodeMetricCell(%q) = %q; want %q", tc.nodeIP, got, tc.want)
-			}
-		})
+	app := newTestApp()
+	app.KubeClient = fake.NewSimpleClientset(node)
+	app.MetricsClient = metricsClient(t)
+	app.CapiClient = capiClient(t, md, initializedCluster("caph-system", "burst", true))
+
+	out := runStatus(t, app)
+	if !strings.Contains(out, "worker-1") || !strings.Contains(out, "N/A") {
+		t.Errorf("expected node row with N/A when metrics empty; got:\n%s", out)
 	}
 }
