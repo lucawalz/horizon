@@ -28,7 +28,6 @@ type Config struct {
 	Kubeconfig     string          `mapstructure:"kubeconfig"`
 	Thresholds     ThresholdConfig `mapstructure:"thresholds"`
 	Pools          PoolDefaults    `mapstructure:"pools"`
-	PushgatewayURL string          `mapstructure:"pushgateway_url"`
 }
 
 const (

@@ -98,26 +98,6 @@ thresholds:
 	}
 }
 
-func TestPushgatewayURL(t *testing.T) {
-	dir := t.TempDir()
-	content := `
-bedrock_path: ` + dir + `
-pushgateway_url: http://kube-prometheus-stack-pushgateway.monitoring.svc:9091
-`
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-	if cfg.PushgatewayURL != "http://kube-prometheus-stack-pushgateway.monitoring.svc:9091" {
-		t.Errorf("PushgatewayURL: got %q, want %q", cfg.PushgatewayURL, "http://kube-prometheus-stack-pushgateway.monitoring.svc:9091")
-	}
-}
-
 func TestPoolDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := `
