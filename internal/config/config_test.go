@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/config"
@@ -12,7 +13,7 @@ func TestLoad(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
-infra_path: ` + dir + `
+bedrock_path: ` + dir + `
 kubeconfig: ~/.kube/config
 thresholds:
   burst: 0.80
@@ -58,11 +59,11 @@ aws:
 	}
 }
 
-func TestInfraPath(t *testing.T) {
+func TestBedrockPath(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
-infra_path: ` + dir + `
+bedrock_path: ` + dir + `
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -73,8 +74,8 @@ infra_path: ` + dir + `
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if !filepath.IsAbs(cfg.InfraPath) {
-		t.Errorf("InfraPath not absolute: %q", cfg.InfraPath)
+	if !filepath.IsAbs(cfg.BedrockPath) {
+		t.Errorf("BedrockPath not absolute: %q", cfg.BedrockPath)
 	}
 }
 
@@ -110,7 +111,7 @@ func TestWireGuardConfig(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
-infra_path: ` + dir + `
+bedrock_path: ` + dir + `
 wireguard:
   hub_host: 10.20.0.1
   hub_user: root
@@ -150,7 +151,7 @@ func TestWireGuardConfigDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
-infra_path: ` + dir + `
+bedrock_path: ` + dir + `
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -176,7 +177,7 @@ func TestThresholdsMaxBurstNodes(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
-infra_path: ` + dir + `
+bedrock_path: ` + dir + `
 thresholds:
   burst: 0.80
   scale_down: 0.40
@@ -202,7 +203,7 @@ func TestPushgatewayURL(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
-infra_path: ` + dir + `
+bedrock_path: ` + dir + `
 pushgateway_url: http://kube-prometheus-stack-pushgateway.monitoring.svc:9091
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
@@ -223,7 +224,7 @@ func TestK3sConfig(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 provider: hetzner
-infra_path: ` + dir + `
+bedrock_path: ` + dir + `
 k3s:
   url: "https://10.147.20.1:6443"
   token: tok
@@ -246,5 +247,86 @@ k3s:
 	}
 	if cfg.K3s.URLEnv != "HORIZON_K3S_URL" {
 		t.Errorf("K3s.URLEnv: got %q, want %q", cfg.K3s.URLEnv, "HORIZON_K3S_URL")
+	}
+}
+
+func TestPoolDefaults(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Pools.Namespace != "caph-system" {
+		t.Errorf("Pools.Namespace: got %q, want caph-system", cfg.Pools.Namespace)
+	}
+	if cfg.Pools.Cluster != "burst" {
+		t.Errorf("Pools.Cluster: got %q, want burst", cfg.Pools.Cluster)
+	}
+	if cfg.Pools.Name != "burst-workers" {
+		t.Errorf("Pools.Name: got %q, want burst-workers", cfg.Pools.Name)
+	}
+	if cfg.Cluster != "burst" {
+		t.Errorf("Cluster: got %q, want burst", cfg.Cluster)
+	}
+}
+
+func TestPoolOverrides(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+cluster: prod
+pools:
+  namespace: capi-system
+  cluster: edge
+  name: edge-workers
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Pools.Namespace != "capi-system" {
+		t.Errorf("Pools.Namespace: got %q, want capi-system", cfg.Pools.Namespace)
+	}
+	if cfg.Pools.Cluster != "edge" {
+		t.Errorf("Pools.Cluster: got %q, want edge", cfg.Pools.Cluster)
+	}
+	if cfg.Pools.Name != "edge-workers" {
+		t.Errorf("Pools.Name: got %q, want edge-workers", cfg.Pools.Name)
+	}
+	if cfg.Cluster != "prod" {
+		t.Errorf("Cluster: got %q, want prod", cfg.Cluster)
+	}
+}
+
+func TestLegacyInfraPathWithoutBedrockFailsFast(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+provider: hetzner
+infra_path: ` + dir + `
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error when infra_path is set without bedrock_path, got nil")
+	}
+	if !strings.Contains(err.Error(), "bedrock_path") {
+		t.Errorf("error %q must mention bedrock_path", err.Error())
 	}
 }

@@ -53,17 +53,32 @@ func Resolve(envName, inline string) string {
 	return os.Getenv(envName)
 }
 
+type PoolDefaults struct {
+	Namespace string `mapstructure:"namespace"`
+	Cluster   string `mapstructure:"cluster"`
+	Name      string `mapstructure:"name"`
+}
+
 type Config struct {
 	Provider       string          `mapstructure:"provider"`
 	InfraPath      string          `mapstructure:"infra_path"`
+	BedrockPath    string          `mapstructure:"bedrock_path"`
+	Cluster        string          `mapstructure:"cluster"`
 	Kubeconfig     string          `mapstructure:"kubeconfig"`
 	Thresholds     ThresholdConfig `mapstructure:"thresholds"`
 	Hetzner        HetznerConfig   `mapstructure:"hetzner"`
 	WireGuard      WireGuardConfig `mapstructure:"wireguard"`
 	K3s            K3sConfig       `mapstructure:"k3s"`
 	AWS            AWSConfig       `mapstructure:"aws"`
+	Pools          PoolDefaults    `mapstructure:"pools"`
 	PushgatewayURL string          `mapstructure:"pushgateway_url"`
 }
+
+const (
+	defaultPoolNamespace = "caph-system"
+	defaultPoolCluster   = "burst"
+	defaultPoolName      = "burst-workers"
+)
 
 func Load() (*Config, error) {
 	v := viper.New()
@@ -95,6 +110,35 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("infra_path %q: %w", abs, err)
 		}
 		cfg.InfraPath = abs
+	}
+
+	cfg.BedrockPath = os.ExpandEnv(cfg.BedrockPath)
+	if cfg.BedrockPath != "" {
+		abs, err := filepath.Abs(cfg.BedrockPath)
+		if err != nil {
+			return nil, fmt.Errorf("bedrock_path: %w", err)
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return nil, fmt.Errorf("bedrock_path %q: %w", abs, err)
+		}
+		cfg.BedrockPath = abs
+	}
+
+	if cfg.InfraPath != "" && cfg.BedrockPath == "" {
+		return nil, fmt.Errorf("infra_path is retired; set bedrock_path")
+	}
+
+	if cfg.Pools.Namespace == "" {
+		cfg.Pools.Namespace = defaultPoolNamespace
+	}
+	if cfg.Pools.Cluster == "" {
+		cfg.Pools.Cluster = defaultPoolCluster
+	}
+	if cfg.Pools.Name == "" {
+		cfg.Pools.Name = defaultPoolName
+	}
+	if cfg.Cluster == "" {
+		cfg.Cluster = cfg.Pools.Cluster
 	}
 
 	return &cfg, nil
