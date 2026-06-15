@@ -1,10 +1,10 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"os"
 
+	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/spf13/cobra"
@@ -14,6 +14,8 @@ import (
 type App struct {
 	Config     *config.Config
 	KubeClient kubernetes.Interface
+	CapiClient *capi.Client
+	Cluster    string
 }
 
 var app = &App{}
@@ -34,16 +36,12 @@ var rootCmd = &cobra.Command{
 		}
 		app.KubeClient = kc
 
-		if destructiveCmds[cmd.Name()] {
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
-			if err := RunPreFlight(ctx, app.Config, app.KubeClient, dryRun); err != nil {
-				return err
-			}
+		cc, err := capi.NewClient(cfg.Kubeconfig)
+		if err != nil {
+			return fmt.Errorf("capi client: %w", err)
 		}
+		app.CapiClient = cc
+		app.Cluster = cfg.Cluster
 
 		return nil
 	},
@@ -56,7 +54,6 @@ func init() {
 	rootCmd.AddCommand(newUpCmd(app))
 	rootCmd.AddCommand(newDownCmd(app))
 	rootCmd.AddCommand(newDrainCmd(app))
-	rootCmd.AddCommand(newWatchCmd(app))
 	rootCmd.AddCommand(newBackupCmd(app))
 	rootCmd.AddCommand(newRestoreCmd(app))
 }
