@@ -4,52 +4,49 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 
-A homelab burst orchestrator: it watches a K3s cluster for resource pressure and temporarily extends it onto cloud VMs.
+A Cluster-API operator CLI: it adds on-demand capacity to a homelab cluster by scaling node pools and standing up clusters.
 
 ## Description
 
-horizon is a command-line controller that gives a small Kubernetes cluster elastic headroom. It watches the cluster for CPU and memory pressure and, when a workload needs more room than the local nodes can provide, provisions a temporary node on Hetzner Cloud, joins it to the cluster over a self-hosted WireGuard overlay, moves the workload onto it, and tears the node down once pressure subsides.
+horizon is a thin command-line operator over Cluster API. It gives a small Kubernetes cluster elastic headroom without owning any cloud provisioning itself. When a workload needs more room than the local nodes provide, horizon scales an existing worker pool so new nodes join the cluster, and it can migrate a workload onto those nodes and tear the pool back down afterward. It can also stand up a separate, fully managed cluster on demand.
 
-The infrastructure side, the Terraform module and NixOS image for the burst node, lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository. horizon drives that module through its `infra_path` setting and does not own the cloud definitions itself.
+The substrate horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for infrastructure and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity and an in-cluster cluster-autoscaler for scale-on-demand. horizon reads and writes Cluster API objects through a kubeconfig context and leaves the definition of infrastructure to bedrock.
 
-### Features
+### Two modes
 
-- Pressure-driven autoscaling with a sliding window and hysteresis, so a brief spike does not trigger a burst.
-- A `watch` daemon that scales out and back in on its own, plus manual commands for one-off bursts.
-- Workload migration: a Velero backup, node affinity rewritten onto the burst node, and pods evicted so they reschedule there.
-- A burst-phase state machine recorded in-cluster, so an interrupted run can be inspected and rolled back.
-- A pluggable provider interface, with Hetzner Cloud as the implemented backend.
+horizon drives capacity through one pool engine over MachineDeployments, in two modes selected by the target.
+
+- On-demand nodes (`up`, `down`, `burst`): scale an existing worker MachineDeployment whose machines join the existing home cluster. That cluster's control plane is externally managed, so Cluster API never marks it initialized on its own. A one-time nudge latches that status so workers bootstrap.
+- On-demand clusters (`cluster create`, `delete`, `list`): create a separate CAPI-managed cluster with its own KThreesControlPlane, which auto-imports to Rancher. No nudge applies.
 
 ### Background
 
-horizon exists so a three-node home cluster can absorb occasional heavy jobs without running extra hardware year-round. It is the active half of a pair: bedrock declares the permanent cluster, and horizon adds and removes temporary capacity on top of it.
+horizon exists so a three-node home cluster can absorb occasional heavy jobs without running extra hardware year-round. bedrock declares the permanent cluster and the CAPI substrate; horizon adds and removes temporary capacity on top of it.
 
 ## Architecture
 
-The watch loop polls Prometheus for cluster pressure. When the score stays above the burst threshold across several consecutive samples, horizon runs a burst: it backs up the target namespace with Velero, applies the bedrock Terraform module to create a Hetzner VM, registers that VM as a WireGuard peer on the home hub, waits for it to register as a K3s node, and migrates the workload onto it. When pressure falls below the scale-down threshold, it drains and destroys the node.
+The in-cluster cluster-autoscaler watches for pending pods and scales the autoscaler-managed pools on its own, so routine scale-out needs no laptop. horizon adds explicit control on top: it scales a worker pool up or down, runs a guided burst, and manages on-demand clusters. A burst takes a Velero backup of the target namespace, scales the worker pool up, waits for the new machines to become ready, rewrites workload node affinity onto the pool, and waits for the workload to land on the new nodes.
 
-The WireGuard hub runs on the home Pi router and dials out to each burst node's public Hetzner address, so the home network needs no inbound port forward. horizon registers each peer on the hub over SSH.
+Nodes are labeled `horizon.dev/pool=<value>` at join time by bedrock's KThreesConfigTemplate. horizon never labels nodes itself; it rewrites workload affinity to target that label. Durable pools and clusters can be rendered into the bedrock git tree for Flux to reconcile. horizon writes the tree but never commits or pushes it.
 
 ```mermaid
 flowchart LR
-  prom[(Prometheus)] --> watch[watch daemon]
-  watch -->|pressure high| burst[burst]
-  burst --> tf[Terraform module in bedrock]
-  tf --> vm[Hetzner VM]
-  burst -->|register peer over SSH| hub[WireGuard hub on the home router]
-  vm -. WireGuard + K3s agent .-> hub
-  hub --- cluster[(K3s cluster)]
-  burst -->|migrate workload| cluster
-  watch -->|pressure low| down[down]
-  down --> cluster
+  pods[(Pending pods)] --> autoscaler[cluster-autoscaler]
+  autoscaler --> md[Worker MachineDeployment]
+  horizon[horizon CLI] -->|up / down / burst| md
+  horizon -->|cluster create| capi[CAPI-managed cluster]
+  md --> caph[CAPH on Hetzner]
+  capi --> caph
+  caph -. Tailscale + k3s agent .-> cluster[(Home cluster)]
+  horizon -->|migrate workload| cluster
 ```
 
 ## Requirements
 
 - Go 1.26 or newer to build.
-- A reachable Kubernetes/K3s cluster running kube-prometheus-stack (Prometheus and Pushgateway) and Velero.
-- The Terraform CLI (1.9 or newer) and a local checkout of the bedrock repository.
-- A Hetzner Cloud project with its API token available as an environment variable, and a self-hosted WireGuard hub on the home router with SSH access for peer registration.
+- A reachable Kubernetes cluster with the CAPI substrate from bedrock installed: CAPH, cluster-api-k3s, and Rancher Turtles.
+- A kubeconfig with a context that reaches the management cluster, over Tailscale in the homelab setup.
+- Velero in the cluster for backups, and kube-prometheus-stack for the read-only pressure header in `status`.
 
 ## Installation
 
@@ -65,82 +62,100 @@ go install github.com/lucawalz/horizon/cmd/horizon@latest
 
 ## Usage
 
-Configuration is read from `$HORIZON_CONFIG_DIR/config.yaml`, or `~/.config/horizon/config.yaml` by default. Every command accepts `--dry-run` to print the planned actions without making changes.
+Configuration is read from `$HORIZON_CONFIG_DIR/config.yaml`, or `~/.config/horizon/config.yaml` by default. The persistent `--context` flag selects the kubeconfig context, `--cluster` selects the target CAPI cluster, and `--dry-run` prints planned actions without making changes.
 
-Show cluster pressure and the current burst phase:
+Show cluster pressure, pools, machines, the nudge state, and autoscaler activity:
 
 ```
 $ horizon status
-CPU: 0.08/0.80 ●  Mem: 0.16/0.80 ●  Pending: 0
-BurstPhase: Idle
+CPU: 0.08/0.80 ●  Mem: 0.16/0.80 ●  Pending pods: 0
 
 NAME       ROLE     CPU%   MEM%   PODS   STATUS   IP
 master     master   13%    17%    26     Ready    10.20.0.10
 worker-1   worker   6%     8%     16     Ready    10.20.0.11
 worker-2   worker   4%     23%    27     Ready    10.20.0.12
+
+POOL           DESIRED   READY   MACHINE   PHASE   NODE   PROVIDER-ID
+burst-workers  0         0       -         -       -      -
+
+control-plane: initialized
+autoscaler: Health: Healthy
 ```
 
-Run the autoscaler in the foreground:
+Scale the worker pool up to add nodes. When the externally-managed control plane is not yet marked initialized, rerun with `--nudge` to latch it:
 
 ```
-horizon watch --workload <namespace>
+horizon up --nudge
 ```
 
-Provision a burst node without moving a workload:
+Scale the worker pool back to zero, or remove it entirely:
 
 ```
-horizon up
+horizon down
+horizon down --delete
 ```
 
-Burst a specific namespace onto a new node:
+Burst a namespace onto the pool, backing up, scaling, waiting, and migrating the workload:
 
 ```
 horizon burst --workload <namespace>
 ```
 
-Tear a burst node down and remove it from the cluster:
+Create, list, and delete on-demand CAPI-managed clusters:
 
 ```
-horizon down
+horizon cluster create --name <name>
+horizon cluster list
+horizon cluster delete --name <name>
 ```
 
-Cordon a node and evict its pods, honoring disruption budgets:
+Render manifests instead of applying live, for GitOps durability:
 
 ```
+horizon cluster create --name <name> --dry-run   # print to stdout
+horizon cluster create --name <name> --write      # write into the bedrock tree
+```
+
+Manage Velero backups and restores, and drain a node:
+
+```
+horizon backup create --include-namespaces <namespace> --wait
+horizon restore create --from-backup <backup>
 horizon drain <node>
 ```
 
 ## Configuration
 
-The config file sets the provider, the path to the bedrock Terraform module, the scaling thresholds, and the provider and overlay settings. Secrets are read from environment variables rather than committed: `HCLOUD_TOKEN` and the K3s join values. A template is in [`config.example.yaml`](config.example.yaml).
+The config file sets the kubeconfig, the bedrock checkout used for GitOps writes, the default pool target, and the display thresholds. A template is in [`config.example.yaml`](config.example.yaml).
 
 Key fields:
 
-- `infra_path`: path to the bedrock `terraform/hetzner` module that horizon applies.
-- `thresholds`: the `burst` and `scale_down` scores, the sliding `window` size, `cooldown_minutes`, and `max_burst_nodes`.
-- `hetzner`: `server_type` and `location` for the burst VM.
-- `wireguard`: `hub_host`, `hub_user`, and `hub_public_key` for the home hub, plus the `interface`, `listen_port`, `subnet`, and the master's `master_ip` on the DMZ.
-- `k3s`: `url`, the master's API endpoint on the DMZ, plus the join token supplied from the environment.
+- `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
+- `cluster`: default CAPI cluster name; falls back to the pool cluster when unset.
+- `bedrock_path`: path to the bedrock git work tree, required only for `--write` GitOps renders. It is resolved to an absolute path and must exist.
+- `pools`: the default `namespace` (`caph-system`), `cluster` (`burst`), and `name` (`burst-workers`) for the worker MachineDeployment.
+- `thresholds`: the `burst` and `scale_down` scores and the `window` size, retained only for the read-only pressure header in `status`. They no longer drive any scaling decision.
+
+The retired `infra_path` field is rejected at load time; set `bedrock_path` instead.
 
 ## How it works
 
-- Pressure is the higher of cluster CPU and memory utilization, plus a margin when pods are pending, capped at 1.0.
-- The watch daemon keeps a sliding window of samples and requires several consecutive readings over the threshold before bursting, with a cooldown after scaling back in.
-- Burst progress is recorded in the `horizon-state` ConfigMap in `kube-system` as a phase (Idle, BackingUp, Provisioning, Joining, Migrating, Running, TearingDown). Per-node state files live under `~/.local/state/horizon/`.
+- Routine scale-out is the cluster-autoscaler's job. horizon scales pools it owns directly and deliberately leaves the autoscaler min and max annotations off those pools, so the two scaling paths do not fight.
+- A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the pool to its prior replica count.
+- The control-plane nudge is a status-subresource write, the one deliberate exception to GitOps durability. It cannot live in git and resets if the Cluster is recreated, so `status` warns when it is unset.
+- Workload placement is a contract: bedrock's KThreesConfigTemplate labels nodes `horizon.dev/pool=<value>` at join, and horizon rewrites workload affinity to match.
 
 ## Repository layout
 
 ```
-cmd/horizon/          main entry point
-internal/cli/         cobra commands (status, up, down, burst, drain, watch)
-internal/config/      configuration loading and schema
-internal/provider/    provider interface and the Hetzner implementation
-internal/k8s/         cluster client, drain, workload migration, phase state
-internal/wireguard/   WireGuard keypairs and hub peer registration
+cmd/horizon/        main entry point
+internal/cli/       cobra commands (status, up, down, burst, cluster, backup, restore, drain)
+internal/config/    configuration loading and schema
+internal/capi/      Cluster API client, pool and cluster operations, manifest rendering, git writes, nudge
+internal/k8s/       cluster client, drain, workload migration
 internal/prometheus/  pressure queries over a port-forward
-internal/velero/      pre-burst backups
-internal/runner/      sequential step runner with rollback
-docs/adr/             architecture decision records
+internal/velero/    backups and restores
+docs/adr/           architecture decision records
 ```
 
 ## Contributing
@@ -153,7 +168,7 @@ Open an issue on the [GitHub repository](https://github.com/lucawalz/horizon/iss
 
 ## Authors and acknowledgment
 
-Built and maintained by Luca Walz. It builds on cobra, viper, terraform-exec, client-go, controller-runtime, Velero, and the Prometheus client libraries.
+Built and maintained by Luca Walz. It builds on cobra, viper, controller-runtime, client-go, the Cluster API libraries, Velero, and the Prometheus client libraries.
 
 ## License
 
