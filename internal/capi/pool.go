@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -34,11 +33,11 @@ type PoolSpec struct {
 	Bootstrap      TemplateRef
 }
 
-func (r TemplateRef) objectReference() corev1.ObjectReference {
-	return corev1.ObjectReference{
-		APIVersion: r.APIGroup,
-		Kind:       r.Kind,
-		Name:       r.Name,
+func (r TemplateRef) objectReference() clusterv1.ContractVersionedObjectReference {
+	return clusterv1.ContractVersionedObjectReference{
+		APIGroup: r.APIGroup,
+		Kind:     r.Kind,
+		Name:     r.Name,
 	}
 }
 
@@ -79,9 +78,9 @@ func BuildMachineDeployment(spec PoolSpec) *clusterv1.MachineDeployment {
 				},
 				Spec: clusterv1.MachineSpec{
 					ClusterName: spec.ClusterName,
-					Version:     &version,
+					Version:     version,
 					Bootstrap: clusterv1.Bootstrap{
-						ConfigRef: &bootstrapRef,
+						ConfigRef: bootstrapRef,
 					},
 					InfrastructureRef: spec.Infrastructure.objectReference(),
 				},
