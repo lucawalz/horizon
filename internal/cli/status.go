@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -50,6 +51,9 @@ func runStatus(ctx context.Context, app *App, w io.Writer) error {
 	fmt.Fprintln(w)
 
 	printPoolTable(ctx, app, w)
+	fmt.Fprintln(w)
+
+	printClusterTable(ctx, app, w)
 	fmt.Fprintln(w)
 
 	printNudgeLine(ctx, app, w)
@@ -199,26 +203,28 @@ func printPoolTable(ctx context.Context, app *App, out io.Writer) {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	defer w.Flush()
 
-	fmt.Fprintln(w, "POOL\tDESIRED\tREADY\tMACHINE\tPHASE\tNODE\tPROVIDER-ID")
+	fmt.Fprintln(w, "POOL\tTYPE\tDESIRED\tREADY\tMACHINE\tPHASE\tNODE\tPROVIDER-ID")
 
-	for _, pool := range pools {
+	for i := range pools {
+		pool := pools[i]
+		poolType := valueOrDash(capi.PoolType(&pool))
 		desired := replicaCell(pool.Spec.Replicas)
 		ready := replicaCell(pool.Status.ReadyReplicas)
 
 		machines, err := app.CapiClient.ListMachines(ctx, app.Config.Pools.Namespace, pool.Name)
 		if err != nil {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				pool.Name, desired, ready, "error", err.Error(), emptyCell, emptyCell)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				pool.Name, poolType, desired, ready, "error", err.Error(), emptyCell, emptyCell)
 			continue
 		}
 		if len(machines) == 0 {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				pool.Name, desired, ready, emptyCell, emptyCell, emptyCell, emptyCell)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				pool.Name, poolType, desired, ready, emptyCell, emptyCell, emptyCell, emptyCell)
 			continue
 		}
 		for _, m := range machines {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				pool.Name, desired, ready,
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				pool.Name, poolType, desired, ready,
 				m.Name, valueOrDash(m.Status.Phase),
 				valueOrDash(m.Status.NodeRef.Name), valueOrDash(m.Spec.ProviderID))
 		}
@@ -230,6 +236,28 @@ func listPoolsForStatus(ctx context.Context, app *App) ([]clusterv1.MachineDeplo
 		return app.CapiClient.ListPools(ctx, app.Config.Pools.Namespace)
 	}
 	return app.CapiClient.ListPoolsForCluster(ctx, app.Config.Pools.Namespace, app.Cluster)
+}
+
+func printClusterTable(ctx context.Context, app *App, out io.Writer) {
+	clusters, err := app.CapiClient.ListClusters(ctx, app.Config.Pools.Namespace)
+	if err != nil {
+		fmt.Fprintf(out, "clusters: unavailable: %v\n", err)
+		return
+	}
+	fmt.Fprintln(out, "Clusters")
+	if len(clusters) == 0 {
+		fmt.Fprintln(out, "(no managed clusters)")
+		return
+	}
+
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	defer w.Flush()
+	fmt.Fprintln(w, "NAME\tPHASE\tCP-INITIALIZED")
+	for i := range clusters {
+		c := &clusters[i]
+		fmt.Fprintf(w, "%s\t%s\t%s\n",
+			c.Name, valueOrDash(c.Status.Phase), boolOrDash(c.Status.Initialization.ControlPlaneInitialized))
+	}
 }
 
 func printNudgeLine(ctx context.Context, app *App, w io.Writer) {

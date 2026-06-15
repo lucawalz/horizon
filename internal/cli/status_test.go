@@ -28,13 +28,33 @@ func machineFor(namespace, pool, name, phase, node, providerID string) *clusterv
 }
 
 func mdWithStatus(namespace, name, cluster string, desired, ready int32) *clusterv1.MachineDeployment {
+	return mdWithType(namespace, name, cluster, "", desired, ready)
+}
+
+func mdWithType(namespace, name, cluster, poolType string, desired, ready int32) *clusterv1.MachineDeployment {
 	md := machineDeployment(namespace, name, cluster, desired)
 	md.Labels = map[string]string{
 		"horizon.dev/managed-by":   "horizon",
 		clusterv1.ClusterNameLabel: cluster,
 	}
+	if poolType != "" {
+		md.Labels["horizon.dev/pool-type"] = poolType
+	}
 	md.Status.ReadyReplicas = &ready
 	return md
+}
+
+func managedCluster(namespace, name, phase string, initialized bool) *clusterv1.Cluster {
+	c := &clusterv1.Cluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+			Labels:    map[string]string{"horizon.dev/managed-by": "horizon"},
+		},
+	}
+	c.Status.Phase = phase
+	c.Status.Initialization.ControlPlaneInitialized = &initialized
+	return c
 }
 
 func runStatus(t *testing.T, app *cli.App) string {
@@ -47,20 +67,22 @@ func runStatus(t *testing.T, app *cli.App) string {
 }
 
 func TestStatusPoolTable(t *testing.T) {
-	md := mdWithStatus("caph-system", "burst-workers", "burst", 2, 1)
-	running := machineFor("caph-system", "burst-workers", "m-running", "Running", "node-a", "hcloud://123")
-	provisioning := machineFor("caph-system", "burst-workers", "m-provisioning", "Provisioning", "", "")
+	reserved := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 2, 1)
+	elastic := mdWithType("caph-system", "elastic-workers", "burst", "elastic", 0, 0)
+	running := machineFor("caph-system", "reserved-workers", "m-running", "Running", "node-a", "hcloud://123")
+	provisioning := machineFor("caph-system", "reserved-workers", "m-provisioning", "Provisioning", "", "")
 
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = capiClient(t, md, running, provisioning,
+	app.CapiClient = capiClient(t, reserved, elastic, running, provisioning,
 		initializedCluster("caph-system", "burst", true))
 
 	out := runStatus(t, app)
 
 	for _, want := range []string{
-		"POOL", "DESIRED", "READY", "PROVIDER-ID",
-		"burst-workers", "m-running", "Running", "node-a", "hcloud://123",
+		"POOL", "TYPE", "DESIRED", "READY", "PROVIDER-ID",
+		"reserved-workers", "reserved", "elastic-workers", "elastic",
+		"m-running", "Running", "node-a", "hcloud://123",
 		"m-provisioning", "Provisioning",
 	} {
 		if !strings.Contains(out, want) {
@@ -69,6 +91,23 @@ func TestStatusPoolTable(t *testing.T) {
 	}
 	if !strings.Contains(out, "\t2\t") && !strings.Contains(out, "2") {
 		t.Errorf("expected desired replicas; got:\n%s", out)
+	}
+}
+
+func TestStatusClustersSection(t *testing.T) {
+	md := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 1, 1)
+
+	app := newTestApp()
+	app.KubeClient = fake.NewSimpleClientset()
+	app.CapiClient = capiClient(t, md,
+		initializedCluster("caph-system", "burst", true),
+		managedCluster("caph-system", "edge", "Provisioned", true))
+
+	out := runStatus(t, app)
+	for _, want := range []string{"Clusters", "CP-INITIALIZED", "edge", "Provisioned"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected clusters section to contain %q; got:\n%s", want, out)
+		}
 	}
 }
 
