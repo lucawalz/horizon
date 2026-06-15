@@ -99,10 +99,18 @@ func (c *Client) GetPool(ctx context.Context, namespace, name string) (*clusterv
 }
 
 func (c *Client) ListPools(ctx context.Context, namespace string) ([]clusterv1.MachineDeployment, error) {
+	return c.ListPoolsForCluster(ctx, namespace, "")
+}
+
+func (c *Client) ListPoolsForCluster(ctx context.Context, namespace, clusterName string) ([]clusterv1.MachineDeployment, error) {
+	labels := client.MatchingLabels{managedByLabel: managedByValue}
+	if clusterName != "" {
+		labels[clusterNameLabel] = clusterName
+	}
 	list := &clusterv1.MachineDeploymentList{}
 	opts := []client.ListOption{
 		client.InNamespace(namespace),
-		client.MatchingLabels{managedByLabel: managedByValue},
+		labels,
 	}
 	if err := c.crClient().List(ctx, list, opts...); err != nil {
 		return nil, fmt.Errorf("capi: list pools in %q: %w", namespace, err)

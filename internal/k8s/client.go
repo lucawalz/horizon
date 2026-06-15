@@ -14,7 +14,11 @@ func InCluster() bool {
 }
 
 func RestConfig(kubeconfigPath string) (*rest.Config, error) {
-	if kubeconfigPath == "" && InCluster() {
+	return RestConfigForContext(kubeconfigPath, "")
+}
+
+func RestConfigForContext(kubeconfigPath, contextName string) (*rest.Config, error) {
+	if kubeconfigPath == "" && contextName == "" && InCluster() {
 		restCfg, err := rest.InClusterConfig()
 		if err == nil {
 			restCfg.WarningHandler = rest.NoWarnings{}
@@ -29,18 +33,26 @@ func RestConfig(kubeconfigPath string) (*rest.Config, error) {
 	if kubeconfigPath != "" {
 		rules.ExplicitPath = kubeconfigPath
 	}
+	overrides := &clientcmd.ConfigOverrides{}
+	if contextName != "" {
+		overrides.CurrentContext = contextName
+	}
 	restCfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		rules, &clientcmd.ConfigOverrides{},
+		rules, overrides,
 	).ClientConfig()
 	if err != nil {
-		return nil, fmt.Errorf("kubeconfig %q: %w", kubeconfigPath, err)
+		return nil, fmt.Errorf("kubeconfig %q context %q: %w", kubeconfigPath, contextName, err)
 	}
 	restCfg.WarningHandler = rest.NoWarnings{}
 	return restCfg, nil
 }
 
 func NewClient(kubeconfigPath string) (kubernetes.Interface, error) {
-	restCfg, err := RestConfig(kubeconfigPath)
+	return NewClientForContext(kubeconfigPath, "")
+}
+
+func NewClientForContext(kubeconfigPath, contextName string) (kubernetes.Interface, error) {
+	restCfg, err := RestConfigForContext(kubeconfigPath, contextName)
 	if err != nil {
 		return nil, err
 	}

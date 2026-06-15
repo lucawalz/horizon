@@ -30,18 +30,32 @@ var rootCmd = &cobra.Command{
 		}
 		app.Config = cfg
 
-		kc, err := k8s.NewClient(cfg.Kubeconfig)
+		contextName, err := cmd.Flags().GetString("context")
+		if err != nil {
+			return err
+		}
+		clusterName, err := cmd.Flags().GetString("cluster")
+		if err != nil {
+			return err
+		}
+
+		kc, err := k8s.NewClientForContext(cfg.Kubeconfig, contextName)
 		if err != nil {
 			return fmt.Errorf("k8s client: %w", err)
 		}
 		app.KubeClient = kc
 
-		cc, err := capi.NewClient(cfg.Kubeconfig)
+		cc, err := capi.NewClientForContext(cfg.Kubeconfig, contextName)
 		if err != nil {
 			return fmt.Errorf("capi client: %w", err)
 		}
 		app.CapiClient = cc
-		app.Cluster = cfg.Cluster
+
+		if clusterName != "" {
+			app.Cluster = clusterName
+		} else {
+			app.Cluster = cfg.Cluster
+		}
 
 		return nil
 	},
@@ -49,6 +63,8 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.PersistentFlags().Bool("dry-run", false, "Print planned actions without executing")
+	rootCmd.PersistentFlags().String("context", "", "Kubeconfig context to target")
+	rootCmd.PersistentFlags().String("cluster", "", "CAPI cluster name to target")
 	rootCmd.AddCommand(newStatusCmd(app))
 	rootCmd.AddCommand(newBurstCmd(app))
 	rootCmd.AddCommand(newUpCmd(app))

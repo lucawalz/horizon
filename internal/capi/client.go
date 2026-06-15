@@ -15,7 +15,11 @@ type Client struct {
 }
 
 func NewClient(kubeconfigPath string) (*Client, error) {
-	restCfg, err := k8s.RestConfig(kubeconfigPath)
+	return NewClientForContext(kubeconfigPath, "")
+}
+
+func NewClientForContext(kubeconfigPath, contextName string) (*Client, error) {
+	restCfg, err := k8s.RestConfigForContext(kubeconfigPath, contextName)
 	if err != nil {
 		return nil, fmt.Errorf("capi: rest config: %w", err)
 	}

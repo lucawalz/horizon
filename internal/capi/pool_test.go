@@ -184,6 +184,39 @@ func TestListPoolsFiltersManaged(t *testing.T) {
 	}
 }
 
+func TestListPoolsForClusterFiltersByCluster(t *testing.T) {
+	alphaSpec := testSpec()
+	alphaSpec.Name = "alpha-pool"
+	alphaSpec.ClusterName = "alpha"
+	betaSpec := testSpec()
+	betaSpec.Name = "beta-pool"
+	betaSpec.ClusterName = "beta"
+
+	alpha := capi.BuildMachineDeployment(alphaSpec)
+	beta := capi.BuildMachineDeployment(betaSpec)
+	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).WithObjects(alpha, beta).Build()
+	c := capi.NewClientWithCRClient(cl)
+
+	pools, err := c.ListPoolsForCluster(context.Background(), "default", "alpha")
+	if err != nil {
+		t.Fatalf("ListPoolsForCluster: %v", err)
+	}
+	if len(pools) != 1 {
+		t.Fatalf("pool count = %d, want 1", len(pools))
+	}
+	if pools[0].Name != "alpha-pool" {
+		t.Errorf("pool name = %q, want alpha-pool", pools[0].Name)
+	}
+
+	all, err := c.ListPoolsForCluster(context.Background(), "default", "")
+	if err != nil {
+		t.Fatalf("ListPoolsForCluster empty: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("unfiltered pool count = %d, want 2", len(all))
+	}
+}
+
 func TestGetPoolNotFound(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
 	c := capi.NewClientWithCRClient(cl)
