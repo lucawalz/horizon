@@ -8,7 +8,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -35,12 +35,12 @@ func testSpec() capi.PoolSpec {
 		Replicas:    2,
 		Version:     "v1.31.0",
 		Infrastructure: capi.TemplateRef{
-			APIGroup: "infrastructure.cluster.x-k8s.io/v1beta1",
+			APIGroup: "infrastructure.cluster.x-k8s.io",
 			Kind:     "HCloudMachineTemplate",
 			Name:     "burst-infra",
 		},
 		Bootstrap: capi.TemplateRef{
-			APIGroup: "bootstrap.cluster.x-k8s.io/v1beta1",
+			APIGroup: "bootstrap.cluster.x-k8s.io",
 			Kind:     "KThreesConfigTemplate",
 			Name:     "burst-bootstrap",
 		},
@@ -65,17 +65,20 @@ func TestBuildMachineDeployment(t *testing.T) {
 	if md.Spec.Replicas == nil || *md.Spec.Replicas != 2 {
 		t.Errorf("spec.Replicas = %v, want 2", md.Spec.Replicas)
 	}
-	if md.Spec.Template.Spec.Version == nil || *md.Spec.Template.Spec.Version != "v1.31.0" {
-		t.Errorf("template version = %v, want v1.31.0", md.Spec.Template.Spec.Version)
-	}
-	if md.Spec.Template.Spec.Bootstrap.ConfigRef == nil {
-		t.Fatal("bootstrap configRef is nil")
+	if md.Spec.Template.Spec.Version != "v1.31.0" {
+		t.Errorf("template version = %q, want v1.31.0", md.Spec.Template.Spec.Version)
 	}
 	if got := md.Spec.Template.Spec.Bootstrap.ConfigRef.Kind; got != "KThreesConfigTemplate" {
 		t.Errorf("bootstrap kind = %q, want KThreesConfigTemplate", got)
 	}
+	if got := md.Spec.Template.Spec.Bootstrap.ConfigRef.APIGroup; got != "bootstrap.cluster.x-k8s.io" {
+		t.Errorf("bootstrap apiGroup = %q, want bootstrap.cluster.x-k8s.io", got)
+	}
 	if got := md.Spec.Template.Spec.InfrastructureRef.Name; got != "burst-infra" {
 		t.Errorf("infra ref name = %q, want burst-infra", got)
+	}
+	if got := md.Spec.Template.Spec.InfrastructureRef.APIGroup; got != "infrastructure.cluster.x-k8s.io" {
+		t.Errorf("infra ref apiGroup = %q, want infrastructure.cluster.x-k8s.io", got)
 	}
 	for k, v := range md.Spec.Selector.MatchLabels {
 		if md.Spec.Template.Labels[k] != v {
