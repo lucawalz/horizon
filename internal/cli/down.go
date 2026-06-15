@@ -2,283 +2,70 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
-	"time"
 
-	"github.com/lucawalz/horizon/internal/config"
-	"github.com/lucawalz/horizon/internal/k8s"
-	"github.com/lucawalz/horizon/internal/provider/hetzner"
-	"github.com/lucawalz/horizon/internal/runner"
-	"github.com/lucawalz/horizon/internal/wireguard"
+	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/spf13/cobra"
-	policyv1 "k8s.io/api/policy/v1"
-	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
-
-type downDeps struct {
-	pm   wireguard.PeerManager
-	prov hetznerProvider
-	kc   kubernetes.Interface
-}
-
-var downSteps = []string{
-	"Cordon node and evict non-DaemonSet pods",
-	"Remove burst node WireGuard peer from hub",
-	"Run terraform destroy (provider: hetzner)",
-	"Delete K3s node object from cluster",
-	"Delete burst state file",
-}
 
 func newDownCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "down",
-		Short: "Tear down the burst node and remove its WireGuard peer",
+		Short: "Scale the worker MachineDeployment to zero, or delete it with --delete",
+		Long: "Scale the worker MachineDeployment to zero replicas. With --delete the MachineDeployment is removed entirely; " +
+			"deletion suits horizon-owned pools, while the Flux-managed home pool is reconciled back from bedrock.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			target := resolvePoolTarget(cmd, app)
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
-			if dryRun {
-				return runDownDryRun(app)
-			}
-			shared, _ := cmd.Flags().GetBool("shared")
-			if shared {
-				return runDownShared(cmd.Context(), app)
-			}
-			burstID, _ := cmd.Flags().GetString("burst-id")
-			stateDir, err := stateDirOrTestOverride()
-			if err != nil {
-				return fmt.Errorf("down: state dir: %w", err)
-			}
-			resolved, err := resolveBurstID(stateDir, burstID)
-			if err != nil {
-				return err
-			}
-			st, err := ReadState(stateDir, resolved)
-			if err != nil {
-				if !errors.Is(err, os.ErrNotExist) {
-					return fmt.Errorf("down: read state: %w", err)
-				}
-				st = BurstState{BurstID: resolved, Hostname: "horizon-burst-" + resolved}
-			}
-			deps, err := newDownDeps(app, resolved)
-			if err != nil {
-				return fmt.Errorf("down: init: %w", err)
-			}
-			return runDown(cmd.Context(), app, deps, stateDir, st)
+			del, _ := cmd.Flags().GetBool("delete")
+			return runDown(cmd.Context(), app.CapiClient, target, dryRun, del)
 		},
 	}
-	cmd.Flags().Bool("dry-run", false, "Print planned down sequence without executing")
-	cmd.Flags().String("burst-id", "", "Burst id to tear down (omit when exactly one state file exists)")
-	cmd.Flags().Bool("shared", false, "Tear down shared burst infrastructure (operator ssh key + firewall) instead of a burst node")
+	cmd.Flags().Bool("dry-run", false, "Print intent without scaling or deleting")
+	cmd.Flags().Bool("delete", false, "Delete the MachineDeployment instead of scaling it to zero")
+	cmd.Flags().String("namespace", "", "Override the pool namespace")
+	cmd.Flags().String("pool", "", "Override the MachineDeployment name")
+	cmd.Flags().String("cluster", "", "Override the cluster name")
 	return cmd
 }
 
-func runDownShared(ctx context.Context, app *App) error {
-	prov := hetzner.New(app.Config, app.Config.InfraPath)
-	sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
-	k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
-	k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
-	prov.SetRuntimeSecrets("", "", sshPub, k3sURL, k3sToken)
-	if err := prov.DestroySharedInfra(ctx); err != nil {
-		return err
-	}
-	fmt.Fprintln(os.Stderr, "Shared burst infrastructure torn down.")
-	return nil
-}
-
-func newDownDeps(app *App, burstID string) (*downDeps, error) {
-	wg := app.Config.WireGuard
-	pm := wireguard.NewSSHPeerManager(wg.HubHost, wg.HubUser, wg.Interface, wg.ListenPort)
-	prov, err := hetzner.NewWithBurstID(app.Config, app.Config.InfraPath, burstID)
-	if err != nil {
-		return nil, fmt.Errorf("down: provider: %w", err)
-	}
-	return &downDeps{pm: pm, prov: prov, kc: app.KubeClient}, nil
-}
-
-func resolveBurstID(stateDir, flag string) (string, error) {
-	if flag != "" {
-		return flag, nil
-	}
-	ids, err := ListStates(stateDir)
-	if err != nil {
-		return "", fmt.Errorf("down: list states: %w", err)
-	}
-	if len(ids) == 1 {
-		return ids[0], nil
-	}
-	if len(ids) == 0 {
-		return "", fmt.Errorf("down: --burst-id required: no state files in %s", stateDir)
-	}
-	return "", fmt.Errorf("down: --burst-id required: multiple state files: %v", ids)
-}
-
-func runDownDryRun(app *App) error {
-	for i, s := range downSteps {
-		fmt.Printf("[dry-run] Step %d: %s\n", i+1, s)
-	}
-	fmt.Println("[dry-run] No actions executed.")
-	return nil
-}
-
-func runDown(ctx context.Context, app *App, deps *downDeps, stateDir string, st BurstState) error {
+func runDown(ctx context.Context, cc *capi.Client, target poolTarget, dryRun, del bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	r := &runner.Runner{}
-
-	r.Add(runner.Step{
-		Name: "cordon-and-evict",
-		Run: func(ctx context.Context) error {
-			c, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			defer cancel()
-			return cordonAndEvict(c, deps.kc, st.Hostname)
-		},
-	})
-
-	r.Add(runner.Step{
-		Name: "wg-peer-remove",
-		Run: func(ctx context.Context) error {
-			if st.WireGuardPubKey == "" {
-				return nil
-			}
-			return deps.pm.RemovePeer(ctx, st.WireGuardPubKey)
-		},
-	})
-
-	r.Add(runner.Step{
-		Name: "terraform-destroy",
-		Run: func(ctx context.Context) error {
-			sshPub := config.Resolve(app.Config.K3s.SSHKeyEnv, app.Config.K3s.SSHPublicKey)
-			k3sURL := config.Resolve(app.Config.K3s.URLEnv, app.Config.K3s.URL)
-			k3sToken := config.Resolve(app.Config.K3s.TokenEnv, app.Config.K3s.Token)
-			wgIP := st.WireGuardIP
-			if wgIP == "" {
-				if ip, err := wireguard.AllocateIP(app.Config.WireGuard.Subnet, st.BurstID); err == nil {
-					wgIP = ip
-				}
-			}
-			deps.prov.SetRuntimeSecrets(app.Config.WireGuard.HubPublicKey, wgIP, sshPub, k3sURL, k3sToken)
-			return deps.prov.Destroy(ctx)
-		},
-	})
-
-	r.Add(runner.Step{
-		Name: "delete-k3s-node",
-		Run: func(ctx context.Context) error {
-			workload := burstWorkloadLabel(ctx, deps.kc, st.Hostname)
-			if err := hetzner.DeleteNode(ctx, deps.kc, st.Hostname); err != nil {
-				return err
-			}
-			if workload == "" {
-				return nil
-			}
-			remaining, err := burstNodeCountForWorkload(ctx, deps.kc, workload)
-			if err != nil {
-				return err
-			}
-			if remaining > 0 {
-				return nil
-			}
-			return k8s.ReconcileStrandedAffinity(ctx, deps.kc, workload)
-		},
-	})
-
-	r.Add(runner.Step{
-		Name: "delete-state-file",
-		Run: func(ctx context.Context) error {
-			if err := DeleteState(stateDir, st.BurstID); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			return nil
-		},
-	})
-
-	if err := r.Run(ctx); err != nil {
-		return err
-	}
-	_ = k8s.ClearBurstPhase(ctx, deps.kc, st.BurstID)
-	return nil
-}
-
-func cordonAndEvict(ctx context.Context, kc kubernetes.Interface, hostname string) error {
-	if kc == nil {
+	if dryRun {
+		if del {
+			fmt.Printf("[dry-run] delete pool %s/%s\n", target.namespace, target.name)
+		} else {
+			fmt.Printf("[dry-run] scale pool %s/%s to 0 replicas\n", target.namespace, target.name)
+		}
+		fmt.Println("[dry-run] No actions executed.")
 		return nil
 	}
-	n, err := kc.CoreV1().Nodes().Get(ctx, hostname, metav1.GetOptions{})
-	if err != nil {
-		if k8serrors.IsNotFound(err) {
-			return nil
+
+	if del {
+		if err := cc.DeletePool(ctx, target.namespace, target.name); err != nil {
+			if apierrors.IsNotFound(err) {
+				return notFoundPoolErr(target)
+			}
+			return fmt.Errorf("down: %w", err)
 		}
-		return fmt.Errorf("cordon %s: %w", hostname, err)
+		fmt.Printf("Deleted pool %s/%s\n", target.namespace, target.name)
+		return nil
 	}
-	if !n.Spec.Unschedulable {
-		n.Spec.Unschedulable = true
-		if _, err := kc.CoreV1().Nodes().Update(ctx, n, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("cordon %s: %w", hostname, err)
+
+	if err := cc.ScalePool(ctx, target.namespace, target.name, 0); err != nil {
+		if apierrors.IsNotFound(err) {
+			return notFoundPoolErr(target)
 		}
+		return fmt.Errorf("down: %w", err)
 	}
-	pods, err := kc.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("list pods on %s: %w", hostname, err)
-	}
-	for i := range pods.Items {
-		pod := pods.Items[i]
-		if pod.Spec.NodeName != hostname {
-			continue
-		}
-		if k8s.IsDaemonSetPod(&pod) {
-			continue
-		}
-		ev := &policyv1.Eviction{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      pod.Name,
-				Namespace: pod.Namespace,
-			},
-		}
-		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			return fmt.Errorf("evict %s/%s: %w", pod.Namespace, pod.Name, err)
-		}
-	}
+	fmt.Printf("Scaled pool %s/%s to 0 replicas\n", target.namespace, target.name)
 	return nil
 }
 
-func burstWorkloadLabel(ctx context.Context, kc kubernetes.Interface, hostname string) string {
-	if kc == nil {
-		return ""
-	}
-	n, err := kc.CoreV1().Nodes().Get(ctx, hostname, metav1.GetOptions{})
-	if err != nil {
-		return ""
-	}
-	return n.Labels[k8s.PoolLabelKey]
-}
-
-func burstNodeCountForWorkload(ctx context.Context, kc kubernetes.Interface, workload string) (int, error) {
-	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return 0, fmt.Errorf("count burst nodes for %s: %w", workload, err)
-	}
-	count := 0
-	for i := range nodes.Items {
-		if nodes.Items[i].Labels[k8s.PoolLabelKey] == workload {
-			count++
-		}
-	}
-	return count, nil
-}
-
-func RunDownDryRunForTest(app *App) error {
-	return runDownDryRun(app)
-}
-
-func RunDownForTest(ctx context.Context, app *App, pm wireguard.PeerManager, prov hetznerProvider, kc kubernetes.Interface, stateDir string, st BurstState) error {
-	return runDown(ctx, app, &downDeps{pm: pm, prov: prov, kc: kc}, stateDir, st)
-}
-
-func ResolveBurstIDForTest(stateDir, flag string) (string, error) {
-	return resolveBurstID(stateDir, flag)
+func RunDownForTest(ctx context.Context, cc *capi.Client, target poolTarget, dryRun, del bool) error {
+	return runDown(ctx, cc, target, dryRun, del)
 }
