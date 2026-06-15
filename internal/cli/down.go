@@ -26,7 +26,6 @@ func newDownCmd(app *App) *cobra.Command {
 	cmd.Flags().Bool("delete", false, "Delete the MachineDeployment instead of scaling it to zero")
 	cmd.Flags().String("namespace", "", "Override the pool namespace")
 	cmd.Flags().String("pool", "", "Override the MachineDeployment name")
-	cmd.Flags().String("cluster", "", "Override the cluster name")
 	return cmd
 }
 

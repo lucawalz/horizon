@@ -31,7 +31,10 @@ func machineFor(namespace, pool, name, phase, node, providerID string) *clusterv
 
 func mdWithStatus(namespace, name, cluster string, desired, ready int32) *clusterv1.MachineDeployment {
 	md := machineDeployment(namespace, name, cluster, desired)
-	md.Labels = map[string]string{"horizon.dev/managed-by": "horizon"}
+	md.Labels = map[string]string{
+		"horizon.dev/managed-by":   "horizon",
+		clusterv1.ClusterNameLabel: cluster,
+	}
 	md.Status.ReadyReplicas = &ready
 	return md
 }

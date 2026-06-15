@@ -20,7 +20,7 @@ func resolvePoolTarget(cmd *cobra.Command, app *App) poolTarget {
 	t := poolTarget{
 		namespace: app.Config.Pools.Namespace,
 		name:      app.Config.Pools.Name,
-		cluster:   app.Config.Pools.Cluster,
+		cluster:   app.Cluster,
 		replicas:  1,
 	}
 	if v, _ := cmd.Flags().GetString("namespace"); v != "" {
@@ -28,9 +28,6 @@ func resolvePoolTarget(cmd *cobra.Command, app *App) poolTarget {
 	}
 	if v, _ := cmd.Flags().GetString("pool"); v != "" {
 		t.name = v
-	}
-	if v, _ := cmd.Flags().GetString("cluster"); v != "" {
-		t.cluster = v
 	}
 	if v, _ := cmd.Flags().GetInt32("replicas"); v > 0 {
 		t.replicas = v
@@ -53,7 +50,6 @@ func newUpCmd(app *App) *cobra.Command {
 	cmd.Flags().Bool("nudge", false, "Latch the externally-managed control-plane-initialized status when not yet set")
 	cmd.Flags().String("namespace", "", "Override the pool namespace")
 	cmd.Flags().String("pool", "", "Override the MachineDeployment name")
-	cmd.Flags().String("cluster", "", "Override the cluster name")
 	cmd.Flags().Int32("replicas", 0, "Desired replica count (default 1)")
 	return cmd
 }

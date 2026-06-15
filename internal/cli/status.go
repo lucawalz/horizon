@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 const (
@@ -130,7 +131,7 @@ func printNodeTable(ctx context.Context, app *App, out io.Writer, cpuVec, memVec
 }
 
 func printPoolTable(ctx context.Context, app *App, out io.Writer) {
-	pools, err := app.CapiClient.ListPools(ctx, app.Config.Pools.Namespace)
+	pools, err := listPoolsForStatus(ctx, app)
 	if err != nil {
 		fmt.Fprintf(out, "pools: unavailable: %v\n", err)
 		return
@@ -169,8 +170,15 @@ func printPoolTable(ctx context.Context, app *App, out io.Writer) {
 	}
 }
 
+func listPoolsForStatus(ctx context.Context, app *App) ([]clusterv1.MachineDeployment, error) {
+	if app.Cluster == "" {
+		return app.CapiClient.ListPools(ctx, app.Config.Pools.Namespace)
+	}
+	return app.CapiClient.ListPoolsForCluster(ctx, app.Config.Pools.Namespace, app.Cluster)
+}
+
 func printNudgeLine(ctx context.Context, app *App, w io.Writer) {
-	initialized, err := app.CapiClient.IsControlPlaneInitialized(ctx, app.Config.Pools.Namespace, app.Config.Cluster)
+	initialized, err := app.CapiClient.IsControlPlaneInitialized(ctx, app.Config.Pools.Namespace, app.Cluster)
 	if apierrors.IsNotFound(err) {
 		return
 	}

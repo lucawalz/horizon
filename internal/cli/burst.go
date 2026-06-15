@@ -57,7 +57,6 @@ func newBurstCmd(app *App) *cobra.Command {
 	cmd.Flags().String("workload", "", "target namespace to burst (required)")
 	cmd.Flags().String("namespace", "", "Override the pool namespace")
 	cmd.Flags().String("pool", "", "Override the MachineDeployment name")
-	cmd.Flags().String("cluster", "", "Override the cluster name")
 	cmd.Flags().Int32("replicas", 0, "Desired pool replica count (default 1)")
 	return cmd
 }
