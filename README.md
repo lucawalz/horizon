@@ -12,12 +12,15 @@ horizon is a thin command-line operator over Cluster API. It gives a small Kuber
 
 The substrate horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for infrastructure and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity and an in-cluster cluster-autoscaler for scale-on-demand. horizon reads and writes Cluster API objects through a kubeconfig context and leaves the definition of infrastructure to bedrock.
 
-### Two modes
+### Pool categories
 
-horizon drives capacity through one pool engine over MachineDeployments, in two modes selected by the target.
+horizon distinguishes three capacity categories, each with a different owner.
 
-- On-demand nodes (`up`, `down`, `burst`): scale an existing worker MachineDeployment whose machines join the existing home cluster. That cluster's control plane is externally managed, so Cluster API never marks it initialized on its own. A one-time nudge latches that status so workers bootstrap.
-- On-demand clusters (`cluster create`, `delete`, `list`): create a separate CAPI-managed cluster with its own KThreesControlPlane, which auto-imports to Rancher. No nudge applies.
+- Elastic pools (`horizon.dev/pool-type=elastic`): autoscaled by the in-cluster cluster-autoscaler, which scales them to zero and back as pending pods demand. horizon can scale an elastic pool by hand with `up --type elastic`, but the autoscaler owns the pool and may override that scale.
+- Reserved pools (`horizon.dev/pool-type=reserved`): operator-pinned and kept off the autoscaler's min and max annotations. horizon owns these through `up`, `down`, and `burst`; this is the default `--type`. Reserved pools carry a Flux create-once annotation, so a manual scale sticks.
+- Clusters (`cluster create`, `delete`, `list`): separate CAPI-managed clusters with their own KThreesControlPlane that auto-import to Rancher. No nudge applies.
+
+The `up`, `down`, and `burst` commands take a `--type` flag that selects the pool type to target; it defaults to the configured `default_type` (`reserved`). Each type maps to a MachineDeployment name through the `pools.types` config. Pool machines join the existing home cluster, whose control plane is externally managed, so Cluster API never marks it initialized on its own; a one-time nudge latches that status so workers bootstrap.
 
 ### Background
 
@@ -75,27 +78,39 @@ master     master   13%    17%    26     Ready    10.20.0.10
 worker-1   worker   6%     8%     16     Ready    10.20.0.11
 worker-2   worker   4%     23%    27     Ready    10.20.0.12
 
-POOL           DESIRED   READY   MACHINE   PHASE   NODE   PROVIDER-ID
-burst-workers  0         0       -         -       -      -
+POOL              TYPE       DESIRED   READY   MACHINE   PHASE   NODE   PROVIDER-ID
+reserved-workers  reserved   0         0       -         -       -      -
+elastic-workers   elastic    0         0       -         -       -      -
+
+Clusters
+(no managed clusters)
 
 control-plane: initialized
 autoscaler: Health: Healthy
 ```
 
-Scale the worker pool up to add nodes. When the externally-managed control plane is not yet marked initialized, rerun with `--nudge` to latch it:
+The pool table shows the `TYPE` column read from each MachineDeployment's `horizon.dev/pool-type` label, and a `Clusters` section lists any separate CAPI-managed clusters.
+
+Scale the reserved pool up to add nodes. When the externally-managed control plane is not yet marked initialized, rerun with `--nudge` to latch it:
 
 ```
 horizon up --nudge
 ```
 
-Scale the worker pool back to zero, or remove it entirely:
+Target the elastic pool instead with `--type`; the autoscaler still owns it:
+
+```
+horizon up --type elastic
+```
+
+Scale the reserved pool back to zero, or remove it entirely:
 
 ```
 horizon down
 horizon down --delete
 ```
 
-Burst a namespace onto the pool, backing up, scaling, waiting, and migrating the workload:
+Burst a namespace onto the reserved pool, backing up, scaling, waiting, and migrating the workload:
 
 ```
 horizon burst --workload <namespace>
@@ -133,17 +148,17 @@ Key fields:
 - `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
 - `cluster`: default CAPI cluster name; falls back to the pool cluster when unset.
 - `bedrock_path`: path to the bedrock git work tree, required only for `--write` GitOps renders. It is resolved to an absolute path and must exist.
-- `pools`: the default `namespace` (`caph-system`), `cluster` (`burst`), and `name` (`burst-workers`) for the worker MachineDeployment.
+- `pools`: the default `namespace` (`caph-system`) and `cluster` (`burst`), the `default_type` (`reserved`), and a `types` map from pool type to MachineDeployment name (`elastic` to `elastic-workers`, `reserved` to `reserved-workers`).
 - `thresholds`: the `burst` and `scale_down` scores and the `window` size, retained only for the read-only pressure header in `status`. They no longer drive any scaling decision.
 
 The retired `infra_path` field is rejected at load time; set `bedrock_path` instead.
 
 ## How it works
 
-- Routine scale-out is the cluster-autoscaler's job. horizon scales pools it owns directly and deliberately leaves the autoscaler min and max annotations off those pools, so the two scaling paths do not fight.
+- Routine scale-out is the cluster-autoscaler's job. The autoscaler owns elastic pools and scales them to zero on its own. horizon owns reserved pools, scaling them directly, and deliberately leaves the autoscaler min and max annotations off them so the two scaling paths do not fight.
 - A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the pool to its prior replica count.
 - The control-plane nudge is a status-subresource write, the one deliberate exception to GitOps durability. It cannot live in git and resets if the Cluster is recreated, so `status` warns when it is unset.
-- Workload placement is a contract: bedrock's KThreesConfigTemplate labels nodes `horizon.dev/pool=<value>` at join, and horizon rewrites workload affinity to match.
+- Workload placement is a contract: bedrock's KThreesConfigTemplate labels nodes `horizon.dev/pool=<type>` at join, and horizon rewrites workload affinity to match the targeted pool type.
 
 ## Repository layout
 

@@ -6,8 +6,10 @@ bedrock_path: ""
 
 pools:
   namespace: caph-system
-  cluster: burst
-  name: burst-workers
+  default_type: reserved
+  types:
+    elastic: elastic-workers
+    reserved: reserved-workers
 
 # display-only; the in-cluster autoscaler owns scaling decisions
 thresholds:
