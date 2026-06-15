@@ -42,7 +42,10 @@ func newBurstCmd(app *App) *cobra.Command {
 			if err := k8s.ValidateNamespace(workload); err != nil {
 				return fmt.Errorf("burst: %w", err)
 			}
-			target := resolvePoolTarget(cmd, app)
+			target, err := resolvePoolTarget(cmd, app)
+			if err != nil {
+				return fmt.Errorf("burst: %w", err)
+			}
 			if target.replicas < 1 {
 				target.replicas = 1
 			}
@@ -50,11 +53,12 @@ func newBurstCmd(app *App) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("burst: %w", err)
 			}
-			params := burstParams{target: target, workload: workload, poolNode: app.Config.Pools.Cluster}
+			params := burstParams{target: target, workload: workload, poolNode: target.poolType}
 			return runBurst(cmd.Context(), app.CapiClient, app.KubeClient, vc, params)
 		},
 	}
 	cmd.Flags().String("workload", "", "target namespace to burst (required)")
+	cmd.Flags().String("type", "", "Pool type to target (default from config)")
 	cmd.Flags().String("namespace", "", "Override the pool namespace")
 	cmd.Flags().String("pool", "", "Override the MachineDeployment name")
 	cmd.Flags().Int32("replicas", 0, "Desired pool replica count (default 1)")

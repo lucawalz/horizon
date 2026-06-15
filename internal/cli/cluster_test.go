@@ -17,7 +17,7 @@ func clusterTestApp(t *testing.T, cc *capi.Client) *cli.App {
 	t.Helper()
 	return &cli.App{
 		Config: &config.Config{
-			Pools: config.PoolDefaults{Namespace: "caph-system", Cluster: "burst", Name: "burst-workers"},
+			Pools: testPoolDefaults(),
 		},
 		CapiClient: cc,
 	}

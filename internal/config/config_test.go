@@ -118,11 +118,45 @@ bedrock_path: ` + dir + `
 	if cfg.Pools.Cluster != "burst" {
 		t.Errorf("Pools.Cluster: got %q, want burst", cfg.Pools.Cluster)
 	}
-	if cfg.Pools.Name != "burst-workers" {
-		t.Errorf("Pools.Name: got %q, want burst-workers", cfg.Pools.Name)
+	if cfg.Pools.DefaultType != "reserved" {
+		t.Errorf("Pools.DefaultType: got %q, want reserved", cfg.Pools.DefaultType)
+	}
+	if got := cfg.Pools.Types["elastic"]; got != "elastic-workers" {
+		t.Errorf("Pools.Types[elastic]: got %q, want elastic-workers", got)
+	}
+	if got := cfg.Pools.Types["reserved"]; got != "reserved-workers" {
+		t.Errorf("Pools.Types[reserved]: got %q, want reserved-workers", got)
 	}
 	if cfg.Cluster != "burst" {
 		t.Errorf("Cluster: got %q, want burst", cfg.Cluster)
+	}
+}
+
+func TestPoolResolve(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+bedrock_path: ` + dir + `
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	if md, err := cfg.Pools.Resolve(""); err != nil || md != "reserved-workers" {
+		t.Errorf("Resolve(\"\") = %q, %v; want reserved-workers, nil", md, err)
+	}
+	if md, err := cfg.Pools.Resolve("elastic"); err != nil || md != "elastic-workers" {
+		t.Errorf("Resolve(elastic) = %q, %v; want elastic-workers, nil", md, err)
+	}
+	if _, err := cfg.Pools.Resolve("bogus"); err == nil {
+		t.Fatal("expected error for unknown pool type")
+	} else if !strings.Contains(err.Error(), "unknown pool type") {
+		t.Errorf("error %q must mention unknown pool type", err.Error())
 	}
 }
 
@@ -134,7 +168,10 @@ cluster: prod
 pools:
   namespace: capi-system
   cluster: edge
-  name: edge-workers
+  default_type: elastic
+  types:
+    elastic: edge-elastic
+    reserved: edge-reserved
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -151,8 +188,11 @@ pools:
 	if cfg.Pools.Cluster != "edge" {
 		t.Errorf("Pools.Cluster: got %q, want edge", cfg.Pools.Cluster)
 	}
-	if cfg.Pools.Name != "edge-workers" {
-		t.Errorf("Pools.Name: got %q, want edge-workers", cfg.Pools.Name)
+	if cfg.Pools.DefaultType != "elastic" {
+		t.Errorf("Pools.DefaultType: got %q, want elastic", cfg.Pools.DefaultType)
+	}
+	if got := cfg.Pools.Types["reserved"]; got != "edge-reserved" {
+		t.Errorf("Pools.Types[reserved]: got %q, want edge-reserved", got)
 	}
 	if cfg.Cluster != "prod" {
 		t.Errorf("Cluster: got %q, want prod", cfg.Cluster)

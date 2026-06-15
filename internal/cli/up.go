@@ -12,14 +12,25 @@ import (
 type poolTarget struct {
 	namespace string
 	name      string
+	poolType  string
 	cluster   string
 	replicas  int32
 }
 
-func resolvePoolTarget(cmd *cobra.Command, app *App) poolTarget {
+func resolvePoolTarget(cmd *cobra.Command, app *App) (poolTarget, error) {
+	poolType, _ := cmd.Flags().GetString("type")
+	name, err := app.Config.Pools.Resolve(poolType)
+	if err != nil {
+		return poolTarget{}, err
+	}
+	if poolType == "" {
+		poolType = app.Config.Pools.DefaultType
+	}
+
 	t := poolTarget{
 		namespace: app.Config.Pools.Namespace,
-		name:      app.Config.Pools.Name,
+		name:      name,
+		poolType:  poolType,
 		cluster:   app.Cluster,
 		replicas:  1,
 	}
@@ -32,7 +43,7 @@ func resolvePoolTarget(cmd *cobra.Command, app *App) poolTarget {
 	if v, _ := cmd.Flags().GetInt32("replicas"); v > 0 {
 		t.replicas = v
 	}
-	return t
+	return t, nil
 }
 
 func newUpCmd(app *App) *cobra.Command {
@@ -40,7 +51,10 @@ func newUpCmd(app *App) *cobra.Command {
 		Use:   "up",
 		Short: "Scale the worker MachineDeployment up to add nodes",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			target := resolvePoolTarget(cmd, app)
+			target, err := resolvePoolTarget(cmd, app)
+			if err != nil {
+				return fmt.Errorf("up: %w", err)
+			}
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			nudge, _ := cmd.Flags().GetBool("nudge")
 			return runUp(cmd.Context(), app.CapiClient, target, dryRun, nudge)
@@ -48,6 +62,7 @@ func newUpCmd(app *App) *cobra.Command {
 	}
 	cmd.Flags().Bool("dry-run", false, "Print target pool and desired replicas without scaling")
 	cmd.Flags().Bool("nudge", false, "Latch the externally-managed control-plane-initialized status when not yet set")
+	cmd.Flags().String("type", "", "Pool type to target (default from config)")
 	cmd.Flags().String("namespace", "", "Override the pool namespace")
 	cmd.Flags().String("pool", "", "Override the MachineDeployment name")
 	cmd.Flags().Int32("replicas", 0, "Desired replica count (default 1)")
@@ -114,8 +129,13 @@ func runUp(ctx context.Context, cc *capi.Client, target poolTarget, dryRun, nudg
 	}
 	fmt.Printf("Scaled pool %s/%s: %d -> %d replicas\n",
 		target.namespace, target.name, current, target.replicas)
+	if target.poolType == elasticPoolType {
+		fmt.Println("Note: the cluster-autoscaler owns the elastic pool and may override this scale.")
+	}
 	return nil
 }
+
+const elasticPoolType = "elastic"
 
 func notFoundPoolErr(target poolTarget) error {
 	return fmt.Errorf("up: pool %s/%s not found; the home pool is provisioned via GitOps in bedrock, not by horizon",
@@ -124,6 +144,11 @@ func notFoundPoolErr(target poolTarget) error {
 
 func PoolTargetForTest(namespace, name, cluster string, replicas int32) poolTarget {
 	return poolTarget{namespace: namespace, name: name, cluster: cluster, replicas: replicas}
+}
+
+func ResolvePoolTargetForTest(cmd *cobra.Command, app *App) (string, string, error) {
+	t, err := resolvePoolTarget(cmd, app)
+	return t.name, t.poolType, err
 }
 
 func RunUpForTest(ctx context.Context, cc *capi.Client, target poolTarget, dryRun, nudge bool) error {

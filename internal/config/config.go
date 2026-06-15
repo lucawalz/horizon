@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -17,9 +19,25 @@ type ThresholdConfig struct {
 }
 
 type PoolDefaults struct {
-	Namespace string `mapstructure:"namespace"`
-	Cluster   string `mapstructure:"cluster"`
-	Name      string `mapstructure:"name"`
+	Namespace   string            `mapstructure:"namespace"`
+	Cluster     string            `mapstructure:"cluster"`
+	DefaultType string            `mapstructure:"default_type"`
+	Types       map[string]string `mapstructure:"types"`
+}
+
+func (p PoolDefaults) Resolve(typeName string) (string, error) {
+	if typeName == "" {
+		typeName = p.DefaultType
+	}
+	if md, ok := p.Types[typeName]; ok {
+		return md, nil
+	}
+	known := make([]string, 0, len(p.Types))
+	for t := range p.Types {
+		known = append(known, t)
+	}
+	sort.Strings(known)
+	return "", fmt.Errorf("unknown pool type %q (known: %s)", typeName, strings.Join(known, ", "))
 }
 
 type Config struct {
@@ -33,7 +51,11 @@ type Config struct {
 const (
 	defaultPoolNamespace = "caph-system"
 	defaultPoolCluster   = "burst"
-	defaultPoolName      = "burst-workers"
+	defaultPoolType      = "reserved"
+	elasticPoolType      = "elastic"
+	reservedPoolType     = "reserved"
+	elasticPoolName      = "elastic-workers"
+	reservedPoolName     = "reserved-workers"
 )
 
 func Load() (*Config, error) {
@@ -78,8 +100,14 @@ func Load() (*Config, error) {
 	if cfg.Pools.Cluster == "" {
 		cfg.Pools.Cluster = defaultPoolCluster
 	}
-	if cfg.Pools.Name == "" {
-		cfg.Pools.Name = defaultPoolName
+	if cfg.Pools.DefaultType == "" {
+		cfg.Pools.DefaultType = defaultPoolType
+	}
+	if len(cfg.Pools.Types) == 0 {
+		cfg.Pools.Types = map[string]string{
+			elasticPoolType:  elasticPoolName,
+			reservedPoolType: reservedPoolName,
+		}
 	}
 	if cfg.Cluster == "" {
 		cfg.Cluster = cfg.Pools.Cluster

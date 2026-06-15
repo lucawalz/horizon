@@ -18,13 +18,22 @@ import (
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+func testPoolDefaults() config.PoolDefaults {
+	return config.PoolDefaults{
+		Namespace:   "caph-system",
+		Cluster:     "burst",
+		DefaultType: "reserved",
+		Types:       map[string]string{"elastic": "elastic-workers", "reserved": "reserved-workers"},
+	}
+}
+
 func newTestApp() *cli.App {
 	return &cli.App{
 		Cluster:       "burst",
 		MetricsClient: metricsfake.NewSimpleClientset(),
 		Config: &config.Config{
 			Cluster: "burst",
-			Pools:   config.PoolDefaults{Namespace: "caph-system", Cluster: "burst", Name: "burst-workers"},
+			Pools:   testPoolDefaults(),
 		},
 	}
 }

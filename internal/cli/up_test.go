@@ -6,7 +6,47 @@ import (
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/cli"
+	"github.com/spf13/cobra"
 )
+
+func resolveTypeCmd(t *testing.T, typeName string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{}
+	cmd.Flags().String("type", typeName, "")
+	cmd.Flags().String("namespace", "", "")
+	cmd.Flags().String("pool", "", "")
+	cmd.Flags().Int32("replicas", 0, "")
+	return cmd
+}
+
+func TestResolvePoolTargetDefaultsToReserved(t *testing.T) {
+	app := newTestApp()
+	name, poolType, err := cli.ResolvePoolTargetForTest(resolveTypeCmd(t, ""), app)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if name != "reserved-workers" || poolType != "reserved" {
+		t.Errorf("default resolve = %q/%q, want reserved-workers/reserved", name, poolType)
+	}
+}
+
+func TestResolvePoolTargetElastic(t *testing.T) {
+	app := newTestApp()
+	name, poolType, err := cli.ResolvePoolTargetForTest(resolveTypeCmd(t, "elastic"), app)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if name != "elastic-workers" || poolType != "elastic" {
+		t.Errorf("elastic resolve = %q/%q, want elastic-workers/elastic", name, poolType)
+	}
+}
+
+func TestResolvePoolTargetUnknownTypeErrors(t *testing.T) {
+	app := newTestApp()
+	if _, _, err := cli.ResolvePoolTargetForTest(resolveTypeCmd(t, "bogus"), app); err == nil {
+		t.Fatal("expected error for unknown pool type")
+	}
+}
 
 func TestUpScalesPool(t *testing.T) {
 	cc := capiClient(t,
