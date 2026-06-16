@@ -43,13 +43,13 @@ type model struct {
 	picker themePicker
 }
 
-func newModel(app *core.App, contextName string) model {
+func newModel(app *core.App) model {
 	ti := textinput.New()
 	ti.Prompt = commandPrompt
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(refreshLabelStyle))
 	return model{
 		app:     app,
-		context: contextName,
+		context: app.Context,
 		input:   ti,
 		log:     newLog(1, 1),
 		spinner: sp,

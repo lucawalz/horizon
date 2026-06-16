@@ -33,13 +33,13 @@ func silenceKlog() {
 	klog.SetOutput(io.Discard)
 }
 
-func Run(app *core.App, contextName string) error {
+func Run(app *core.App) error {
 	silenceKlog()
 	autoDarkBackground = lipgloss.HasDarkBackground()
 	if app.Config != nil {
 		applyThemePref(app.Config.Theme)
 	}
-	p := tea.NewProgram(newModel(app, contextName), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(app), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
