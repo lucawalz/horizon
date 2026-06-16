@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lucawalz/horizon/internal/core"
+	"github.com/lucawalz/horizon/internal/k8s"
 )
 
 type streamEvent struct {
@@ -32,7 +33,7 @@ func streamCmd(debug bool, fn actionFunc) tea.Cmd {
 			var debugSink func(string)
 			if debug {
 				debugSink = func(line string) { ch <- streamEvent{line: line, debug: true} }
-				restore := enableAPITrace(debugSink)
+				restore := k8s.SetAPITrace(debugSink)
 				defer restore()
 			}
 			progress := core.NewProgress(emitSink, debugSink)
