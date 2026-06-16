@@ -5,7 +5,7 @@ kubeconfig: ""
 
 cluster: burst
 
-bedrock_path: ""
+repo_path: ""
 
 # theme: auto
 
@@ -21,11 +21,3 @@ pools:
   types:
     elastic: elastic-workers
     reserved: reserved-workers
-
-# display-only; the in-cluster autoscaler owns scaling decisions
-thresholds:
-  burst: 0.80
-  scale_down: 0.30
-  window: 5
-  cooldown_minutes: 10
-  max_burst_nodes: 3

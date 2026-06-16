@@ -134,7 +134,7 @@ horizon --context homelab --cluster burst
 
 ### The dashboard
 
-The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory against their display thresholds and the count of pending pods, and panels on the left list the nodes, the pools with their type and replica state, and any separate CAPI-managed clusters. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
+The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory with fixed usage bands and the count of pending pods, and panels on the left list the nodes, the pools with their type and replica state, and any separate CAPI-managed clusters. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
 
 The pool panel shows the type read from each MachineDeployment's `horizon.dev/pool-type` label, alongside its desired and ready replicas and machine state. The pressure header warns when the externally managed control plane is not yet marked initialized, so the nudge is not silently forgotten.
 
@@ -164,20 +164,19 @@ The dashboard is the primary interface; two subcommands run outside it. `horizon
 
 ## Configuration
 
-The config file sets the kubeconfig, the bedrock checkout used for GitOps writes, the default pool target, and the display thresholds. A template is in [`config.example.yaml`](config.example.yaml).
+The config file sets the kubeconfig, the `repo_path` GitOps work tree used for writes, and the default pool target. A template is in [`config.example.yaml`](config.example.yaml).
 
 Key fields:
 
 - `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
 - `context`: target kubeconfig context; the `--context` flag overrides it, and the setup wizard records the chosen context here.
 - `cluster`: default CAPI cluster name; falls back to the pool cluster when unset.
-- `bedrock_path`: path to the bedrock git work tree, required only for the GitOps write action. It is resolved to an absolute path and must exist.
+- `repo_path`: path to the GitOps git work tree, required only for the GitOps write action. It is resolved to an absolute path and must exist.
 - `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `:theme` picker writes this field. Defaults to `auto`.
 - `cluster_create`: optional defaults for `cluster create`, with `class` and `worker_class` used when the corresponding flags are omitted.
 - `pools`: the default `namespace` and `cluster` (`burst`), the `default_type` (`reserved`), the Kubernetes `version` used by `cluster create` when `--version` is omitted, and a `types` map from pool type to MachineDeployment name (`elastic` to `elastic-workers`, `reserved` to `reserved-workers`). Set `namespace` to the namespace where the chosen provider's MachineDeployments live; it defaults to `caph-system` for the bedrock setup.
-- `thresholds`: the `burst` and `scale_down` scores and the `window` size, retained only for the read-only pressure header in the dashboard. They no longer drive any scaling decision.
 
-The retired `infra_path` field is rejected at load time; set `bedrock_path` instead.
+The retired `infra_path` and `bedrock_path` fields are both rejected at load time; set `repo_path` instead.
 
 ## Releases
 
