@@ -130,6 +130,9 @@ func (m model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onConfirmKey(msg)
 	case modeRunning:
 		return m, nil
+	case modeHelp:
+		m.mode = modeNav
+		return m, nil
 	default:
 		return m.onNavKey(msg)
 	}
@@ -147,9 +150,7 @@ func (m model) onNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, tea.Batch(m.loadSnapshot(), m.spinner.Tick)
 	case key.Matches(msg, keys.Help):
-		for _, line := range helpLines() {
-			m.log.append(line)
-		}
+		m.mode = modeHelp
 		return m, nil
 	case key.Matches(msg, keys.ScrollUp):
 		m.log.view.ScrollUp(1)
@@ -197,9 +198,7 @@ func (m model) runInput() (tea.Model, tea.Cmd) {
 	}
 	switch res.builtin {
 	case builtinHelp:
-		for _, line := range helpLines() {
-			m.log.append(line)
-		}
+		m.mode = modeHelp
 		return m, nil
 	case builtinRefresh:
 		return m, m.loadSnapshot()

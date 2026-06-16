@@ -15,21 +15,25 @@ const (
 	dotYellow = "#eab308"
 	dotGreen  = "#22c55e"
 
-	colorDim    = "#6b7280"
-	colorTitle  = "#e5e7eb"
-	colorErr    = "#f87171"
-	colorWarn   = "#eab308"
-	colorAccent = "#22d3ee"
+	colorDim     = "#6b7280"
+	colorTitle   = "#e5e7eb"
+	colorErr     = "#f87171"
+	colorWarn    = "#eab308"
+	colorAccent  = "#22d3ee"
+	colorGaugeBg = "#374151"
 
 	warnThresholdRatio = 0.75
 
 	wideBreakpoint   = 100
 	mediumBreakpoint = 70
 
-	gaugeWidth   = 10
+	gaugeWidth   = 24
 	minLogHeight = 3
 	minLogWidth  = 24
 	columnGap    = 2
+
+	gaugeSpacing  = "   "
+	sectionMargin = 1
 
 	twoColumnRatio = 0.5
 )
@@ -42,7 +46,11 @@ var (
 
 	panelTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(colorTitle))
+			Foreground(lipgloss.Color(colorAccent))
+
+	subLabelStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color(colorDim))
 
 	tableHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -61,4 +69,10 @@ var (
 	inputRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim))
 
 	refreshLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent))
+
+	gaugeLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorTitle))
+
+	helpCommandStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent))
+
+	helpTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(colorTitle))
 )

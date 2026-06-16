@@ -8,8 +8,11 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/lucawalz/horizon/internal/core"
 )
+
+const helpColumnGap = 2
 
 type builtinKind int
 
@@ -374,19 +377,40 @@ func flatten(values map[string]*string) map[string]string {
 	return out
 }
 
-func helpLines() []string {
-	return []string{
-		"up [--type elastic|reserved] [--nudge] [<replicas>]   scale a pool up",
-		"down [--type ...] [--delete]                          scale a pool to zero or delete it",
-		"nudge [--namespace ns] [--cluster name]               latch control-plane-initialized",
-		"burst <namespace> [--type ...] [--replicas n]         back up, scale, migrate a workload",
-		"cluster create <name> [--preview|--write|--apply]     render, write, or apply a cluster",
-		"cluster delete <name> · cluster list                  manage CAPI-managed clusters",
-		"backup create [--include-namespaces ...] [--wait]     create a velero backup",
-		"backup list · backup describe <name> · backup delete <name>",
-		"restore create --from-backup <name> [--wait]          restore from a backup",
-		"restore list · restore describe <name>",
-		"drain <node>                                          cordon and evict a node",
-		"refresh · clear · help · quit",
+type helpEntry struct {
+	command string
+	desc    string
+}
+
+func helpLines() []helpEntry {
+	return []helpEntry{
+		{"up [--type elastic|reserved] [--nudge] [<replicas>]", "scale a pool up"},
+		{"down [--type ...] [--delete]", "scale a pool to zero or delete it"},
+		{"nudge [--namespace ns] [--cluster name]", "latch control-plane-initialized"},
+		{"burst <namespace> [--type ...] [--replicas n]", "back up, scale, migrate a workload"},
+		{"cluster create <name> [--preview|--write|--apply]", "render, write, or apply a cluster"},
+		{"cluster delete <name> · cluster list", "manage CAPI-managed clusters"},
+		{"backup create [--include-namespaces ...] [--wait]", "create a velero backup"},
+		{"backup list · describe <name> · delete <name>", "inspect velero backups"},
+		{"restore create --from-backup <name> [--wait]", "restore from a backup"},
+		{"restore list · restore describe <name>", "inspect velero restores"},
+		{"drain <node>", "cordon and evict a node"},
+		{"refresh · clear · help · quit", "session controls"},
 	}
+}
+
+func renderHelp() string {
+	entries := helpLines()
+	width := 0
+	for _, e := range entries {
+		if n := lipgloss.Width(e.command); n > width {
+			width = n
+		}
+	}
+	lines := make([]string, 0, len(entries))
+	for _, e := range entries {
+		pad := strings.Repeat(" ", width-lipgloss.Width(e.command)+helpColumnGap)
+		lines = append(lines, helpCommandStyle.Render(e.command)+pad+dimStyle.Render(e.desc))
+	}
+	return strings.Join(lines, "\n")
 }

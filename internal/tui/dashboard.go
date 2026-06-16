@@ -47,9 +47,9 @@ func renderPressure(p core.PressureSummary) string {
 	}
 	gauges := lipgloss.JoinHorizontal(lipgloss.Center,
 		gauge("CPU", p.CPUScore, p.Threshold),
-		"   ",
+		gaugeSpacing,
 		gauge("Mem", p.MemScore, p.Threshold),
-		fmt.Sprintf("   pending pods %d", p.PendingPods),
+		gaugeSpacing+dimStyle.Render(fmt.Sprintf("pending pods %d", p.PendingPods)),
 	)
 	parts = append(parts, gauges)
 	return strings.Join(parts, "\n")
@@ -57,8 +57,13 @@ func renderPressure(p core.PressureSummary) string {
 
 func gauge(label string, score, threshold float64) string {
 	hex := gaugeColor(score, threshold)
-	bar := progress.New(progress.WithSolidFill(hex), progress.WithWidth(gaugeWidth), progress.WithoutPercentage())
-	return fmt.Sprintf("%s %s %.2f/%.2f %s", label, bar.ViewAs(score), score, threshold, statusDot(hex))
+	bar := progress.New(
+		progress.WithSolidFill(hex),
+		progress.WithWidth(gaugeWidth),
+		progress.WithoutPercentage(),
+	)
+	bar.EmptyColor = colorGaugeBg
+	return fmt.Sprintf("%s %s %.2f/%.2f %s", gaugeLabelStyle.Render(label), bar.ViewAs(score), score, threshold, statusDot(hex))
 }
 
 func pressureSummaryLine(snap core.Snapshot) string {
@@ -72,21 +77,22 @@ func pressureSummaryLine(snap core.Snapshot) string {
 	return fmt.Sprintf("CPU %.2f Mem %.2f", p.CPUScore, p.MemScore)
 }
 
-func titledPanel(title, body string, minWidth int) string {
-	content := panelTitleStyle.Render(title) + "\n" + body
+func titledPanel(title string, width int, body func(inner int) string) string {
 	style := panelStyle
-	inner := minWidth - style.GetHorizontalFrameSize()
-	if inner > lipgloss.Width(content) {
-		style = style.Width(inner)
+	inner := width - style.GetHorizontalFrameSize()
+	if inner < 1 {
+		inner = 1
 	}
-	return style.Render(content)
+	title = lipgloss.NewStyle().MaxWidth(inner).Render(panelTitleStyle.Render(title))
+	content := title + "\n" + body(inner)
+	return style.Width(inner).Render(content)
 }
 
 func nodesPanel(snap core.Snapshot, width int, full bool) string {
-	return titledPanel("Nodes", nodesBody(snap, full), width)
+	return titledPanel("Nodes", width, func(inner int) string { return nodesBody(snap, inner, full) })
 }
 
-func nodesBody(snap core.Snapshot, full bool) string {
+func nodesBody(snap core.Snapshot, inner int, full bool) string {
 	if snap.NodesErr != nil {
 		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.NodesErr))
 	}
@@ -105,7 +111,7 @@ func nodesBody(snap core.Snapshot, full bool) string {
 		}
 	}
 	statusCol := len(headers) - 1
-	t := newPanelTable(headers, func(row, col int) lipgloss.Style {
+	t := newPanelTable(headers, inner, func(row, col int) lipgloss.Style {
 		if row == table.HeaderRow {
 			return tableHeaderStyle.Padding(0, 1).PaddingLeft(0)
 		}
@@ -143,10 +149,10 @@ func percentCell(percent int, present bool) string {
 }
 
 func poolsPanel(snap core.Snapshot, width int, full bool) string {
-	return titledPanel("Pools", poolsBody(snap, full), width)
+	return titledPanel("Pools", width, func(inner int) string { return poolsBody(snap, inner, full) })
 }
 
-func poolsBody(snap core.Snapshot, full bool) string {
+func poolsBody(snap core.Snapshot, inner int, full bool) string {
 	if snap.PoolsErr != nil {
 		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.PoolsErr))
 	}
@@ -154,7 +160,7 @@ func poolsBody(snap core.Snapshot, full bool) string {
 		return dimStyle.Render("(no pools)")
 	}
 	if !full {
-		return poolsCompactBody(snap)
+		return poolsCompactBody(snap, inner)
 	}
 	headers := []string{"POOL", "TYPE", "DESIRED", "READY", "MACHINE", "PHASE", "NODE", "PROVIDER-ID"}
 	rows := make([][]string, 0)
@@ -174,23 +180,23 @@ func poolsBody(snap core.Snapshot, full bool) string {
 			})
 		}
 	}
-	return neutralTable(headers, rows)
+	return neutralTable(headers, rows, inner)
 }
 
-func poolsCompactBody(snap core.Snapshot) string {
+func poolsCompactBody(snap core.Snapshot, inner int) string {
 	headers := []string{"POOL", "TYPE", "DESIRED/READY"}
 	rows := make([][]string, 0, len(snap.Pools))
 	for _, pool := range snap.Pools {
 		rows = append(rows, []string{pool.Name, pool.Type, pool.Desired + "/" + pool.Ready})
 	}
-	return neutralTable(headers, rows)
+	return neutralTable(headers, rows, inner)
 }
 
 func clustersPanel(snap core.Snapshot, width int) string {
-	return titledPanel("Clusters", clustersBody(snap), width)
+	return titledPanel("Clusters", width, func(inner int) string { return clustersBody(snap, inner) })
 }
 
-func clustersBody(snap core.Snapshot) string {
+func clustersBody(snap core.Snapshot, inner int) string {
 	if snap.ClustersErr != nil {
 		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.ClustersErr))
 	}
@@ -202,19 +208,21 @@ func clustersBody(snap core.Snapshot) string {
 	for _, c := range snap.Clusters {
 		rows = append(rows, []string{c.Name, c.Phase, c.ControlPlaneReady})
 	}
-	return neutralTable(headers, rows)
+	return neutralTable(headers, rows, inner)
 }
 
 func clusterStatusPanel(snap core.Snapshot, width int, foldClusters bool) string {
-	body := strings.Join([]string{nudgeLine(snap.Nudge), autoscalerLine(snap.Autoscaler)}, "\n")
-	if foldClusters {
-		body += "\n" + panelTitleStyle.Render("Clusters") + "\n" + clustersBody(snap)
-	}
-	return titledPanel("Cluster status", body, width)
+	return titledPanel("Cluster status", width, func(inner int) string {
+		body := strings.Join([]string{nudgeLine(snap.Nudge), autoscalerLine(snap.Autoscaler)}, "\n")
+		if foldClusters {
+			body += "\n" + subLabelStyle.Render("clusters") + "\n" + clustersBody(snap, inner)
+		}
+		return body
+	})
 }
 
-func neutralTable(headers []string, rows [][]string) string {
-	t := newPanelTable(headers, func(row, col int) lipgloss.Style {
+func neutralTable(headers []string, rows [][]string, inner int) string {
+	t := newPanelTable(headers, inner, func(row, col int) lipgloss.Style {
 		if row == table.HeaderRow {
 			return tableHeaderStyle.Padding(0, 1).PaddingLeft(0)
 		}

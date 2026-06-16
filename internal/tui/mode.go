@@ -7,4 +7,5 @@ const (
 	modeCommand
 	modeConfirm
 	modeRunning
+	modeHelp
 )

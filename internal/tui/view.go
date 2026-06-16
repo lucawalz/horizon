@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	commandPrompt   = "horizon › "
-	bannerTopMargin = 1
+	commandPrompt    = "horizon › "
+	bannerTopMargin  = 1
+	clusterTagPrefix = "⎈ "
 )
 
 func (m *model) resize() {
@@ -44,6 +45,12 @@ func (m model) View() string {
 	header := m.headerBand()
 	inputBox := m.inputBand()
 
+	if m.mode == modeHelp {
+		body := m.helpOverlay(header, inputBox)
+		out := lipgloss.JoinVertical(lipgloss.Left, header, body, inputBox)
+		return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(out)
+	}
+
 	dashboard := m.dashboardBand()
 	if !m.fits(header, dashboard, inputBox) {
 		dashboard = m.collapsedDashboard()
@@ -68,6 +75,20 @@ func (m model) logBand(header, dashboard, inputBox string) string {
 	}
 	m.log.resize(m.logWidth(), h)
 	return m.log.view.View()
+}
+
+func (m model) helpOverlay(header, inputBox string) string {
+	h := m.height - lipgloss.Height(header) - lipgloss.Height(inputBox)
+	if h < 1 {
+		h = 1
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left,
+		helpTitleStyle.Render("commands"),
+		renderHelp(),
+		"",
+		dimStyle.Render("press any key to dismiss"),
+	)
+	return lipgloss.NewStyle().Width(m.width).Height(h).MaxHeight(h).Render(content)
 }
 
 func (m model) headerBand() string {
@@ -99,13 +120,14 @@ func (m model) dashboardBand() string {
 		return dimStyle.Render("loading cluster snapshot…")
 	}
 	pressure := renderPressure(m.snap.Pressure)
+	gap := strings.Repeat("\n", sectionMargin)
 	switch {
 	case m.width >= wideBreakpoint:
-		return lipgloss.JoinVertical(lipgloss.Left, pressure, m.wideDashboard())
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, gap, m.wideDashboard())
 	case m.width >= mediumBreakpoint:
-		return lipgloss.JoinVertical(lipgloss.Left, pressure, m.mediumDashboard())
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, gap, m.mediumDashboard())
 	default:
-		return lipgloss.JoinVertical(lipgloss.Left, pressure, m.narrowDashboard())
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, gap, m.narrowDashboard())
 	}
 }
 
@@ -117,6 +139,9 @@ func (m model) wideDashboard() string {
 		clusterStatusPanel(m.snap, rightWidth, false),
 		clustersPanel(m.snap, rightWidth),
 	)
+	colHeight := max(lipgloss.Height(left), lipgloss.Height(right))
+	left = lipgloss.NewStyle().Width(colWidth).Height(colHeight).Render(left)
+	right = lipgloss.NewStyle().Width(rightWidth).Height(colHeight).Render(right)
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", columnGap), right)
 	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, m.width, true))
 }
@@ -157,7 +182,7 @@ func (m model) summaryLine() string {
 
 func (m model) inputBand() string {
 	width := m.width
-	topRule := ruleWithLabel(width, m.app.Cluster)
+	topRule := ruleWithLabel(width, clusterTagPrefix+valueOr(m.app.Cluster, "default"))
 	prompt := m.inputLine()
 	bottomRule := inputRuleStyle.Render(strings.Repeat("─", width))
 	strip := m.statusStrip(width)

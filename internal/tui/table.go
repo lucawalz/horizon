@@ -31,8 +31,8 @@ func renderLogTable(rows [][]string) string {
 	return t.Render()
 }
 
-func newPanelTable(headers []string, styleFunc table.StyleFunc) *table.Table {
-	return table.New().
+func newPanelTable(headers []string, width int, styleFunc table.StyleFunc) *table.Table {
+	t := table.New().
 		Wrap(false).
 		Border(lipgloss.NormalBorder()).
 		BorderTop(false).
@@ -44,4 +44,8 @@ func newPanelTable(headers []string, styleFunc table.StyleFunc) *table.Table {
 		BorderHeader(false).
 		Headers(headers...).
 		StyleFunc(styleFunc)
+	if width > 0 {
+		t = t.Width(width)
+	}
+	return t
 }
