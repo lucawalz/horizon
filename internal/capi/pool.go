@@ -130,6 +130,18 @@ func (c *Client) ListPoolsForCluster(ctx context.Context, namespace, clusterName
 	return list.Items, nil
 }
 
+func (c *Client) ListMachineDeploymentsByType(ctx context.Context, namespace string) ([]clusterv1.MachineDeployment, error) {
+	list := &clusterv1.MachineDeploymentList{}
+	opts := []client.ListOption{
+		client.InNamespace(namespace),
+		client.HasLabels{poolTypeLabel},
+	}
+	if err := c.crClient().List(ctx, list, opts...); err != nil {
+		return nil, fmt.Errorf("capi: list pools by type in %q: %w", namespace, err)
+	}
+	return list.Items, nil
+}
+
 func (c *Client) ApplyPool(ctx context.Context, spec PoolSpec) (*clusterv1.MachineDeployment, error) {
 	existing, err := c.GetPool(ctx, spec.Namespace, spec.Name)
 	if apierrors.IsNotFound(err) {

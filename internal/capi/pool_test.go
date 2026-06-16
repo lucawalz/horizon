@@ -217,6 +217,49 @@ func TestListPoolsForClusterFiltersByCluster(t *testing.T) {
 	}
 }
 
+func TestListMachineDeploymentsByType(t *testing.T) {
+	const poolTypeLabel = "horizon.dev/pool-type"
+	labeled := &clusterv1.MachineDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "labeled",
+			Namespace: "ns-a",
+			Labels:    map[string]string{poolTypeLabel: "reserved"},
+		},
+		Spec: clusterv1.MachineDeploymentSpec{ClusterName: "homelab"},
+	}
+	labeledOther := &clusterv1.MachineDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "labeled-other",
+			Namespace: "ns-b",
+			Labels:    map[string]string{poolTypeLabel: "elastic"},
+		},
+		Spec: clusterv1.MachineDeploymentSpec{ClusterName: "homelab"},
+	}
+	unlabeled := &clusterv1.MachineDeployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "unlabeled", Namespace: "ns-a"},
+		Spec:       clusterv1.MachineDeploymentSpec{ClusterName: "homelab"},
+	}
+	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).
+		WithObjects(labeled, labeledOther, unlabeled).Build()
+	c := capi.NewClientWithCRClient(cl)
+
+	inNs, err := c.ListMachineDeploymentsByType(context.Background(), "ns-a")
+	if err != nil {
+		t.Fatalf("ListMachineDeploymentsByType: %v", err)
+	}
+	if len(inNs) != 1 || inNs[0].Name != "labeled" {
+		t.Fatalf("ns-a results = %v, want [labeled]", inNs)
+	}
+
+	all, err := c.ListMachineDeploymentsByType(context.Background(), "")
+	if err != nil {
+		t.Fatalf("ListMachineDeploymentsByType all: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("all-namespace count = %d, want 2", len(all))
+	}
+}
+
 func TestGetPoolNotFound(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
 	c := capi.NewClientWithCRClient(cl)
