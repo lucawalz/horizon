@@ -39,7 +39,7 @@ func TestApplyClusterLive(t *testing.T) {
 	app := clusterTestApp(cc)
 	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
-	if err := core.ApplyCluster(context.Background(), app, spec); err != nil {
+	if err := core.ApplyCluster(context.Background(), app, spec, core.Progress{}); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestWriteClusterManifestsToRepo(t *testing.T) {
 	app.Config.RepoPath = root
 	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
-	path, err := core.WriteClusterManifests(app, spec)
+	path, err := core.WriteClusterManifests(app, spec, core.Progress{})
 	if err != nil {
 		t.Fatalf("WriteClusterManifests: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestWriteClusterManifestsRequiresRepoPath(t *testing.T) {
 	app := clusterTestApp(cc)
 	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
-	if _, err := core.WriteClusterManifests(app, spec); err == nil {
+	if _, err := core.WriteClusterManifests(app, spec, core.Progress{}); err == nil {
 		t.Fatal("expected error when repo_path unset")
 	}
 }
@@ -132,11 +132,11 @@ func TestDeleteClusterRemovesCluster(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
 	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
-	if err := core.ApplyCluster(context.Background(), app, spec); err != nil {
+	if err := core.ApplyCluster(context.Background(), app, spec, core.Progress{}); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
 	}
 
-	if err := core.DeleteCluster(context.Background(), app, "caph-system", "edge"); err != nil {
+	if err := core.DeleteCluster(context.Background(), app, "caph-system", "edge", core.Progress{}); err != nil {
 		t.Fatalf("DeleteCluster: %v", err)
 	}
 	if _, err := cc.GetCluster(context.Background(), "caph-system", "edge"); !apierrors.IsNotFound(err) {
@@ -148,7 +148,7 @@ func TestListClustersReturnsCreated(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
 	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
-	if err := core.ApplyCluster(context.Background(), app, spec); err != nil {
+	if err := core.ApplyCluster(context.Background(), app, spec, core.Progress{}); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
 	}
 

@@ -172,7 +172,7 @@ func burstCapiClient(t *testing.T, objs ...client.Object) *capi.Client {
 }
 
 func collectProgress(msgs *[]string) core.Progress {
-	return func(msg string) { *msgs = append(*msgs, msg) }
+	return core.NewProgress(func(msg string) { *msgs = append(*msgs, msg) }, nil)
 }
 
 func fixedNow() time.Time {

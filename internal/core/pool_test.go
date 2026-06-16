@@ -16,7 +16,7 @@ func TestScaleUpScalesPool(t *testing.T) {
 	)
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 2)
-	if err := core.ScaleUp(context.Background(), cc, target, false, false, nil); err != nil {
+	if err := core.ScaleUp(context.Background(), cc, target, false, false, core.Progress{}); err != nil {
 		t.Fatalf("ScaleUp: %v", err)
 	}
 
@@ -36,7 +36,7 @@ func TestScaleUpRefusesWhenControlPlaneNotInitialized(t *testing.T) {
 	)
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	err := core.ScaleUp(context.Background(), cc, target, false, false, nil)
+	err := core.ScaleUp(context.Background(), cc, target, false, false, core.Progress{})
 	if err == nil {
 		t.Fatal("expected refusal when control plane not initialized")
 	}
@@ -57,7 +57,7 @@ func TestScaleUpNudgeLatchesAndScales(t *testing.T) {
 	)
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	if err := core.ScaleUp(context.Background(), cc, target, false, true, nil); err != nil {
+	if err := core.ScaleUp(context.Background(), cc, target, false, true, core.Progress{}); err != nil {
 		t.Fatalf("ScaleUp with nudge: %v", err)
 	}
 
@@ -78,7 +78,7 @@ func TestScaleUpFailsFastWhenPoolMissing(t *testing.T) {
 	cc := capiClient(t, initializedCluster("caph-system", "burst", true))
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	err := core.ScaleUp(context.Background(), cc, target, false, false, nil)
+	err := core.ScaleUp(context.Background(), cc, target, false, false, core.Progress{})
 	if err == nil {
 		t.Fatal("expected fail-fast when pool not found")
 	}
@@ -128,7 +128,7 @@ func TestScaleDownScalesToZero(t *testing.T) {
 	cc := capiClient(t, machineDeployment("caph-system", "burst-workers", "burst", 3))
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 0)
-	if err := core.ScaleDown(context.Background(), cc, target, false, false, nil); err != nil {
+	if err := core.ScaleDown(context.Background(), cc, target, false, false, core.Progress{}); err != nil {
 		t.Fatalf("ScaleDown: %v", err)
 	}
 
@@ -145,7 +145,7 @@ func TestScaleDownDeleteRemovesPool(t *testing.T) {
 	cc := capiClient(t, machineDeployment("caph-system", "burst-workers", "burst", 3))
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 0)
-	if err := core.ScaleDown(context.Background(), cc, target, false, true, nil); err != nil {
+	if err := core.ScaleDown(context.Background(), cc, target, false, true, core.Progress{}); err != nil {
 		t.Fatalf("ScaleDown delete: %v", err)
 	}
 

@@ -21,7 +21,7 @@ func TestDrainEmptyNode(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	kc := fake.NewSimpleClientset(node)
 
-	if err := core.Drain(context.Background(), kc, "burst-node", drainTestTimeout); err != nil {
+	if err := core.Drain(context.Background(), kc, "burst-node", drainTestTimeout, nil); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
 }
@@ -49,7 +49,7 @@ func TestDrainTimesOutWhenEvictionBlocked(t *testing.T) {
 		return false, nil, nil
 	})
 
-	err := core.Drain(context.Background(), kc, "burst-node", drainTestTimeout)
+	err := core.Drain(context.Background(), kc, "burst-node", drainTestTimeout, nil)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}

@@ -64,7 +64,7 @@ func TestDrain(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, appPod, ds, dsPod)
 	evictAndDelete(kc)
 
-	if err := k8s.Drain(context.Background(), kc, "burst-node", 30*time.Second); err != nil {
+	if err := k8s.Drain(context.Background(), kc, "burst-node", 30*time.Second, nil); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestDrain_DaemonSetSkip(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, appPod, ds, dsPod)
 	evictAndDelete(kc)
 
-	if err := k8s.Drain(context.Background(), kc, "burst-node", 30*time.Second); err != nil {
+	if err := k8s.Drain(context.Background(), kc, "burst-node", 30*time.Second, nil); err != nil {
 		t.Fatalf("Drain: %v", err)
 	}
 
@@ -162,7 +162,7 @@ func TestDrain_Timeout(t *testing.T) {
 		return false, nil, nil
 	})
 
-	err := k8s.Drain(context.Background(), kc, "burst-node", 100*time.Millisecond)
+	err := k8s.Drain(context.Background(), kc, "burst-node", 100*time.Millisecond, nil)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}

@@ -55,7 +55,7 @@ func TestBurstScalesMigratesAndBacksUp(t *testing.T) {
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
 	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
-	if err := core.Burst(context.Background(), cc, kc, vc, params, nil); err != nil {
+	if err := core.Burst(context.Background(), cc, kc, vc, params, core.Progress{}); err != nil {
 		t.Fatalf("Burst: %v", err)
 	}
 
@@ -95,7 +95,7 @@ func TestBurstFailsFastWhenPoolMissing(t *testing.T) {
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
 	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
-	err := core.Burst(context.Background(), cc, kc, vc, params, nil)
+	err := core.Burst(context.Background(), cc, kc, vc, params, core.Progress{})
 	if err == nil {
 		t.Fatal("expected fail-fast when pool missing")
 	}
@@ -117,7 +117,7 @@ func TestBurstRollsBackOnMigrateFailure(t *testing.T) {
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
 	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
-	err := core.Burst(context.Background(), cc, kc, vc, params, nil)
+	err := core.Burst(context.Background(), cc, kc, vc, params, core.Progress{})
 	if err == nil {
 		t.Fatal("expected error when migrate finds no pool node")
 	}

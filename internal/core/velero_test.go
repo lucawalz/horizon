@@ -29,7 +29,7 @@ func TestDefaultRestoreName(t *testing.T) {
 func TestCreateBackupWithoutWaitDoesNotTrigger(t *testing.T) {
 	vc := &fakeVeleroClient{}
 	spec := velerov1.BackupSpec{IncludedNamespaces: []string{"ns1"}}
-	if err := core.CreateBackup(context.Background(), vc, spec, "my-backup", false); err != nil {
+	if err := core.CreateBackup(context.Background(), vc, spec, "my-backup", false, core.Progress{}); err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
 	if vc.createdBackupName != "my-backup" {
@@ -43,7 +43,7 @@ func TestCreateBackupWithoutWaitDoesNotTrigger(t *testing.T) {
 func TestCreateBackupWaitTriggers(t *testing.T) {
 	vc := &fakeVeleroClient{}
 	spec := velerov1.BackupSpec{IncludedNamespaces: []string{"ns1"}}
-	if err := core.CreateBackup(context.Background(), vc, spec, "wb", true); err != nil {
+	if err := core.CreateBackup(context.Background(), vc, spec, "wb", true, core.Progress{}); err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
 	if !vc.waited {
@@ -101,7 +101,7 @@ func TestGetBackupReturnsNamed(t *testing.T) {
 
 func TestDeleteBackupForwardsName(t *testing.T) {
 	vc := &fakeVeleroClient{}
-	if err := core.DeleteBackup(context.Background(), vc, "gone"); err != nil {
+	if err := core.DeleteBackup(context.Background(), vc, "gone", core.Progress{}); err != nil {
 		t.Fatalf("DeleteBackup: %v", err)
 	}
 	if vc.deletedBackup != "gone" {
@@ -113,7 +113,7 @@ func TestCreateRestoreDefaultNameAndForward(t *testing.T) {
 	vc := &fakeVeleroClient{}
 	name := core.DefaultRestoreName("bk1", fixedNow())
 	spec := velerov1.RestoreSpec{BackupName: "bk1"}
-	if err := core.CreateRestore(context.Background(), vc, spec, name, false); err != nil {
+	if err := core.CreateRestore(context.Background(), vc, spec, name, false, core.Progress{}); err != nil {
 		t.Fatalf("CreateRestore: %v", err)
 	}
 	if vc.createdRestoreName != "horizon-restore-bk1-20260612-143005" {
@@ -130,7 +130,7 @@ func TestCreateScheduleForwardsSpecAndName(t *testing.T) {
 		Schedule: "0 3 * * *",
 		Template: velerov1.BackupSpec{IncludedNamespaces: []string{"app"}},
 	}
-	if err := core.CreateSchedule(context.Background(), vc, spec, "nightly"); err != nil {
+	if err := core.CreateSchedule(context.Background(), vc, spec, "nightly", core.Progress{}); err != nil {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
 	if vc.createdScheduleName != "nightly" {
@@ -171,7 +171,7 @@ func TestListSchedulesAndGetSchedule(t *testing.T) {
 
 func TestDeleteScheduleForwardsName(t *testing.T) {
 	vc := &fakeVeleroClient{}
-	if err := core.DeleteSchedule(context.Background(), vc, "nightly"); err != nil {
+	if err := core.DeleteSchedule(context.Background(), vc, "nightly", core.Progress{}); err != nil {
 		t.Fatalf("DeleteSchedule: %v", err)
 	}
 	if vc.deletedSchedule != "nightly" {
@@ -198,7 +198,7 @@ func TestListAndCreateStorageLocations(t *testing.T) {
 	}
 
 	spec := velerov1.BackupStorageLocationSpec{Provider: "aws"}
-	if err := core.CreateBackupStorageLocation(context.Background(), vc, spec, "secondary"); err != nil {
+	if err := core.CreateBackupStorageLocation(context.Background(), vc, spec, "secondary", core.Progress{}); err != nil {
 		t.Fatalf("CreateBackupStorageLocation: %v", err)
 	}
 	if vc.createdBSLName != "secondary" || vc.createdBSLSpec.Provider != "aws" {

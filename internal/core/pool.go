@@ -10,11 +10,24 @@ import (
 
 const ElasticPoolType = "elastic"
 
-type Progress func(msg string)
+type Progress struct {
+	emit  func(string)
+	debug func(string)
+}
 
-func (p Progress) emit(msg string) {
-	if p != nil {
-		p(msg)
+func NewProgress(emit, debug func(string)) Progress {
+	return Progress{emit: emit, debug: debug}
+}
+
+func (p Progress) Emit(s string) {
+	if p.emit != nil {
+		p.emit(s)
+	}
+}
+
+func (p Progress) Debug(s string) {
+	if p.debug != nil {
+		p.debug(s)
 	}
 }
 
@@ -48,9 +61,9 @@ func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, nu
 		if md.Spec.Replicas != nil {
 			current = *md.Spec.Replicas
 		}
-		progress.emit(fmt.Sprintf("[dry-run] pool %s/%s (cluster %s): %d -> %d replicas",
+		progress.Emit(fmt.Sprintf("[dry-run] pool %s/%s (cluster %s): %d -> %d replicas",
 			target.Namespace, target.Name, target.Cluster, current, target.Replicas))
-		progress.emit("[dry-run] No actions executed.")
+		progress.Emit("[dry-run] No actions executed.")
 		return nil
 	}
 
@@ -65,9 +78,10 @@ func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, nu
 		if err := cc.NudgeControlPlaneInitialized(ctx, target.Namespace, target.Cluster); err != nil {
 			return err
 		}
-		progress.emit(fmt.Sprintf("Nudged control-plane-initialized for cluster %q.", target.Cluster))
+		progress.Emit(fmt.Sprintf("Nudged control-plane-initialized for cluster %q.", target.Cluster))
 	}
 
+	progress.Debug(fmt.Sprintf("pool type %q resolves to MachineDeployment %s/%s", target.PoolType, target.Namespace, target.Name))
 	md, err := cc.GetPool(ctx, target.Namespace, target.Name)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -80,19 +94,22 @@ func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, nu
 	if md.Spec.Replicas != nil {
 		current = *md.Spec.Replicas
 	}
+	progress.Debug(fmt.Sprintf("current replicas %d", current))
 	if current >= target.Replicas {
-		progress.emit(fmt.Sprintf("pool %s/%s already at %d replicas (>= %d); nothing to do",
+		progress.Emit(fmt.Sprintf("pool %s/%s already at %d replicas (>= %d); nothing to do",
 			target.Namespace, target.Name, current, target.Replicas))
 		return nil
 	}
 
+	progress.Debug(fmt.Sprintf("patching replicas %d -> %d", current, target.Replicas))
 	if err := cc.ScalePool(ctx, target.Namespace, target.Name, target.Replicas); err != nil {
 		return err
 	}
-	progress.emit(fmt.Sprintf("Scaled pool %s/%s: %d -> %d replicas",
+	progress.Debug("patch accepted")
+	progress.Emit(fmt.Sprintf("Scaled pool %s/%s: %d -> %d replicas",
 		target.Namespace, target.Name, current, target.Replicas))
 	if target.PoolType == ElasticPoolType {
-		progress.emit("Note: the cluster-autoscaler owns the elastic pool and may override this scale.")
+		progress.Emit("Note: the cluster-autoscaler owns the elastic pool and may override this scale.")
 	}
 	return nil
 }
@@ -104,31 +121,36 @@ func ScaleDown(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, 
 
 	if dryRun {
 		if del {
-			progress.emit(fmt.Sprintf("[dry-run] delete pool %s/%s", target.Namespace, target.Name))
+			progress.Emit(fmt.Sprintf("[dry-run] delete pool %s/%s", target.Namespace, target.Name))
 		} else {
-			progress.emit(fmt.Sprintf("[dry-run] scale pool %s/%s to 0 replicas", target.Namespace, target.Name))
+			progress.Emit(fmt.Sprintf("[dry-run] scale pool %s/%s to 0 replicas", target.Namespace, target.Name))
 		}
-		progress.emit("[dry-run] No actions executed.")
+		progress.Emit("[dry-run] No actions executed.")
 		return nil
 	}
 
+	progress.Debug(fmt.Sprintf("pool type %q resolves to MachineDeployment %s/%s", target.PoolType, target.Namespace, target.Name))
 	if del {
+		progress.Debug("deleting MachineDeployment")
 		if err := cc.DeletePool(ctx, target.Namespace, target.Name); err != nil {
 			if apierrors.IsNotFound(err) {
 				return NotFoundPoolErr(target.Namespace, target.Name)
 			}
 			return err
 		}
-		progress.emit(fmt.Sprintf("Deleted pool %s/%s", target.Namespace, target.Name))
+		progress.Debug("delete accepted")
+		progress.Emit(fmt.Sprintf("Deleted pool %s/%s", target.Namespace, target.Name))
 		return nil
 	}
 
+	progress.Debug("patching replicas -> 0")
 	if err := cc.ScalePool(ctx, target.Namespace, target.Name, 0); err != nil {
 		if apierrors.IsNotFound(err) {
 			return NotFoundPoolErr(target.Namespace, target.Name)
 		}
 		return err
 	}
-	progress.emit(fmt.Sprintf("Scaled pool %s/%s to 0 replicas", target.Namespace, target.Name))
+	progress.Debug("patch accepted")
+	progress.Emit(fmt.Sprintf("Scaled pool %s/%s to 0 replicas", target.Namespace, target.Name))
 	return nil
 }

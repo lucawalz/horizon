@@ -3,7 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,7 +13,10 @@ import (
 
 const evictRetryDelay = 5 * time.Second
 
-func Drain(ctx context.Context, kc kubernetes.Interface, nodeName string, timeout time.Duration) error {
+func Drain(ctx context.Context, kc kubernetes.Interface, nodeName string, timeout time.Duration, out io.Writer) error {
+	if out == nil {
+		out = io.Discard
+	}
 	node, err := kc.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("drain: get node %q: %w", nodeName, err)
@@ -27,8 +30,8 @@ func Drain(ctx context.Context, kc kubernetes.Interface, nodeName string, timeou
 		DeleteEmptyDirData:   true,
 		Timeout:              timeout,
 		EvictErrorRetryDelay: evictRetryDelay,
-		Out:                  os.Stderr,
-		ErrOut:               os.Stderr,
+		Out:                  out,
+		ErrOut:               out,
 	}
 
 	if err := drain.RunCordonOrUncordon(helper, node, true); err != nil {

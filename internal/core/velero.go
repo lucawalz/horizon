@@ -29,21 +29,24 @@ func DefaultRestoreName(backupName string, now time.Time) string {
 	return fmt.Sprintf("horizon-restore-%s-%s", backupName, now.UTC().Format(BackupNameTimeLayout))
 }
 
-func CreateBackup(ctx context.Context, vc VeleroClient, spec velerov1.BackupSpec, name string, wait bool) error {
+func CreateBackup(ctx context.Context, vc VeleroClient, spec velerov1.BackupSpec, name string, wait bool, progress Progress) error {
+	progress.Debug("create Backup " + name)
 	if wait {
 		return vc.TriggerBackup(ctx, spec, name, veleroWaitPoll, veleroWaitTimeout)
 	}
 	return vc.CreateBackup(ctx, spec, name)
 }
 
-func CreateRestore(ctx context.Context, vc VeleroClient, spec velerov1.RestoreSpec, name string, wait bool) error {
+func CreateRestore(ctx context.Context, vc VeleroClient, spec velerov1.RestoreSpec, name string, wait bool, progress Progress) error {
+	progress.Debug("create Restore " + name)
 	if wait {
 		return vc.TriggerRestore(ctx, spec, name, veleroWaitPoll, veleroWaitTimeout)
 	}
 	return vc.CreateRestore(ctx, spec, name)
 }
 
-func DeleteBackup(ctx context.Context, vc VeleroClient, name string) error {
+func DeleteBackup(ctx context.Context, vc VeleroClient, name string, progress Progress) error {
+	progress.Debug("delete Backup " + name)
 	return vc.DeleteBackup(ctx, name)
 }
 
@@ -63,7 +66,8 @@ func GetRestore(ctx context.Context, vc VeleroClient, name string) (*velerov1.Re
 	return vc.GetRestore(ctx, name)
 }
 
-func CreateSchedule(ctx context.Context, vc VeleroClient, spec velerov1.ScheduleSpec, name string) error {
+func CreateSchedule(ctx context.Context, vc VeleroClient, spec velerov1.ScheduleSpec, name string, progress Progress) error {
+	progress.Debug("create Schedule " + name)
 	return vc.CreateSchedule(ctx, spec, name)
 }
 
@@ -75,7 +79,8 @@ func GetSchedule(ctx context.Context, vc VeleroClient, name string) (*velerov1.S
 	return vc.GetSchedule(ctx, name)
 }
 
-func DeleteSchedule(ctx context.Context, vc VeleroClient, name string) error {
+func DeleteSchedule(ctx context.Context, vc VeleroClient, name string, progress Progress) error {
+	progress.Debug("delete Schedule " + name)
 	return vc.DeleteSchedule(ctx, name)
 }
 
@@ -83,6 +88,7 @@ func ListBackupStorageLocations(ctx context.Context, vc VeleroClient) ([]velerov
 	return vc.ListBackupStorageLocations(ctx)
 }
 
-func CreateBackupStorageLocation(ctx context.Context, vc VeleroClient, spec velerov1.BackupStorageLocationSpec, name string) error {
+func CreateBackupStorageLocation(ctx context.Context, vc VeleroClient, spec velerov1.BackupStorageLocationSpec, name string, progress Progress) error {
+	progress.Debug("create BackupStorageLocation " + name)
 	return vc.CreateBackupStorageLocation(ctx, spec, name)
 }

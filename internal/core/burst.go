@@ -67,6 +67,7 @@ func Burst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc Vel
 
 	backupName := fmt.Sprintf("horizon-burst-%s-%d", p.Workload, time.Now().Unix())
 	spec := velerov1.BackupSpec{IncludedNamespaces: []string{p.Workload}, StorageLocation: DefaultStorageLocation}
+	progress.Debug("phase backup: namespace " + p.Workload)
 	if err := vc.TriggerBackup(ctx, spec, backupName, burstBackupPoll, burstBackupTimeout); err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
@@ -81,15 +82,18 @@ func Burst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc Vel
 		_ = cc.ScalePool(rbCtx, p.Target.Namespace, p.Target.Name, priorReplicas)
 	}()
 
+	progress.Debug(fmt.Sprintf("phase scale: pool %s/%s -> %d", p.Target.Namespace, p.Target.Name, p.Target.Replicas))
 	if err := cc.ScalePool(ctx, p.Target.Namespace, p.Target.Name, p.Target.Replicas); err != nil {
 		return fmt.Errorf("scale pool: %w", err)
 	}
 	scaled = true
 
+	progress.Debug("phase wait: machines ready")
 	if err := cc.WaitMachinesReady(ctx, p.Target.Namespace, p.Target.Name, p.Target.Replicas, burstMachinePoll, burstMachineTimeout); err != nil {
 		return fmt.Errorf("wait machines: %w", err)
 	}
 
+	progress.Debug("phase migrate: workload " + p.Workload)
 	var saved *k8s.SavedState
 	saved, err = k8s.Migrate(ctx, kc, p.Workload, p.PoolNode)
 	if err != nil {
@@ -108,7 +112,7 @@ func Burst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc Vel
 		return fmt.Errorf("wait workload: %w", err)
 	}
 
-	progress.emit(fmt.Sprintf("Burst complete: pool %s/%s scaled to %d, workload %q migrated",
+	progress.Emit(fmt.Sprintf("Burst complete: pool %s/%s scaled to %d, workload %q migrated",
 		p.Target.Namespace, p.Target.Name, p.Target.Replicas, p.Workload))
 	return nil
 }
