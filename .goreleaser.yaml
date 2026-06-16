@@ -1,0 +1,36 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/horizon
+    binary: horizon
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/lucawalz/horizon/internal/version.version={{.Version}}
+
+archives:
+  - formats: [tar.gz]
+
+brews:
+  - name: horizon
+    repository:
+      owner: lucawalz
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/lucawalz/horizon
+    install: |
+      bin.install "horizon"
+    test: |
+      system "#{bin}/horizon", "version"
