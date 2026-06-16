@@ -5,6 +5,56 @@ import (
 	"github.com/charmbracelet/lipgloss/table"
 )
 
+const (
+	minNameWidth = 8
+	cellPadding  = 1
+	ellipsis     = "…"
+)
+
+func middleEllipsis(s string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	if len([]rune(s)) <= budget {
+		return s
+	}
+	r := []rune(s)
+	if budget <= 1 {
+		return ellipsis
+	}
+	keep := budget - 1
+	head := keep / 2
+	tail := keep - head
+	return string(r[:head]) + ellipsis + string(r[len(r)-tail:])
+}
+
+func fitNameColumn(rows [][]string, nameCol, inner int) {
+	if len(rows) == 0 {
+		return
+	}
+	cols := len(rows[0])
+	budget := inner
+	for col := 0; col < cols; col++ {
+		if col == nameCol {
+			budget -= cellPadding
+			continue
+		}
+		max := 0
+		for _, row := range rows {
+			if w := len([]rune(row[col])); w > max {
+				max = w
+			}
+		}
+		budget -= max + cellPadding
+	}
+	if budget < minNameWidth {
+		budget = minNameWidth
+	}
+	for _, row := range rows {
+		row[nameCol] = middleEllipsis(row[nameCol], budget)
+	}
+}
+
 func renderLogTable(rows [][]string) string {
 	if len(rows) == 0 {
 		return ""

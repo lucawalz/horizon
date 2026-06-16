@@ -121,6 +121,9 @@ func nodesBody(snap core.Snapshot, inner int, full bool) string {
 			rows = append(rows, []string{r.Name, cpu, mem, r.Status})
 		}
 	}
+	if full {
+		fitNameColumn(rows, 0, inner)
+	}
 	statusCol := len(headers) - 1
 	t := newPanelTable(headers, inner, func(row, col int) lipgloss.Style {
 		if row == table.HeaderRow {
