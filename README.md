@@ -49,7 +49,7 @@ flowchart LR
 - Go 1.26 or newer to build.
 - A reachable Kubernetes cluster with the CAPI substrate from bedrock installed: CAPH, cluster-api-k3s, and Rancher Turtles.
 - A kubeconfig with a context that reaches the management cluster, over Tailscale in the homelab setup.
-- Velero in the cluster for backups, and kube-prometheus-stack for the read-only pressure header in `status`.
+- Velero in the cluster for backups, and kube-prometheus-stack for the read-only pressure header in the dashboard.
 
 ## Installation
 
@@ -76,15 +76,15 @@ horizon --context homelab --cluster burst
 
 ### The dashboard
 
-The command centre opens on a single stacked-panel view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory against their display thresholds and the count of pending pods, and panels below list the nodes, the pools with their type and replica state, and any separate CAPI-managed clusters. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
+The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory against their display thresholds and the count of pending pods, and panels on the left list the nodes, the pools with their type and replica state, and any separate CAPI-managed clusters. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
 
 The pool panel shows the type read from each MachineDeployment's `horizon.dev/pool-type` label, alongside its desired and ready replicas and machine state. The pressure header warns when the externally managed control plane is not yet marked initialized, so the nudge is not silently forgotten.
 
 ### Actions
 
-The dashboard is key-driven. Alongside refresh, help, and quit, it offers actions to scale a pool up or down, latch the control-plane nudge, run a guided burst of a workload, manage on-demand clusters, and manage Velero backups and restores, along with draining a node. Each mutating action asks for confirmation before it runs, and long operations such as a burst or a cluster create stream their progress in the view. Cluster creation presents a manifest preview with explicit apply and write actions, where apply creates the cluster live and write renders the manifests into the bedrock tree for Flux to reconcile.
+The dashboard is driven by a command line. Pressing `:` focuses a prompt at the bottom, where the same verbs the retired subcommands used run as typed commands: scale a pool up or down, latch the control-plane nudge, run a guided burst of a workload, create, delete, or list on-demand clusters, manage Velero backups and restores, and drain a node. Output streams into the command log on the right, and the dashboard refreshes when a command changes cluster state. Destructive commands ask for confirmation before they run, and long operations such as a burst or a cluster create stream their progress. Cluster creation takes preview, apply, and write actions, where apply creates the cluster live and write renders the manifests into the bedrock tree for Flux to reconcile.
 
-Press the help key in the dashboard for the full list of bindings.
+Outside the command line the arrow keys scroll the log, `r` refreshes, `?` toggles help, and `q` quits. Type `help` at the prompt for the full list of commands.
 
 ### Non-interactive use
 
@@ -100,7 +100,7 @@ Key fields:
 - `cluster`: default CAPI cluster name; falls back to the pool cluster when unset.
 - `bedrock_path`: path to the bedrock git work tree, required only for the GitOps write action. It is resolved to an absolute path and must exist.
 - `pools`: the default `namespace` (`caph-system`) and `cluster` (`burst`), the `default_type` (`reserved`), the Kubernetes `version` used by `cluster create` when `--version` is omitted, and a `types` map from pool type to MachineDeployment name (`elastic` to `elastic-workers`, `reserved` to `reserved-workers`).
-- `thresholds`: the `burst` and `scale_down` scores and the `window` size, retained only for the read-only pressure header in `status`. They no longer drive any scaling decision.
+- `thresholds`: the `burst` and `scale_down` scores and the `window` size, retained only for the read-only pressure header in the dashboard. They no longer drive any scaling decision.
 
 The retired `infra_path` field is rejected at load time; set `bedrock_path` instead.
 
@@ -108,7 +108,7 @@ The retired `infra_path` field is rejected at load time; set `bedrock_path` inst
 
 - Routine scale-out is the cluster-autoscaler's job. The autoscaler owns elastic pools and scales them to zero on its own. horizon owns reserved pools, scaling them directly, and deliberately leaves the autoscaler min and max annotations off them so the two scaling paths do not fight.
 - A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the pool to its prior replica count.
-- The control-plane nudge is a status-subresource write, the one deliberate exception to GitOps durability. It cannot live in git and resets if the Cluster is recreated, so `status` warns when it is unset.
+- The control-plane nudge is a status-subresource write, the one deliberate exception to GitOps durability. It cannot live in git and resets if the Cluster is recreated, so the dashboard warns when it is unset.
 - Workload placement is a contract: bedrock's KThreesConfigTemplate labels nodes `horizon.dev/pool=<type>` at join, and horizon rewrites workload affinity to match the targeted pool type.
 
 ## Repository layout
