@@ -1,11 +1,12 @@
-package cli_test
+package core_test
 
 import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/lucawalz/horizon/internal/cli"
+	"github.com/lucawalz/horizon/internal/core"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,23 +15,18 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-func TestDrainCommand(t *testing.T) {
+const drainTestTimeout = 100 * time.Millisecond
+
+func TestDrainEmptyNode(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	kc := fake.NewSimpleClientset(node)
 
-	var err error
-	out := captureStdout(func() {
-		err = cli.RunDrainForTest(context.Background(), kc, "burst-node")
-	})
-	if err != nil {
-		t.Fatalf("RunDrainForTest: %v", err)
-	}
-	if !strings.Contains(out, "0 non-DaemonSet pods remain on burst-node") {
-		t.Errorf("output %q does not contain expected drain summary", out)
+	if err := core.Drain(context.Background(), kc, "burst-node", drainTestTimeout); err != nil {
+		t.Fatalf("Drain: %v", err)
 	}
 }
 
-func TestDrainCommand_Timeout(t *testing.T) {
+func TestDrainTimesOutWhenEvictionBlocked(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-node"}}
 	appPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "default"},
@@ -53,7 +49,7 @@ func TestDrainCommand_Timeout(t *testing.T) {
 		return false, nil, nil
 	})
 
-	err := cli.RunDrainForTest(context.Background(), kc, "burst-node")
+	err := core.Drain(context.Background(), kc, "burst-node", drainTestTimeout)
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}

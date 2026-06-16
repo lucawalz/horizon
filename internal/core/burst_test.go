@@ -1,19 +1,17 @@
-package cli_test
+package core_test
 
 import (
 	"context"
 	"strings"
 	"testing"
 
-	"github.com/lucawalz/horizon/internal/capi"
-	"github.com/lucawalz/horizon/internal/cli"
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/k8s"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func workloadPod(name, ns, node string) *corev1.Pod {
@@ -42,12 +40,6 @@ func readyMachine(namespace, pool, nodeName string) *clusterv1.Machine {
 	return m
 }
 
-func burstCapiClient(t *testing.T, objs ...client.Object) *capi.Client {
-	t.Helper()
-	cl := capiScheme(t).WithObjects(objs...).Build()
-	return capi.NewClientWithCRClient(cl)
-}
-
 func TestBurstScalesMigratesAndBacksUp(t *testing.T) {
 	hostname := "burst-node-1"
 	cc := burstCapiClient(t,
@@ -61,10 +53,10 @@ func TestBurstScalesMigratesAndBacksUp(t *testing.T) {
 	)
 	vc := &fakeVeleroClient{}
 
-	target := cli.PoolTargetForTest("caph-system", "burst-workers", "burst", 1)
-	params := cli.BurstParamsForTest(target, "sentio-systems", "burst")
-	if err := cli.RunBurstForTest(context.Background(), cc, kc, vc, params); err != nil {
-		t.Fatalf("RunBurstForTest: %v", err)
+	target := poolTarget("caph-system", "burst-workers", "burst", 1)
+	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
+	if err := core.Burst(context.Background(), cc, kc, vc, params, nil); err != nil {
+		t.Fatalf("Burst: %v", err)
 	}
 
 	if !vc.waited {
@@ -101,9 +93,9 @@ func TestBurstFailsFastWhenPoolMissing(t *testing.T) {
 	kc := fake.NewSimpleClientset()
 	vc := &fakeVeleroClient{}
 
-	target := cli.PoolTargetForTest("caph-system", "burst-workers", "burst", 1)
-	params := cli.BurstParamsForTest(target, "sentio-systems", "burst")
-	err := cli.RunBurstForTest(context.Background(), cc, kc, vc, params)
+	target := poolTarget("caph-system", "burst-workers", "burst", 1)
+	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
+	err := core.Burst(context.Background(), cc, kc, vc, params, nil)
 	if err == nil {
 		t.Fatal("expected fail-fast when pool missing")
 	}
@@ -123,9 +115,9 @@ func TestBurstRollsBackOnMigrateFailure(t *testing.T) {
 	kc := fake.NewSimpleClientset()
 	vc := &fakeVeleroClient{}
 
-	target := cli.PoolTargetForTest("caph-system", "burst-workers", "burst", 1)
-	params := cli.BurstParamsForTest(target, "sentio-systems", "burst")
-	err := cli.RunBurstForTest(context.Background(), cc, kc, vc, params)
+	target := poolTarget("caph-system", "burst-workers", "burst", 1)
+	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
+	err := core.Burst(context.Background(), cc, kc, vc, params, nil)
 	if err == nil {
 		t.Fatal("expected error when migrate finds no pool node")
 	}

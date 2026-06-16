@@ -45,17 +45,8 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.PersistentFlags().Bool("dry-run", false, "Print planned actions without executing")
 	rootCmd.PersistentFlags().String("context", "", "Kubeconfig context to target")
 	rootCmd.PersistentFlags().String("cluster", "", "CAPI cluster name to target")
-	rootCmd.AddCommand(newStatusCmd(app))
-	rootCmd.AddCommand(newBurstCmd(app))
-	rootCmd.AddCommand(newUpCmd(app))
-	rootCmd.AddCommand(newDownCmd(app))
-	rootCmd.AddCommand(newDrainCmd(app))
-	rootCmd.AddCommand(newBackupCmd(app))
-	rootCmd.AddCommand(newRestoreCmd(app))
-	rootCmd.AddCommand(newClusterCmd(app))
 	rootCmd.AddCommand(newVersionCmd())
 }
 
