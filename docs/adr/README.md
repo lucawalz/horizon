@@ -11,3 +11,4 @@ These records capture horizon's own design decisions, the choices behind the Go 
 - [0007. Add on-demand capacity through MachineDeployments in two modes](0007-on-demand-pools-via-machinedeployments.md) (accepted)
 - [0008. Retire the laptop watch daemon and WireGuard](0008-retire-watch-daemon-and-wireguard.md) (accepted)
 - [0009. Make an interactive TUI the primary interface](0009-interactive-tui-as-primary-interface.md) (accepted)
+- [0010. Make cluster create provider-agnostic through a ClusterClass topology](0010-provider-agnostic-cluster-create-via-clusterclass.md) (accepted)
