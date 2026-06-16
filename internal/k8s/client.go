@@ -35,6 +35,7 @@ func RestConfigForContext(kubeconfigPath, contextName string) (*rest.Config, err
 		if err == nil {
 			restCfg.WarningHandler = rest.NoWarnings{}
 			applyRateLimits(restCfg)
+			WrapAPITrace(restCfg)
 			return restCfg, nil
 		}
 		if err != rest.ErrNotInCluster {
@@ -58,6 +59,7 @@ func RestConfigForContext(kubeconfigPath, contextName string) (*rest.Config, err
 	}
 	restCfg.WarningHandler = rest.NoWarnings{}
 	applyRateLimits(restCfg)
+	WrapAPITrace(restCfg)
 	return restCfg, nil
 }
 

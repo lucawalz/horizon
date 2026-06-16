@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lucawalz/horizon/internal/k8s"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,6 +39,7 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 	}
 	restCfg.WarningHandler = rest.NoWarnings{}
 	restCfg.RateLimiter = flowcontrol.NewFakeAlwaysRateLimiter()
+	k8s.WrapAPITrace(restCfg)
 
 	scheme := runtime.NewScheme()
 	if err := velerov1.AddToScheme(scheme); err != nil {
