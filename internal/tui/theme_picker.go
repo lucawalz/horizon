@@ -89,7 +89,8 @@ func (p themePicker) view(width, height int) string {
 		}
 		rows = append(rows, line)
 	}
-	content := lipgloss.JoinVertical(lipgloss.Left,
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
 		helpTitleStyle.Render("theme"),
 		strings.Join(rows, "\n"),
 		"",
@@ -108,18 +109,21 @@ func themePreviewSample() string {
 		progress.WithoutPercentage(),
 	)
 	bar.EmptyColor = adaptiveHex(theme.GaugeBg)
-	heading := lipgloss.JoinHorizontal(lipgloss.Left,
+	heading := lipgloss.JoinHorizontal(
+		lipgloss.Left,
 		panelTitleStyle.Render("HORIZON"),
 		dimStyle.Render("  cluster command centre"),
 	)
-	statuses := lipgloss.JoinHorizontal(lipgloss.Left,
+	statuses := lipgloss.JoinHorizontal(
+		lipgloss.Left,
 		statusDot(theme.DotGreen)+" Ready",
 		"   ",
 		statusDot(theme.DotRed)+" NotReady",
 		"   ",
 		errStyle.Render("error"),
 	)
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		subLabelStyle.Render("preview"),
 		heading,
 		statuses,

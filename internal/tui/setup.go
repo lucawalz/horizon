@@ -456,7 +456,8 @@ func (m setupModel) content() string {
 }
 
 func header() string {
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		panelTitleStyle.Render("horizon"),
 		dimStyle.Render("first-run setup"),
 	)
@@ -486,7 +487,8 @@ func breadcrumb(active setupStep) string {
 
 func (m setupModel) contextView() string {
 	if m.contextErr != nil {
-		return lipgloss.JoinVertical(lipgloss.Left,
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
 			errStyle.Render("kubeconfig: "+m.contextErr.Error()),
 			"",
 			dimStyle.Render("esc quit"),
@@ -506,7 +508,8 @@ func (m setupModel) contextView() string {
 		}
 		rows = append(rows, line)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		strings.Join(rows, "\n"),
 		"",
 		dimStyle.Render("↑↓ select · enter confirm · esc quit"),
@@ -515,7 +518,8 @@ func (m setupModel) contextView() string {
 
 func (m setupModel) detectView() string {
 	if m.detectErr != nil {
-		return lipgloss.JoinVertical(lipgloss.Left,
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
 			errStyle.Render(m.detectErr.Error()),
 			"",
 			dimStyle.Render("r retry · esc back"),
@@ -553,7 +557,8 @@ func (m setupModel) themeView() string {
 		}
 		rows = append(rows, line)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		strings.Join(rows, "\n"),
 		"",
 		dimStyle.Render("↑↓ select · enter save · esc back"),
@@ -562,13 +567,15 @@ func (m setupModel) themeView() string {
 
 func (m setupModel) doneView() string {
 	if m.saveErr != "" {
-		return lipgloss.JoinVertical(lipgloss.Left,
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
 			errStyle.Render("save failed: "+m.saveErr),
 			"",
 			dimStyle.Render("enter quit"),
 		)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		helpCommandStyle.Render("setup complete"),
 		dimStyle.Render("configuration written to "+m.savedAt),
 		"",

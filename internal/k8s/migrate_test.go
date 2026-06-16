@@ -237,7 +237,7 @@ func TestRollbackMigrate_RestoresAffinityAndLeavesNode(t *testing.T) {
 	existingAffinity := &corev1.Affinity{
 		PodAntiAffinity: &corev1.PodAntiAffinity{
 			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-				Weight: 50,
+				Weight:          50,
 				PodAffinityTerm: corev1.PodAffinityTerm{TopologyKey: "kubernetes.io/hostname"},
 			}},
 		},

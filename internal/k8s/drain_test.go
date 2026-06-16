@@ -173,4 +173,3 @@ func TestDrain_Timeout(t *testing.T) {
 		t.Errorf("error %q does not contain 'timeout'", err.Error())
 	}
 }
-

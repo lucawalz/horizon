@@ -8,12 +8,12 @@ import (
 )
 
 const (
-	clusterAPIDir         = "cluster-api"
-	infraDir              = "infrastructure"
-	kustomizationFile     = "kustomization.yaml"
-	poolManifestFile      = "machinedeployment.yaml"
-	clusterManifestFile   = "cluster.yaml"
-	kustomizationHeader   = "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n"
+	clusterAPIDir       = "cluster-api"
+	infraDir            = "infrastructure"
+	kustomizationFile   = "kustomization.yaml"
+	poolManifestFile    = "machinedeployment.yaml"
+	clusterManifestFile = "cluster.yaml"
+	kustomizationHeader = "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n"
 )
 
 type Repo struct {

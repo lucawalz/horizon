@@ -55,7 +55,8 @@ func renderPressure(p core.PressureSummary) string {
 		parts = append(parts, fmt.Sprintf("pending pods %d", p.PendingPods))
 		return strings.Join(parts, "\n")
 	}
-	gauges := lipgloss.JoinHorizontal(lipgloss.Center,
+	gauges := lipgloss.JoinHorizontal(
+		lipgloss.Center,
 		gauge("CPU", p.CPUScore),
 		gaugeSpacing,
 		gauge("Mem", p.MemScore),

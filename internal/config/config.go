@@ -195,7 +195,7 @@ func (c *Config) Save() error {
 	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	if err := os.WriteFile(c.path, data, 0600); err != nil {
+	if err := os.WriteFile(c.path, data, 0o600); err != nil {
 		return fmt.Errorf("write config %q: %w", c.path, err)
 	}
 	return nil

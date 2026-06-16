@@ -95,7 +95,8 @@ func (m model) fits(header, dashboard, inputBox string) bool {
 }
 
 func (m model) helpOverlay() string {
-	content := lipgloss.JoinVertical(lipgloss.Left,
+	content := lipgloss.JoinVertical(
+		lipgloss.Left,
 		helpTitleStyle.Render("commands"),
 		renderHelp(),
 		"",
@@ -149,7 +150,8 @@ func (m model) wideDashboard() string {
 	colWidth := int(float64(m.width-columnGap) * twoColumnRatio)
 	rightWidth := m.width - columnGap - colWidth
 	left := nodesPanel(m.snap, colWidth, true)
-	right := lipgloss.JoinVertical(lipgloss.Left,
+	right := lipgloss.JoinVertical(
+		lipgloss.Left,
 		clusterStatusPanel(m.snap, rightWidth, false),
 		clustersPanel(m.snap, rightWidth),
 	)
@@ -161,7 +163,8 @@ func (m model) wideDashboard() string {
 }
 
 func (m model) mediumDashboard() string {
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		nodesPanel(m.snap, m.width, false),
 		poolsPanel(m.snap, m.width, true),
 		clusterStatusPanel(m.snap, m.width, false),
@@ -170,7 +173,8 @@ func (m model) mediumDashboard() string {
 }
 
 func (m model) narrowDashboard() string {
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
 		nodesPanel(m.snap, m.width, false),
 		poolsPanel(m.snap, m.width, false),
 		clusterStatusPanel(m.snap, m.width, true),

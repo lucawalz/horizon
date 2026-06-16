@@ -42,7 +42,8 @@ func readyMachine(namespace, pool, nodeName string) *clusterv1.Machine {
 
 func TestBurstScalesMigratesAndBacksUp(t *testing.T) {
 	hostname := "burst-node-1"
-	cc := burstCapiClient(t,
+	cc := burstCapiClient(
+		t,
 		machineDeployment("caph-system", "burst-workers", "burst", 0),
 		readyMachine("caph-system", "burst-workers", hostname),
 	)
@@ -108,7 +109,8 @@ func TestBurstFailsFastWhenPoolMissing(t *testing.T) {
 }
 
 func TestBurstRollsBackOnMigrateFailure(t *testing.T) {
-	cc := burstCapiClient(t,
+	cc := burstCapiClient(
+		t,
 		machineDeployment("caph-system", "burst-workers", "burst", 2),
 		readyMachine("caph-system", "burst-workers", "burst-node-1"),
 	)

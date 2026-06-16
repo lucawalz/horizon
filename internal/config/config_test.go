@@ -17,7 +17,7 @@ repo_path: ` + dir + `
 kubeconfig: ~/.kube/config
 cluster: prod
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -36,7 +36,7 @@ func TestRepoPath(t *testing.T) {
 	content := `
 repo_path: ` + dir + `
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -66,7 +66,7 @@ func TestPoolDefaults(t *testing.T) {
 	content := `
 repo_path: ` + dir + `
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -100,7 +100,7 @@ func TestPoolResolve(t *testing.T) {
 	content := `
 repo_path: ` + dir + `
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -136,7 +136,7 @@ pools:
     elastic: edge-elastic
     reserved: edge-reserved
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -165,7 +165,7 @@ pools:
 func TestThemeDefaultsToAuto(t *testing.T) {
 	dir := t.TempDir()
 	content := "repo_path: " + dir + "\n"
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -182,7 +182,7 @@ func TestThemeDefaultsToAuto(t *testing.T) {
 func TestThemeInvalidRejected(t *testing.T) {
 	dir := t.TempDir()
 	content := "repo_path: " + dir + "\ntheme: neon\n"
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -195,7 +195,7 @@ func TestThemeInvalidRejected(t *testing.T) {
 func TestSaveRoundTripsTheme(t *testing.T) {
 	dir := t.TempDir()
 	content := "repo_path: " + dir + "\ncluster: prod\ntheme: dark\n"
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -268,7 +268,7 @@ func TestLoadNotConfigured(t *testing.T) {
 func TestLoadParseErrorIsNotNotConfigured(t *testing.T) {
 	dir := t.TempDir()
 	content := "repo_path: [unterminated\n"
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -319,7 +319,7 @@ func TestLegacyInfraPathWithoutRepoPathFailsFast(t *testing.T) {
 	content := `
 infra_path: ` + dir + `
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -338,7 +338,7 @@ func TestLegacyBedrockPathWithoutRepoPathFailsFast(t *testing.T) {
 	content := `
 bedrock_path: ` + dir + `
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)
@@ -358,7 +358,7 @@ func TestEmptyLegacyBedrockPathLoadsCleanly(t *testing.T) {
 repo_path: ` + dir + `
 bedrock_path: ""
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HORIZON_CONFIG_DIR", dir)

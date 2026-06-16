@@ -10,7 +10,8 @@ import (
 )
 
 func TestScaleUpScalesPool(t *testing.T) {
-	cc := capiClient(t,
+	cc := capiClient(
+		t,
 		machineDeployment("caph-system", "burst-workers", "burst", 0),
 		initializedCluster("caph-system", "burst", true),
 	)
@@ -30,7 +31,8 @@ func TestScaleUpScalesPool(t *testing.T) {
 }
 
 func TestScaleUpRefusesWhenControlPlaneNotInitialized(t *testing.T) {
-	cc := capiClient(t,
+	cc := capiClient(
+		t,
 		machineDeployment("caph-system", "burst-workers", "burst", 0),
 		initializedCluster("caph-system", "burst", false),
 	)
@@ -51,7 +53,8 @@ func TestScaleUpRefusesWhenControlPlaneNotInitialized(t *testing.T) {
 }
 
 func TestScaleUpNudgeLatchesAndScales(t *testing.T) {
-	cc := capiClient(t,
+	cc := capiClient(
+		t,
 		machineDeployment("caph-system", "burst-workers", "burst", 0),
 		initializedCluster("caph-system", "burst", false),
 	)
@@ -88,7 +91,8 @@ func TestScaleUpFailsFastWhenPoolMissing(t *testing.T) {
 }
 
 func TestScaleUpDryRunDoesNotMutate(t *testing.T) {
-	cc := capiClient(t,
+	cc := capiClient(
+		t,
 		machineDeployment("caph-system", "burst-workers", "burst", 0),
 		initializedCluster("caph-system", "burst", false),
 	)
@@ -109,7 +113,8 @@ func TestScaleUpDryRunDoesNotMutate(t *testing.T) {
 }
 
 func TestScaleUpElasticEmitsAutoscalerNote(t *testing.T) {
-	cc := capiClient(t,
+	cc := capiClient(
+		t,
 		machineDeployment("caph-system", "elastic-workers", "burst", 0),
 		initializedCluster("caph-system", "burst", true),
 	)
