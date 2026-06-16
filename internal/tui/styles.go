@@ -14,8 +14,6 @@ const (
 	modalHPadding = 2
 	modalVPadding = 1
 
-	warnThresholdRatio = 0.75
-
 	wideBreakpoint   = 100
 	mediumBreakpoint = 70
 

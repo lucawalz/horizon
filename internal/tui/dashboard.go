@@ -13,13 +13,16 @@ import (
 const (
 	naCell    = "N/A"
 	emptyCell = "-"
+
+	gaugeWarnBand = 0.75
+	gaugeCritBand = 0.90
 )
 
-func gaugeColor(score, threshold float64) lipgloss.AdaptiveColor {
+func gaugeColor(score float64) lipgloss.AdaptiveColor {
 	switch {
-	case score >= threshold:
+	case score >= gaugeCritBand:
 		return theme.DotRed
-	case score >= threshold*warnThresholdRatio:
+	case score >= gaugeWarnBand:
 		return theme.DotYellow
 	default:
 		return theme.DotGreen
@@ -53,24 +56,24 @@ func renderPressure(p core.PressureSummary) string {
 		return strings.Join(parts, "\n")
 	}
 	gauges := lipgloss.JoinHorizontal(lipgloss.Center,
-		gauge("CPU", p.CPUScore, p.Threshold),
+		gauge("CPU", p.CPUScore),
 		gaugeSpacing,
-		gauge("Mem", p.MemScore, p.Threshold),
+		gauge("Mem", p.MemScore),
 		gaugeSpacing+dimStyle.Render(fmt.Sprintf("pending pods %d", p.PendingPods)),
 	)
 	parts = append(parts, gauges)
 	return strings.Join(parts, "\n")
 }
 
-func gauge(label string, score, threshold float64) string {
-	color := gaugeColor(score, threshold)
+func gauge(label string, score float64) string {
+	color := gaugeColor(score)
 	bar := progress.New(
 		progress.WithSolidFill(adaptiveHex(color)),
 		progress.WithWidth(gaugeWidth),
 		progress.WithoutPercentage(),
 	)
 	bar.EmptyColor = adaptiveHex(theme.GaugeBg)
-	return fmt.Sprintf("%s %s %.2f/%.2f %s", gaugeLabelStyle.Render(label), bar.ViewAs(score), score, threshold, statusDot(color))
+	return fmt.Sprintf("%s %s %.2f %s", gaugeLabelStyle.Render(label), bar.ViewAs(score), score, statusDot(color))
 }
 
 func pressureSummaryLine(snap core.Snapshot) string {
