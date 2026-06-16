@@ -139,29 +139,51 @@ func PressureFor(ctx context.Context, app *App, usage map[string]*metricsv1beta1
 		return PressureSummary{Err: err}
 	}
 
-	var cpuSum, memSum, ready int
+	var cpuFraction, memFraction float64
+	var ready int
 	for _, node := range nodes.Items {
 		if NodeStatus(node) != "Ready" {
 			continue
 		}
-		util := NodeUtilizationFor(node, usage)
-		if !util.Present {
+		frac, ok := nodeUsageFraction(node, usage)
+		if !ok {
 			continue
 		}
-		cpuSum += util.CPUPercent
-		memSum += util.MemPercent
+		cpuFraction += frac.cpu
+		memFraction += frac.mem
 		ready++
 	}
 
 	pending, perr := pendingPodCount(ctx, app)
 	return PressureSummary{
 		Available:      true,
-		CPUScore:       clusterScore(cpuSum, ready),
-		MemScore:       clusterScore(memSum, ready),
+		CPUScore:       clusterScore(cpuFraction, ready),
+		MemScore:       clusterScore(memFraction, ready),
 		Threshold:      app.Config.Thresholds.Burst,
 		PendingPods:    pending,
 		MetricsWarning: perr,
 	}
+}
+
+type usageFraction struct {
+	cpu float64
+	mem float64
+}
+
+func nodeUsageFraction(node corev1.Node, usage map[string]*metricsv1beta1.NodeMetrics) (usageFraction, bool) {
+	metrics, ok := usage[node.Name]
+	if !ok {
+		return usageFraction{}, false
+	}
+	cpuAlloc := node.Status.Allocatable.Cpu().MilliValue()
+	memAlloc := node.Status.Allocatable.Memory().Value()
+	if cpuAlloc == 0 || memAlloc == 0 {
+		return usageFraction{}, false
+	}
+	return usageFraction{
+		cpu: float64(metrics.Usage.Cpu().MilliValue()) / float64(cpuAlloc),
+		mem: float64(metrics.Usage.Memory().Value()) / float64(memAlloc),
+	}, true
 }
 
 func NodeRows(ctx context.Context, app *App, usage map[string]*metricsv1beta1.NodeMetrics) ([]NodeRow, error) {
@@ -287,29 +309,22 @@ func pendingPodCount(ctx context.Context, app *App) (int, error) {
 }
 
 func NodeUtilizationFor(node corev1.Node, usage map[string]*metricsv1beta1.NodeMetrics) NodeUtilization {
-	metrics, ok := usage[node.Name]
+	frac, ok := nodeUsageFraction(node, usage)
 	if !ok {
 		return NodeUtilization{}
 	}
-	cpuUsed := metrics.Usage.Cpu().MilliValue()
-	cpuAlloc := node.Status.Allocatable.Cpu().MilliValue()
-	memUsed := metrics.Usage.Memory().Value()
-	memAlloc := node.Status.Allocatable.Memory().Value()
-	if cpuAlloc == 0 || memAlloc == 0 {
-		return NodeUtilization{}
-	}
 	return NodeUtilization{
-		CPUPercent: int(cpuUsed * 100 / cpuAlloc),
-		MemPercent: int(memUsed * 100 / memAlloc),
+		CPUPercent: int(frac.cpu * 100),
+		MemPercent: int(frac.mem * 100),
 		Present:    true,
 	}
 }
 
-func clusterScore(sumPercent, count int) float64 {
+func clusterScore(sumFraction float64, count int) float64 {
 	if count == 0 {
 		return 0.0
 	}
-	return float64(sumPercent) / float64(count) / 100.0
+	return sumFraction / float64(count)
 }
 
 func autoscalerActivity(data map[string]string) string {
