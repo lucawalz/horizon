@@ -585,10 +585,10 @@ func helpLines() []helpEntry {
 		{"restore list · restore describe <name>", "inspect velero restores"},
 		{"schedule create <name> --schedule \"<cron>\" [--include-namespaces ...]", "create a recurring backup schedule"},
 		{"schedule list · describe <name> · delete <name>", "inspect velero schedules"},
-		{"bsl create <name> --provider <p> --bucket <b>", "register a storage location CR (no bucket provisioning)"},
+		{"bsl create <name> --provider <p> --bucket <b>", "point velero at an existing bucket"},
 		{"bsl list", "inspect backup storage locations"},
 		{"drain <node>", "cordon and evict a node"},
-		{"theme [light|dark|auto]", "set theme directly, or open the live picker with no argument"},
+		{"theme [light|dark|auto]", "set or live-pick the theme"},
 		{"refresh · clear · help · quit", "session controls"},
 		{"↑↓ · pgup/pgdn", "scroll the command log"},
 	}
