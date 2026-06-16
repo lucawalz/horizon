@@ -115,18 +115,20 @@ func BuildSnapshot(ctx context.Context, app *App) Snapshot {
 		Autoscaler: AutoscalerStateFor(ctx, app),
 	}
 
+	var nodeReady map[string]bool
 	if nodesErr != nil {
 		snap.Pressure = PressureSummary{Err: nodesErr}
 		snap.NodesErr = nodesErr
 	} else {
 		snap.Pressure = pressureFromLists(nodes.Items, pods, podsErr, usage)
 		snap.Nodes = nodeRowsFromLists(nodes.Items, pods, podsErr, usage)
+		nodeReady = nodeReadyMap(nodes.Items)
 	}
 	if usageErr != nil {
 		snap.Pressure.MetricsUnavailable = usageErr
 	}
 
-	snap.Pools, snap.PoolsErr = PoolRows(ctx, app)
+	snap.Pools, snap.PoolsErr = PoolRows(ctx, app, nodeReady)
 	snap.Clusters, snap.ClustersErr = ClusterRows(ctx, app)
 	return snap
 }
@@ -253,7 +255,7 @@ func nodeRowsFromLists(nodes []corev1.Node, pods *corev1.PodList, podsErr error,
 	return rows
 }
 
-func PoolRows(ctx context.Context, app *App) ([]PoolRow, error) {
+func PoolRows(ctx context.Context, app *App, nodeReady map[string]bool) ([]PoolRow, error) {
 	pools, err := listPoolsForStatus(ctx, app)
 	if err != nil {
 		return nil, err
@@ -265,25 +267,39 @@ func PoolRows(ctx context.Context, app *App) ([]PoolRow, error) {
 			Name:    pool.Name,
 			Type:    ValueOrDash(capi.PoolType(&pool)),
 			Desired: ReplicaCell(pool.Spec.Replicas),
-			Ready:   ReplicaCell(pool.Status.ReadyReplicas),
 		}
 		machines, err := app.CapiClient.ListMachines(ctx, app.Config.Pools.Namespace, pool.Name)
 		if err != nil {
+			row.Ready = "0"
 			row.Machines = []MachineRow{{Err: err}}
 			rows = append(rows, row)
 			continue
 		}
+		ready := 0
 		for _, m := range machines {
+			node := m.Status.NodeRef.Name
+			if node != "" && nodeReady[node] {
+				ready++
+			}
 			row.Machines = append(row.Machines, MachineRow{
 				Name:       m.Name,
 				Phase:      m.Status.Phase,
-				Node:       m.Status.NodeRef.Name,
+				Node:       node,
 				ProviderID: m.Spec.ProviderID,
 			})
 		}
+		row.Ready = fmt.Sprintf("%d", ready)
 		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+func nodeReadyMap(nodes []corev1.Node) map[string]bool {
+	ready := make(map[string]bool, len(nodes))
+	for _, node := range nodes {
+		ready[node.Name] = NodeStatus(node) == "Ready"
+	}
+	return ready
 }
 
 func listPoolsForStatus(ctx context.Context, app *App) ([]clusterv1.MachineDeployment, error) {

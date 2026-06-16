@@ -11,17 +11,19 @@ import (
 )
 
 func TestPoolRowsCarryTypeAndMachines(t *testing.T) {
-	reserved := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 2, 1)
+	reserved := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 3, 0)
 	elastic := mdWithType("caph-system", "elastic-workers", "burst", "elastic", 0, 0)
 	running := machineFor("caph-system", "reserved-workers", "m-running", "Running", "node-a", "hcloud://123")
+	notReady := machineFor("caph-system", "reserved-workers", "m-notready", "Running", "node-b", "hcloud://124")
 	provisioning := machineFor("caph-system", "reserved-workers", "m-provisioning", "Provisioning", "", "")
 
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = capiClient(t, reserved, elastic, running, provisioning,
+	app.CapiClient = capiClient(t, reserved, elastic, running, notReady, provisioning,
 		initializedCluster("caph-system", "burst", true))
 
-	rows, err := core.PoolRows(context.Background(), app)
+	nodeReady := map[string]bool{"node-a": true, "node-b": false}
+	rows, err := core.PoolRows(context.Background(), app, nodeReady)
 	if err != nil {
 		t.Fatalf("PoolRows: %v", err)
 	}
@@ -34,7 +36,7 @@ func TestPoolRowsCarryTypeAndMachines(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing reserved-workers row: %+v", rows)
 	}
-	if res.Type != "reserved" || res.Desired != "2" || res.Ready != "1" {
+	if res.Type != "reserved" || res.Desired != "3" || res.Ready != "1" {
 		t.Errorf("reserved row = %+v", res)
 	}
 	if el := byName["elastic-workers"]; el.Type != "elastic" {
@@ -59,7 +61,7 @@ func TestPoolRowsEmptyPoolHasNoMachines(t *testing.T) {
 	app.KubeClient = fake.NewSimpleClientset()
 	app.CapiClient = capiClient(t, md, initializedCluster("caph-system", "burst", true))
 
-	rows, err := core.PoolRows(context.Background(), app)
+	rows, err := core.PoolRows(context.Background(), app, nil)
 	if err != nil {
 		t.Fatalf("PoolRows: %v", err)
 	}
@@ -219,12 +221,13 @@ func TestPressureDegradesWhenMetricsEmpty(t *testing.T) {
 
 func TestBuildSnapshotAssemblesSections(t *testing.T) {
 	node := nodeWithAllocatable("worker-1", "4", "8Gi")
-	md := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 1, 1)
+	md := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 1, 0)
+	bound := machineFor("caph-system", "reserved-workers", "m-bound", "Running", "worker-1", "hcloud://1")
 
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset(node)
 	app.MetricsClient = metricsClient(t, nodeMetrics("worker-1", "1", "2Gi"))
-	app.CapiClient = capiClient(t, md, initializedCluster("caph-system", "burst", true))
+	app.CapiClient = capiClient(t, md, bound, initializedCluster("caph-system", "burst", true))
 
 	snap := core.BuildSnapshot(context.Background(), app)
 	if snap.NodesErr != nil || len(snap.Nodes) != 1 {
@@ -232,6 +235,9 @@ func TestBuildSnapshotAssemblesSections(t *testing.T) {
 	}
 	if snap.PoolsErr != nil || len(snap.Pools) != 1 {
 		t.Errorf("pools section = %+v err=%v", snap.Pools, snap.PoolsErr)
+	}
+	if snap.Pools[0].Ready != "1" {
+		t.Errorf("pool ready = %q, want 1 from ready node", snap.Pools[0].Ready)
 	}
 	if snap.Nudge.Kind != core.NudgeInitialized {
 		t.Errorf("nudge = %v, want NudgeInitialized", snap.Nudge.Kind)
