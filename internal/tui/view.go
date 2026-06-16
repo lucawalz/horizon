@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	commandPrompt    = "horizon › "
-	bannerTopMargin  = 1
-	clusterTagPrefix = "⎈ "
+	commandPrompt     = "horizon › "
+	bannerTopMargin   = 1
+	bannerPressureGap = 1
+	clusterTagPrefix  = "⎈ "
 )
 
 func (m *model) relayout() {
@@ -132,7 +133,8 @@ func (m model) dashboardBand() string {
 	if !m.loaded {
 		return dimStyle.Render("loading cluster snapshot…")
 	}
-	pressure := renderPressure(m.snap.Pressure)
+	gap := strings.Repeat("\n", bannerPressureGap)
+	pressure := gap + renderPressure(m.snap.Pressure)
 	switch {
 	case m.width >= wideBreakpoint:
 		return lipgloss.JoinVertical(lipgloss.Left, pressure, "", m.wideDashboard())

@@ -107,18 +107,53 @@ type Snapshot struct {
 
 func BuildSnapshot(ctx context.Context, app *App) Snapshot {
 	usage, usageErr := FetchNodeUsage(ctx, app)
+
+	nodes, nodesErr := app.KubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	pods, podsErr := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+
 	snap := Snapshot{
-		Pressure:   PressureFor(ctx, app, usage),
 		Nudge:      NudgeStateFor(ctx, app),
 		Autoscaler: AutoscalerStateFor(ctx, app),
+	}
+
+	if nodesErr != nil {
+		snap.Pressure = PressureSummary{Err: nodesErr}
+		snap.NodesErr = nodesErr
+	} else {
+		snap.Pressure = pressureFromLists(app, nodes.Items, pods, podsErr, usage)
+		snap.Nodes = nodeRowsFromLists(nodes.Items, pods, podsErr, usage)
 	}
 	if usageErr != nil {
 		snap.Pressure.MetricsUnavailable = usageErr
 	}
-	snap.Nodes, snap.NodesErr = NodeRows(ctx, app, usage)
+
 	snap.Pools, snap.PoolsErr = PoolRows(ctx, app)
 	snap.Clusters, snap.ClustersErr = ClusterRows(ctx, app)
 	return snap
+}
+
+func podCountsByNode(pods *corev1.PodList) map[string]int {
+	counts := make(map[string]int)
+	if pods == nil {
+		return counts
+	}
+	for i := range pods.Items {
+		counts[pods.Items[i].Spec.NodeName]++
+	}
+	return counts
+}
+
+func countPendingPods(pods *corev1.PodList) int {
+	if pods == nil {
+		return 0
+	}
+	pending := 0
+	for i := range pods.Items {
+		if pods.Items[i].Status.Phase == corev1.PodPending {
+			pending++
+		}
+	}
+	return pending
 }
 
 func FetchNodeUsage(ctx context.Context, app *App) (map[string]*metricsv1beta1.NodeMetrics, error) {
@@ -138,10 +173,14 @@ func PressureFor(ctx context.Context, app *App, usage map[string]*metricsv1beta1
 	if err != nil {
 		return PressureSummary{Err: err}
 	}
+	pods, podsErr := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	return pressureFromLists(app, nodes.Items, pods, podsErr, usage)
+}
 
+func pressureFromLists(app *App, nodes []corev1.Node, pods *corev1.PodList, podsErr error, usage map[string]*metricsv1beta1.NodeMetrics) PressureSummary {
 	var cpuFraction, memFraction float64
 	var ready int
-	for _, node := range nodes.Items {
+	for _, node := range nodes {
 		if NodeStatus(node) != "Ready" {
 			continue
 		}
@@ -154,14 +193,13 @@ func PressureFor(ctx context.Context, app *App, usage map[string]*metricsv1beta1
 		ready++
 	}
 
-	pending, perr := pendingPodCount(ctx, app)
 	return PressureSummary{
 		Available:      true,
 		CPUScore:       clusterScore(cpuFraction, ready),
 		MemScore:       clusterScore(memFraction, ready),
 		Threshold:      app.Config.Thresholds.Burst,
-		PendingPods:    pending,
-		MetricsWarning: perr,
+		PendingPods:    countPendingPods(pods),
+		MetricsWarning: podsErr,
 	}
 }
 
@@ -191,29 +229,30 @@ func NodeRows(ctx context.Context, app *App, usage map[string]*metricsv1beta1.No
 	if err != nil {
 		return nil, err
 	}
+	pods, podsErr := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	return nodeRowsFromLists(nodes.Items, pods, podsErr, usage), nil
+}
 
-	rows := make([]NodeRow, 0, len(nodes.Items))
-	for _, node := range nodes.Items {
+func nodeRowsFromLists(nodes []corev1.Node, pods *corev1.PodList, podsErr error, usage map[string]*metricsv1beta1.NodeMetrics) []NodeRow {
+	var counts map[string]int
+	if podsErr == nil {
+		counts = podCountsByNode(pods)
+	}
+	rows := make([]NodeRow, 0, len(nodes))
+	for _, node := range nodes {
 		util := NodeUtilizationFor(node, usage)
-		pods, _ := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
-			FieldSelector: "spec.nodeName=" + node.Name,
-		})
-		podCount := 0
-		if pods != nil {
-			podCount = len(pods.Items)
-		}
 		rows = append(rows, NodeRow{
 			Name:           node.Name,
 			Role:           NodeRole(node),
 			CPUPercent:     util.CPUPercent,
 			MemPercent:     util.MemPercent,
 			MetricsPresent: util.Present,
-			PodCount:       podCount,
+			PodCount:       counts[node.Name],
 			Status:         NodeStatus(node),
 			IPv4:           GetNodeIPv4(node),
 		})
 	}
-	return rows, nil
+	return rows
 }
 
 func PoolRows(ctx context.Context, app *App) ([]PoolRow, error) {
@@ -296,16 +335,6 @@ func AutoscalerStateFor(ctx context.Context, app *App) AutoscalerState {
 		return AutoscalerState{Unavailable: true}
 	}
 	return AutoscalerState{Activity: autoscalerActivity(cm.Data)}
-}
-
-func pendingPodCount(ctx context.Context, app *App) (int, error) {
-	pods, err := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{
-		FieldSelector: "status.phase=Pending",
-	})
-	if err != nil {
-		return 0, err
-	}
-	return len(pods.Items), nil
 }
 
 func NodeUtilizationFor(node corev1.Node, usage map[string]*metricsv1beta1.NodeMetrics) NodeUtilization {

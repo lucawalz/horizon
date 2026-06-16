@@ -10,8 +10,18 @@ import (
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
+const (
+	clientQPS   = 50
+	clientBurst = 100
+)
+
 func InCluster() bool {
 	return os.Getenv("KUBERNETES_SERVICE_HOST") != ""
+}
+
+func applyRateLimits(cfg *rest.Config) {
+	cfg.QPS = clientQPS
+	cfg.Burst = clientBurst
 }
 
 func RestConfig(kubeconfigPath string) (*rest.Config, error) {
@@ -23,6 +33,7 @@ func RestConfigForContext(kubeconfigPath, contextName string) (*rest.Config, err
 		restCfg, err := rest.InClusterConfig()
 		if err == nil {
 			restCfg.WarningHandler = rest.NoWarnings{}
+			applyRateLimits(restCfg)
 			return restCfg, nil
 		}
 		if err != rest.ErrNotInCluster {
@@ -45,6 +56,7 @@ func RestConfigForContext(kubeconfigPath, contextName string) (*rest.Config, err
 		return nil, fmt.Errorf("kubeconfig %q context %q: %w", kubeconfigPath, contextName, err)
 	}
 	restCfg.WarningHandler = rest.NoWarnings{}
+	applyRateLimits(restCfg)
 	return restCfg, nil
 }
 
