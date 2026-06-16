@@ -55,6 +55,22 @@ func buildAffinityPatch(a *corev1.Affinity) ([]byte, error) {
 	return json.Marshal(p)
 }
 
+func poolNodeAffinity(poolLabelValue string) *corev1.Affinity {
+	return &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key:      PoolLabelKey,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{poolLabelValue},
+					}},
+				}},
+			},
+		},
+	}
+}
+
 func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelValue string) (*SavedState, error) {
 	if err := ValidateNamespace(namespace); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
@@ -71,67 +87,77 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelV
 		return nil, fmt.Errorf("migrate: no node carries label %s=%s", PoolLabelKey, poolLabelValue)
 	}
 
-	affinity := &corev1.Affinity{
-		NodeAffinity: &corev1.NodeAffinity{
-			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-					MatchExpressions: []corev1.NodeSelectorRequirement{{
-						Key:      PoolLabelKey,
-						Operator: corev1.NodeSelectorOpIn,
-						Values:   []string{poolLabelValue},
-					}},
-				}},
-			},
-		},
-	}
-
-	patchData, err := buildAffinityPatch(affinity)
+	patchData, err := buildAffinityPatch(poolNodeAffinity(poolLabelValue))
 	if err != nil {
 		return nil, fmt.Errorf("migrate: marshal affinity patch: %w", err)
 	}
 
+	state := &SavedState{namespace: namespace}
+	if err := migrateDeployments(ctx, kc, namespace, patchData, state); err != nil {
+		return state, err
+	}
+	if err := migrateStatefulSets(ctx, kc, namespace, patchData, state); err != nil {
+		return state, err
+	}
+	if err := evictNonDaemonSetPods(ctx, kc, namespace, "migrate"); err != nil {
+		return state, err
+	}
+	return state, nil
+}
+
+func migrateDeployments(ctx context.Context, kc kubernetes.Interface, namespace string, patchData []byte, state *SavedState) error {
 	deps, err := kc.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("migrate: list deployments in %q: %w", namespace, err)
+		return fmt.Errorf("migrate: list deployments in %q: %w", namespace, err)
 	}
-	state := &SavedState{namespace: namespace}
 	for i := range deps.Items {
 		d := deps.Items[i]
-		var orig []byte
-		if d.Spec.Template.Spec.Affinity != nil {
-			orig, err = json.Marshal(d.Spec.Template.Spec.Affinity)
-			if err != nil {
-				return state, fmt.Errorf("migrate: marshal affinity for %q: %w", d.Name, err)
-			}
+		orig, err := marshalAffinity(d.Spec.Template.Spec.Affinity, d.Name)
+		if err != nil {
+			return err
 		}
 		state.deployments = append(state.deployments, savedSpec{name: d.Name, originalAffinity: orig})
 		if _, err := kc.AppsV1().Deployments(namespace).Patch(ctx, d.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			return state, fmt.Errorf("migrate: patch deployment %q: %w", d.Name, err)
+			return fmt.Errorf("migrate: patch deployment %q: %w", d.Name, err)
 		}
 	}
+	return nil
+}
 
+func migrateStatefulSets(ctx context.Context, kc kubernetes.Interface, namespace string, patchData []byte, state *SavedState) error {
 	stss, err := kc.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return state, fmt.Errorf("migrate: list statefulsets in %q: %w", namespace, err)
+		return fmt.Errorf("migrate: list statefulsets in %q: %w", namespace, err)
 	}
 	for i := range stss.Items {
 		s := stss.Items[i]
-		var orig []byte
-		if s.Spec.Template.Spec.Affinity != nil {
-			orig, err = json.Marshal(s.Spec.Template.Spec.Affinity)
-			if err != nil {
-				return state, fmt.Errorf("migrate: marshal affinity for %q: %w", s.Name, err)
-			}
+		orig, err := marshalAffinity(s.Spec.Template.Spec.Affinity, s.Name)
+		if err != nil {
+			return err
 		}
 		state.statefulSets = append(state.statefulSets, savedSpec{name: s.Name, originalAffinity: orig})
 		if _, err := kc.AppsV1().StatefulSets(namespace).Patch(ctx, s.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			return state, fmt.Errorf("migrate: patch statefulset %q: %w", s.Name, err)
+			return fmt.Errorf("migrate: patch statefulset %q: %w", s.Name, err)
 		}
 	}
+	return nil
+}
 
+func marshalAffinity(a *corev1.Affinity, name string) ([]byte, error) {
+	if a == nil {
+		return nil, nil
+	}
+	orig, err := json.Marshal(a)
+	if err != nil {
+		return nil, fmt.Errorf("migrate: marshal affinity for %q: %w", name, err)
+	}
+	return orig, nil
+}
+
+func evictNonDaemonSetPods(ctx context.Context, kc kubernetes.Interface, namespace, op string) error {
 	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return state, fmt.Errorf("migrate: list pods in %q: %w", namespace, err)
+		return fmt.Errorf("%s: list pods in %q: %w", op, namespace, err)
 	}
 	for i := range pods.Items {
 		pod := pods.Items[i]
@@ -140,10 +166,31 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelV
 		}
 		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
 		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			return state, fmt.Errorf("migrate: evict %s/%s: %w", pod.Namespace, pod.Name, err)
+			return fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err)
 		}
 	}
-	return state, nil
+	return nil
+}
+
+func restoreAffinityPatch(ss savedSpec, kind string) ([]byte, error) {
+	var restored *corev1.Affinity
+	if ss.originalAffinity != nil {
+		restored = &corev1.Affinity{}
+		if err := json.Unmarshal(ss.originalAffinity, restored); err != nil {
+			return nil, fmt.Errorf("rollback-migrate: unmarshal affinity for %s %q: %w", kind, ss.name, err)
+		}
+	}
+	patchData, err := buildAffinityPatch(restored)
+	if err != nil {
+		return nil, fmt.Errorf("rollback-migrate: marshal affinity patch for %s %q: %w", kind, ss.name, err)
+	}
+	return patchData, nil
+}
+
+func recordFirst(firstErr *error, err error) {
+	if err != nil && *firstErr == nil {
+		*firstErr = err
+	}
 }
 
 func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedState) error {
@@ -154,62 +201,37 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 	var firstErr error
 
 	for _, ss := range state.deployments {
-		var restored *corev1.Affinity
-		if ss.originalAffinity != nil {
-			restored = &corev1.Affinity{}
-			if err := json.Unmarshal(ss.originalAffinity, restored); err != nil {
-				if firstErr == nil {
-					firstErr = fmt.Errorf("rollback-migrate: unmarshal affinity for deployment %q: %w", ss.name, err)
-				}
-				continue
-			}
-		}
-		patchData, err := buildAffinityPatch(restored)
+		patchData, err := restoreAffinityPatch(ss, "deployment")
 		if err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("rollback-migrate: marshal affinity patch for deployment %q: %w", ss.name, err)
-			}
+			recordFirst(&firstErr, err)
 			continue
 		}
 		if _, err := kc.AppsV1().Deployments(state.namespace).Patch(ctx, ss.name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("rollback-migrate: patch deployment %q: %w", ss.name, err)
-			}
+			recordFirst(&firstErr, fmt.Errorf("rollback-migrate: patch deployment %q: %w", ss.name, err))
 		}
 	}
 
 	for _, ss := range state.statefulSets {
-		var restored *corev1.Affinity
-		if ss.originalAffinity != nil {
-			restored = &corev1.Affinity{}
-			if err := json.Unmarshal(ss.originalAffinity, restored); err != nil {
-				if firstErr == nil {
-					firstErr = fmt.Errorf("rollback-migrate: unmarshal affinity for statefulset %q: %w", ss.name, err)
-				}
-				continue
-			}
-		}
-		patchData, err := buildAffinityPatch(restored)
+		patchData, err := restoreAffinityPatch(ss, "statefulset")
 		if err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("rollback-migrate: marshal affinity patch for statefulset %q: %w", ss.name, err)
-			}
+			recordFirst(&firstErr, err)
 			continue
 		}
 		if _, err := kc.AppsV1().StatefulSets(state.namespace).Patch(ctx, ss.name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("rollback-migrate: patch statefulset %q: %w", ss.name, err)
-			}
+			recordFirst(&firstErr, fmt.Errorf("rollback-migrate: patch statefulset %q: %w", ss.name, err))
 		}
 	}
 
-	pods, err := kc.CoreV1().Pods(state.namespace).List(ctx, metav1.ListOptions{})
+	recordFirst(&firstErr, evictNonDaemonSetPodsBestEffort(ctx, kc, state.namespace))
+	return firstErr
+}
+
+func evictNonDaemonSetPodsBestEffort(ctx context.Context, kc kubernetes.Interface, namespace string) error {
+	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("rollback-migrate: list pods in %q: %w", state.namespace, err)
-		}
-		return firstErr
+		return fmt.Errorf("rollback-migrate: list pods in %q: %w", namespace, err)
 	}
+	var firstErr error
 	for i := range pods.Items {
 		pod := pods.Items[i]
 		if isDaemonSetPod(&pod) {
@@ -217,12 +239,9 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 		}
 		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
 		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("rollback-migrate: evict %s/%s: %w", pod.Namespace, pod.Name, err)
-			}
+			recordFirst(&firstErr, fmt.Errorf("rollback-migrate: evict %s/%s: %w", pod.Namespace, pod.Name, err))
 		}
 	}
-
 	return firstErr
 }
 
@@ -325,58 +344,63 @@ func ReconcileStrandedAffinity(ctx context.Context, kc kubernetes.Interface, nam
 	}
 
 	var firstErr error
+	if err := reconcileStrandedDeployments(ctx, kc, namespace, present, &firstErr); err != nil {
+		return err
+	}
+	if err := reconcileStrandedStatefulSets(ctx, kc, namespace, present, &firstErr); err != nil {
+		return err
+	}
+	return firstErr
+}
+
+func reconcileStrandedDeployments(ctx context.Context, kc kubernetes.Interface, namespace string, present map[string]bool, firstErr *error) error {
 	deps, err := kc.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("reconcile-affinity: list deployments in %q: %w", namespace, err)
 	}
 	for i := range deps.Items {
 		d := deps.Items[i]
-		na, changed := strippedNodeAffinity(d.Spec.Template.Spec.Affinity, present)
-		if !changed {
-			continue
-		}
-		patchData, err := buildStrandedAffinityPatch(na)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("reconcile-affinity: marshal deployment %q: %w", d.Name, err)
-			}
+		patchData, ok := strandedAffinityPatch(d.Spec.Template.Spec.Affinity, present, "deployment", d.Name, firstErr)
+		if !ok {
 			continue
 		}
 		if _, err := kc.AppsV1().Deployments(namespace).Patch(ctx, d.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("reconcile-affinity: patch deployment %q: %w", d.Name, err)
-			}
+			recordFirst(firstErr, fmt.Errorf("reconcile-affinity: patch deployment %q: %w", d.Name, err))
 		}
 	}
+	return nil
+}
 
+func reconcileStrandedStatefulSets(ctx context.Context, kc kubernetes.Interface, namespace string, present map[string]bool, firstErr *error) error {
 	stss, err := kc.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("reconcile-affinity: list statefulsets in %q: %w", namespace, err)
-		}
-		return firstErr
+		recordFirst(firstErr, fmt.Errorf("reconcile-affinity: list statefulsets in %q: %w", namespace, err))
+		return *firstErr
 	}
 	for i := range stss.Items {
 		s := stss.Items[i]
-		na, changed := strippedNodeAffinity(s.Spec.Template.Spec.Affinity, present)
-		if !changed {
-			continue
-		}
-		patchData, err := buildStrandedAffinityPatch(na)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("reconcile-affinity: marshal statefulset %q: %w", s.Name, err)
-			}
+		patchData, ok := strandedAffinityPatch(s.Spec.Template.Spec.Affinity, present, "statefulset", s.Name, firstErr)
+		if !ok {
 			continue
 		}
 		if _, err := kc.AppsV1().StatefulSets(namespace).Patch(ctx, s.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			if firstErr == nil {
-				firstErr = fmt.Errorf("reconcile-affinity: patch statefulset %q: %w", s.Name, err)
-			}
+			recordFirst(firstErr, fmt.Errorf("reconcile-affinity: patch statefulset %q: %w", s.Name, err))
 		}
 	}
+	return nil
+}
 
-	return firstErr
+func strandedAffinityPatch(a *corev1.Affinity, present map[string]bool, kind, name string, firstErr *error) ([]byte, bool) {
+	na, changed := strippedNodeAffinity(a, present)
+	if !changed {
+		return nil, false
+	}
+	patchData, err := buildStrandedAffinityPatch(na)
+	if err != nil {
+		recordFirst(firstErr, fmt.Errorf("reconcile-affinity: marshal %s %q: %w", kind, name, err))
+		return nil, false
+	}
+	return patchData, true
 }
 
 func isDaemonSetPod(pod *corev1.Pod) bool {
