@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/tui"
 	"github.com/lucawalz/horizon/internal/version"
@@ -30,17 +32,32 @@ var rootCmd = &cobra.Command{
 
 		built, err := core.NewApp(contextName, clusterName)
 		if err != nil {
+			if errors.Is(err, config.ErrNotConfigured) {
+				return nil
+			}
 			return err
 		}
 		*app = *built
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		contextName, err := cmd.Flags().GetString("context")
-		if err != nil {
-			return err
+		if app.Config == nil {
+			saved, err := tui.RunSetup()
+			if err != nil {
+				return err
+			}
+			if !saved {
+				return nil
+			}
+			contextFlag, _ := cmd.Flags().GetString("context")
+			clusterFlag, _ := cmd.Flags().GetString("cluster")
+			built, err := core.NewApp(contextFlag, clusterFlag)
+			if err != nil {
+				return err
+			}
+			*app = *built
 		}
-		return tui.Run(app, contextName)
+		return tui.Run(app)
 	},
 }
 
@@ -48,6 +65,7 @@ func init() {
 	rootCmd.PersistentFlags().String("context", "", "Kubeconfig context to target")
 	rootCmd.PersistentFlags().String("cluster", "", "CAPI cluster name to target")
 	rootCmd.AddCommand(newVersionCmd())
+	rootCmd.AddCommand(newInitCmd())
 }
 
 func Execute() {
