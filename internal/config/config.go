@@ -14,14 +14,6 @@ import (
 
 var ErrNotConfigured = errors.New("horizon is not configured")
 
-type ThresholdConfig struct {
-	Burst           float64 `mapstructure:"burst" yaml:"burst"`
-	ScaleDown       float64 `mapstructure:"scale_down" yaml:"scale_down"`
-	Window          int     `mapstructure:"window" yaml:"window"`
-	CooldownMinutes int     `mapstructure:"cooldown_minutes" yaml:"cooldown_minutes"`
-	MaxBurstNodes   int     `mapstructure:"max_burst_nodes" yaml:"max_burst_nodes"`
-}
-
 type PoolDefaults struct {
 	Namespace   string            `mapstructure:"namespace" yaml:"namespace"`
 	Cluster     string            `mapstructure:"cluster" yaml:"cluster"`
@@ -56,7 +48,6 @@ type Config struct {
 	Kubeconfig    string          `mapstructure:"kubeconfig" yaml:"kubeconfig"`
 	Context       string          `mapstructure:"context" yaml:"context"`
 	Theme         string          `mapstructure:"theme" yaml:"theme"`
-	Thresholds    ThresholdConfig `mapstructure:"thresholds" yaml:"thresholds"`
 	Pools         PoolDefaults    `mapstructure:"pools" yaml:"pools"`
 	ClusterCreate ClusterDefaults `mapstructure:"cluster_create" yaml:"cluster_create"`
 

@@ -43,7 +43,6 @@ type PressureSummary struct {
 	Err                error
 	CPUScore           float64
 	MemScore           float64
-	Threshold          float64
 	PendingPods        int
 	MetricsWarning     error
 	MetricsUnavailable error
@@ -120,7 +119,7 @@ func BuildSnapshot(ctx context.Context, app *App) Snapshot {
 		snap.Pressure = PressureSummary{Err: nodesErr}
 		snap.NodesErr = nodesErr
 	} else {
-		snap.Pressure = pressureFromLists(app, nodes.Items, pods, podsErr, usage)
+		snap.Pressure = pressureFromLists(nodes.Items, pods, podsErr, usage)
 		snap.Nodes = nodeRowsFromLists(nodes.Items, pods, podsErr, usage)
 	}
 	if usageErr != nil {
@@ -174,10 +173,10 @@ func PressureFor(ctx context.Context, app *App, usage map[string]*metricsv1beta1
 		return PressureSummary{Err: err}
 	}
 	pods, podsErr := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	return pressureFromLists(app, nodes.Items, pods, podsErr, usage)
+	return pressureFromLists(nodes.Items, pods, podsErr, usage)
 }
 
-func pressureFromLists(app *App, nodes []corev1.Node, pods *corev1.PodList, podsErr error, usage map[string]*metricsv1beta1.NodeMetrics) PressureSummary {
+func pressureFromLists(nodes []corev1.Node, pods *corev1.PodList, podsErr error, usage map[string]*metricsv1beta1.NodeMetrics) PressureSummary {
 	var cpuFraction, memFraction float64
 	var ready int
 	for _, node := range nodes {
@@ -197,7 +196,6 @@ func pressureFromLists(app *App, nodes []corev1.Node, pods *corev1.PodList, pods
 		Available:      true,
 		CPUScore:       clusterScore(cpuFraction, ready),
 		MemScore:       clusterScore(memFraction, ready),
-		Threshold:      app.Config.Thresholds.Burst,
 		PendingPods:    countPendingPods(pods),
 		MetricsWarning: podsErr,
 	}
