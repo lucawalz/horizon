@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/velero"
 	"github.com/spf13/cobra"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
@@ -16,23 +17,13 @@ import (
 )
 
 const (
-	defaultStorageLocation = "default"
-	defaultBackupTTL       = 168 * time.Hour
-	backupTimeLayout       = "2006-01-02 15:04"
-	backupNameTimeLayout   = "20060102-150405"
+	defaultStorageLocation = core.DefaultStorageLocation
+	defaultBackupTTL       = core.DefaultBackupTTL
+	backupTimeLayout       = core.BackupTimeLayout
+	backupNameTimeLayout   = core.BackupNameTimeLayout
 )
 
-type veleroClient interface {
-	CreateBackup(ctx context.Context, spec velerov1.BackupSpec, name string) error
-	TriggerBackup(ctx context.Context, spec velerov1.BackupSpec, name string, poll, timeout time.Duration) error
-	CreateRestore(ctx context.Context, spec velerov1.RestoreSpec, name string) error
-	TriggerRestore(ctx context.Context, spec velerov1.RestoreSpec, name string, poll, timeout time.Duration) error
-	ListBackups(ctx context.Context) ([]velerov1.Backup, error)
-	GetBackup(ctx context.Context, name string) (*velerov1.Backup, error)
-	DeleteBackup(ctx context.Context, name string) error
-	ListRestores(ctx context.Context) ([]velerov1.Restore, error)
-	GetRestore(ctx context.Context, name string) (*velerov1.Restore, error)
-}
+type veleroClient = core.VeleroClient
 
 var (
 	testVeleroClient veleroClient
@@ -117,13 +108,8 @@ func runBackupCreate(cmd *cobra.Command, app *App) error {
 		return err
 	}
 
-	ctx := cmdContext(cmd)
 	wait, _ := cmd.Flags().GetBool("wait")
-	if wait {
-		if err := vc.TriggerBackup(ctx, spec, name, 5*time.Second, 10*time.Minute); err != nil {
-			return err
-		}
-	} else if err := vc.CreateBackup(ctx, spec, name); err != nil {
+	if err := core.CreateBackup(cmdContext(cmd), vc, spec, name, wait); err != nil {
 		return err
 	}
 	fmt.Println(name)
@@ -166,11 +152,7 @@ func backupScopeEmpty(spec velerov1.BackupSpec) bool {
 }
 
 func defaultBackupName(includeNs []string) string {
-	scope := "all"
-	if len(includeNs) > 0 {
-		scope = includeNs[0]
-	}
-	return fmt.Sprintf("horizon-%s-%s", scope, nowFunc().UTC().Format(backupNameTimeLayout))
+	return core.DefaultBackupName(includeNs, nowFunc())
 }
 
 func newBackupListCmd(app *App) *cobra.Command {
@@ -188,7 +170,7 @@ func runBackupList(cmd *cobra.Command, app *App) error {
 	if err != nil {
 		return err
 	}
-	backups, err := vc.ListBackups(cmdContext(cmd))
+	backups, err := core.ListBackups(cmdContext(cmd), vc)
 	if err != nil {
 		return err
 	}
@@ -224,7 +206,7 @@ func runBackupDescribe(cmd *cobra.Command, app *App, name string) error {
 	if err != nil {
 		return err
 	}
-	b, err := vc.GetBackup(cmdContext(cmd), name)
+	b, err := core.GetBackup(cmdContext(cmd), vc, name)
 	if err != nil {
 		return err
 	}
@@ -256,7 +238,7 @@ func runBackupDelete(cmd *cobra.Command, app *App, name string) error {
 	if err != nil {
 		return err
 	}
-	if err := vc.DeleteBackup(cmdContext(cmd), name); err != nil {
+	if err := core.DeleteBackup(cmdContext(cmd), vc, name); err != nil {
 		return err
 	}
 	fmt.Println("delete request submitted; velero removes the backup and its snapshots in the background")

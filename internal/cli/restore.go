@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
-	"time"
 
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/spf13/cobra"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 )
@@ -48,7 +48,7 @@ func runRestoreCreate(cmd *cobra.Command, app *App) error {
 
 	name, _ := cmd.Flags().GetString("name")
 	if name == "" {
-		name = fmt.Sprintf("horizon-restore-%s-%s", spec.BackupName, nowFunc().UTC().Format(backupNameTimeLayout))
+		name = core.DefaultRestoreName(spec.BackupName, nowFunc())
 	}
 
 	vc, err := resolveVeleroClient(app)
@@ -56,13 +56,8 @@ func runRestoreCreate(cmd *cobra.Command, app *App) error {
 		return err
 	}
 
-	ctx := cmdContext(cmd)
 	wait, _ := cmd.Flags().GetBool("wait")
-	if wait {
-		if err := vc.TriggerRestore(ctx, spec, name, 5*time.Second, 10*time.Minute); err != nil {
-			return err
-		}
-	} else if err := vc.CreateRestore(ctx, spec, name); err != nil {
+	if err := core.CreateRestore(cmdContext(cmd), vc, spec, name, wait); err != nil {
 		return err
 	}
 	fmt.Println(name)
@@ -108,7 +103,7 @@ func runRestoreList(cmd *cobra.Command, app *App) error {
 	if err != nil {
 		return err
 	}
-	restores, err := vc.ListRestores(cmdContext(cmd))
+	restores, err := core.ListRestores(cmdContext(cmd), vc)
 	if err != nil {
 		return err
 	}
@@ -141,7 +136,7 @@ func runRestoreDescribe(cmd *cobra.Command, app *App, name string) error {
 	if err != nil {
 		return err
 	}
-	r, err := vc.GetRestore(cmdContext(cmd), name)
+	r, err := core.GetRestore(cmdContext(cmd), vc, name)
 	if err != nil {
 		return err
 	}

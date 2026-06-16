@@ -5,17 +5,11 @@ import (
 	"fmt"
 
 	"github.com/lucawalz/horizon/internal/capi"
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/spf13/cobra"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-type poolTarget struct {
-	namespace string
-	name      string
-	poolType  string
-	cluster   string
-	replicas  int32
-}
+type poolTarget = core.PoolTarget
 
 func resolvePoolTarget(cmd *cobra.Command, app *App) (poolTarget, error) {
 	poolType, _ := cmd.Flags().GetString("type")
@@ -28,20 +22,20 @@ func resolvePoolTarget(cmd *cobra.Command, app *App) (poolTarget, error) {
 	}
 
 	t := poolTarget{
-		namespace: app.Config.Pools.Namespace,
-		name:      name,
-		poolType:  poolType,
-		cluster:   app.Cluster,
-		replicas:  1,
+		Namespace: app.Config.Pools.Namespace,
+		Name:      name,
+		PoolType:  poolType,
+		Cluster:   app.Cluster,
+		Replicas:  1,
 	}
 	if v, _ := cmd.Flags().GetString("namespace"); v != "" {
-		t.namespace = v
+		t.Namespace = v
 	}
 	if v, _ := cmd.Flags().GetString("pool"); v != "" {
-		t.name = v
+		t.Name = v
 	}
 	if v, _ := cmd.Flags().GetInt32("replicas"); v > 0 {
-		t.replicas = v
+		t.Replicas = v
 	}
 	return t, nil
 }
@@ -70,85 +64,21 @@ func newUpCmd(app *App) *cobra.Command {
 }
 
 func runUp(ctx context.Context, cc *capi.Client, target poolTarget, dryRun, nudge bool) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if dryRun {
-		md, err := cc.GetPool(ctx, target.namespace, target.name)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return notFoundPoolErr(target)
-			}
-			return fmt.Errorf("up: get pool: %w", err)
-		}
-		current := int32(0)
-		if md.Spec.Replicas != nil {
-			current = *md.Spec.Replicas
-		}
-		fmt.Printf("[dry-run] pool %s/%s (cluster %s): %d -> %d replicas\n",
-			target.namespace, target.name, target.cluster, current, target.replicas)
-		fmt.Println("[dry-run] No actions executed.")
-		return nil
-	}
-
-	initialized, err := cc.IsControlPlaneInitialized(ctx, target.namespace, target.cluster)
-	if err != nil {
-		return fmt.Errorf("up: control-plane status: %w", err)
-	}
-	if !initialized {
-		if !nudge {
-			return fmt.Errorf("up: control plane for cluster %q not initialized; rerun with --nudge to latch the externally-managed status", target.cluster)
-		}
-		if err := cc.NudgeControlPlaneInitialized(ctx, target.namespace, target.cluster); err != nil {
-			return fmt.Errorf("up: %w", err)
-		}
-		fmt.Printf("Nudged control-plane-initialized for cluster %q.\n", target.cluster)
-	}
-
-	md, err := cc.GetPool(ctx, target.namespace, target.name)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return notFoundPoolErr(target)
-		}
-		return fmt.Errorf("up: get pool: %w", err)
-	}
-
-	current := int32(0)
-	if md.Spec.Replicas != nil {
-		current = *md.Spec.Replicas
-	}
-	if current >= target.replicas {
-		fmt.Printf("pool %s/%s already at %d replicas (>= %d); nothing to do\n",
-			target.namespace, target.name, current, target.replicas)
-		return nil
-	}
-
-	if err := cc.ScalePool(ctx, target.namespace, target.name, target.replicas); err != nil {
+	if err := core.ScaleUp(ctx, cc, target, dryRun, nudge, printlnProgress); err != nil {
 		return fmt.Errorf("up: %w", err)
-	}
-	fmt.Printf("Scaled pool %s/%s: %d -> %d replicas\n",
-		target.namespace, target.name, current, target.replicas)
-	if target.poolType == elasticPoolType {
-		fmt.Println("Note: the cluster-autoscaler owns the elastic pool and may override this scale.")
 	}
 	return nil
 }
 
-const elasticPoolType = "elastic"
-
-func notFoundPoolErr(target poolTarget) error {
-	return fmt.Errorf("up: pool %s/%s not found; the home pool is provisioned via GitOps in bedrock, not by horizon",
-		target.namespace, target.name)
-}
+func printlnProgress(msg string) { fmt.Println(msg) }
 
 func PoolTargetForTest(namespace, name, cluster string, replicas int32) poolTarget {
-	return poolTarget{namespace: namespace, name: name, cluster: cluster, replicas: replicas}
+	return poolTarget{Namespace: namespace, Name: name, Cluster: cluster, Replicas: replicas}
 }
 
 func ResolvePoolTargetForTest(cmd *cobra.Command, app *App) (string, string, error) {
 	t, err := resolvePoolTarget(cmd, app)
-	return t.name, t.poolType, err
+	return t.Name, t.PoolType, err
 }
 
 func RunUpForTest(ctx context.Context, cc *capi.Client, target poolTarget, dryRun, nudge bool) error {

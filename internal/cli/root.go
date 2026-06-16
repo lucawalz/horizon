@@ -4,22 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lucawalz/horizon/internal/capi"
-	"github.com/lucawalz/horizon/internal/config"
-	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/version"
 	"github.com/spf13/cobra"
-	"k8s.io/client-go/kubernetes"
-	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
 
-type App struct {
-	Config        *config.Config
-	KubeClient    kubernetes.Interface
-	MetricsClient metricsclient.Interface
-	CapiClient    *capi.Client
-	Cluster       string
-}
+type App = core.App
 
 var app = &App{}
 
@@ -28,12 +18,6 @@ var rootCmd = &cobra.Command{
 	Short:   "Homelab burst orchestrator",
 	Version: version.Version(),
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load()
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
-		}
-		app.Config = cfg
-
 		contextName, err := cmd.Flags().GetString("context")
 		if err != nil {
 			return err
@@ -43,30 +27,11 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
-		kc, err := k8s.NewClientForContext(cfg.Kubeconfig, contextName)
+		built, err := core.NewApp(contextName, clusterName)
 		if err != nil {
-			return fmt.Errorf("k8s client: %w", err)
+			return err
 		}
-		app.KubeClient = kc
-
-		mc, err := k8s.NewMetricsClient(cfg.Kubeconfig, contextName)
-		if err != nil {
-			return fmt.Errorf("metrics client: %w", err)
-		}
-		app.MetricsClient = mc
-
-		cc, err := capi.NewClientForContext(cfg.Kubeconfig, contextName)
-		if err != nil {
-			return fmt.Errorf("capi client: %w", err)
-		}
-		app.CapiClient = cc
-
-		if clusterName != "" {
-			app.Cluster = clusterName
-		} else {
-			app.Cluster = cfg.Cluster
-		}
-
+		*app = *built
 		return nil
 	},
 }

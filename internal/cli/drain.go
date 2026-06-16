@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/kubernetes"
 )
@@ -29,7 +29,7 @@ func runDrain(ctx context.Context, kc kubernetes.Interface, nodeName string, tim
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := k8s.Drain(ctx, kc, nodeName, timeout); err != nil {
+	if err := core.Drain(ctx, kc, nodeName, timeout); err != nil {
 		return fmt.Errorf("drain: %w", err)
 	}
 	fmt.Fprintf(os.Stdout, "0 non-DaemonSet pods remain on %s\n", nodeName)

@@ -6,6 +6,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/lucawalz/horizon/internal/capi"
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/spf13/cobra"
 )
 
@@ -68,7 +69,7 @@ func runClusterCreate(cmd *cobra.Command, app *App) error {
 
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if dryRun {
-		out, err := capi.RenderCluster(spec)
+		out, err := core.RenderCluster(spec)
 		if err != nil {
 			return fmt.Errorf("cluster create: %w", err)
 		}
@@ -81,7 +82,7 @@ func runClusterCreate(cmd *cobra.Command, app *App) error {
 		return writeClusterManifests(app, spec)
 	}
 
-	if err := app.CapiClient.ApplyCluster(cmdContext(cmd), spec); err != nil {
+	if err := core.ApplyCluster(cmdContext(cmd), app, spec); err != nil {
 		return fmt.Errorf("cluster create: %w", err)
 	}
 	fmt.Printf("applied cluster %s/%s\n", spec.Namespace, spec.ClusterName)
@@ -163,18 +164,7 @@ func clusterSpecFromFlags(cmd *cobra.Command, app *App) (capi.ClusterSpec, error
 }
 
 func writeClusterManifests(app *App, spec capi.ClusterSpec) error {
-	if app.Config.BedrockPath == "" {
-		return fmt.Errorf("cluster create: --write requires bedrock_path in config")
-	}
-	data, err := capi.RenderCluster(spec)
-	if err != nil {
-		return fmt.Errorf("cluster create: %w", err)
-	}
-	repo, err := capi.OpenRepo(app.Config.BedrockPath)
-	if err != nil {
-		return fmt.Errorf("cluster create: %w", err)
-	}
-	path, err := repo.WriteCluster(spec.ClusterName, spec.Name, data)
+	path, err := core.WriteClusterManifests(app, spec)
 	if err != nil {
 		return fmt.Errorf("cluster create: %w", err)
 	}
@@ -211,7 +201,7 @@ func runClusterDelete(cmd *cobra.Command, app *App) error {
 		return nil
 	}
 
-	if err := app.CapiClient.DeleteCluster(cmdContext(cmd), namespace, name); err != nil {
+	if err := core.DeleteCluster(cmdContext(cmd), app, namespace, name); err != nil {
 		return fmt.Errorf("cluster delete: %w", err)
 	}
 	fmt.Printf("deleted cluster %s/%s\n", namespace, name)
@@ -236,7 +226,7 @@ func runClusterList(cmd *cobra.Command, app *App) error {
 		namespace = app.Config.Pools.Namespace
 	}
 
-	clusters, err := app.CapiClient.ListClusters(cmdContext(cmd), namespace)
+	clusters, err := core.ListClusters(cmdContext(cmd), app, namespace)
 	if err != nil {
 		return fmt.Errorf("cluster list: %w", err)
 	}
@@ -253,10 +243,7 @@ func runClusterList(cmd *cobra.Command, app *App) error {
 }
 
 func boolOrDash(b *bool) string {
-	if b == nil {
-		return "-"
-	}
-	return fmt.Sprintf("%t", *b)
+	return core.BoolOrDash(b)
 }
 
 func NewClusterCmdForTest(app *App) *cobra.Command { return newClusterCmd(app) }

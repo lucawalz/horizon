@@ -3,31 +3,15 @@ package cli
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/lucawalz/horizon/internal/capi"
+	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/spf13/cobra"
-	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 )
 
-const (
-	burstMachinePoll    = 5 * time.Second
-	burstMachineTimeout = 5 * time.Minute
-	burstWorkloadPoll   = 5 * time.Second
-	burstWorkloadWait   = 5 * time.Minute
-	backupPoll          = 5 * time.Second
-	backupTimeout       = 10 * time.Minute
-	rollbackTimeout     = 30 * time.Second
-)
-
-type burstParams struct {
-	target   poolTarget
-	workload string
-	poolNode string
-}
+type burstParams = core.BurstParams
 
 func newBurstCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
@@ -46,14 +30,14 @@ func newBurstCmd(app *App) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("burst: %w", err)
 			}
-			if target.replicas < 1 {
-				target.replicas = 1
+			if target.Replicas < 1 {
+				target.Replicas = 1
 			}
 			vc, err := resolveVeleroClient(app)
 			if err != nil {
 				return fmt.Errorf("burst: %w", err)
 			}
-			params := burstParams{target: target, workload: workload, poolNode: target.poolType}
+			params := burstParams{Target: target, Workload: workload, PoolNode: target.PoolType}
 			return runBurst(cmd.Context(), app.CapiClient, app.KubeClient, vc, params)
 		},
 	}
@@ -65,73 +49,15 @@ func newBurstCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-func runBurst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc veleroClient, p burstParams) (err error) {
-	if ctx == nil {
-		ctx = context.Background()
+func runBurst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc veleroClient, p burstParams) error {
+	if err := core.Burst(ctx, cc, kc, vc, p, printlnProgress); err != nil {
+		return fmt.Errorf("burst: %w", err)
 	}
-
-	md, err := cc.GetPool(ctx, p.target.namespace, p.target.name)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return notFoundPoolErr(p.target)
-		}
-		return fmt.Errorf("burst: get pool: %w", err)
-	}
-	priorReplicas := int32(0)
-	if md.Spec.Replicas != nil {
-		priorReplicas = *md.Spec.Replicas
-	}
-
-	backupName := fmt.Sprintf("horizon-burst-%s-%d", p.workload, time.Now().Unix())
-	spec := velerov1.BackupSpec{IncludedNamespaces: []string{p.workload}, StorageLocation: defaultStorageLocation}
-	if err := vc.TriggerBackup(ctx, spec, backupName, backupPoll, backupTimeout); err != nil {
-		return fmt.Errorf("burst: backup: %w", err)
-	}
-
-	scaled := false
-	defer func() {
-		if err == nil || !scaled {
-			return
-		}
-		rbCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
-		defer cancel()
-		_ = cc.ScalePool(rbCtx, p.target.namespace, p.target.name, priorReplicas)
-	}()
-
-	if err := cc.ScalePool(ctx, p.target.namespace, p.target.name, p.target.replicas); err != nil {
-		return fmt.Errorf("burst: scale pool: %w", err)
-	}
-	scaled = true
-
-	if err := cc.WaitMachinesReady(ctx, p.target.namespace, p.target.name, p.target.replicas, burstMachinePoll, burstMachineTimeout); err != nil {
-		return fmt.Errorf("burst: wait machines: %w", err)
-	}
-
-	var saved *k8s.SavedState
-	saved, err = k8s.Migrate(ctx, kc, p.workload, p.poolNode)
-	if err != nil {
-		return fmt.Errorf("burst: migrate: %w", err)
-	}
-	defer func() {
-		if err == nil {
-			return
-		}
-		rbCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
-		defer cancel()
-		_ = k8s.RollbackMigrate(rbCtx, kc, saved)
-	}()
-
-	if err = k8s.WaitWorkloadOnBurstNodes(ctx, kc, p.workload, burstWorkloadPoll, burstWorkloadWait); err != nil {
-		return fmt.Errorf("burst: wait workload: %w", err)
-	}
-
-	fmt.Printf("Burst complete: pool %s/%s scaled to %d, workload %q migrated\n",
-		p.target.namespace, p.target.name, p.target.replicas, p.workload)
 	return nil
 }
 
 func BurstParamsForTest(target poolTarget, workload, poolNode string) burstParams {
-	return burstParams{target: target, workload: workload, poolNode: poolNode}
+	return burstParams{Target: target, Workload: workload, PoolNode: poolNode}
 }
 
 func RunBurstForTest(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc veleroClient, p burstParams) error {
