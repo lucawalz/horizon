@@ -1,5 +1,8 @@
 kubeconfig: ""
 
+# target kubeconfig context; the --context flag overrides it
+# context: ""
+
 cluster: burst
 
 bedrock_path: ""

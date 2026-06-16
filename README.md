@@ -115,9 +115,15 @@ Or install it into the Go bin directory:
 go install github.com/lucawalz/horizon/cmd/horizon@latest
 ```
 
+`make install` builds and installs the binary into `~/.local/bin`, re-signing it on macOS. Override the destination with `PREFIX`, and remove it with `make uninstall`.
+
+### First run
+
+`horizon init` launches a guided setup that detects the kubeconfig context, queries the cluster to prefill the pool layout, and writes `config.yaml` to the configured path. Running `horizon` with no configuration offers the same setup before opening the dashboard. Prefill needs the cluster reachable; the chosen context is recorded so later runs reuse it.
+
 ## Usage
 
-Configuration is read from `$HORIZON_CONFIG_DIR/config.yaml`, or `~/.config/horizon/config.yaml` by default.
+Configuration is read from `$HORIZON_CONFIG_DIR/config.yaml`, then `$XDG_CONFIG_HOME/horizon/config.yaml`, falling back to `~/.config/horizon/config.yaml`.
 
 Running `horizon` with no subcommand launches the interactive command centre, a Bubble Tea dashboard that both observes the cluster and drives every action. Two launch flags scope it: `--context` selects the kubeconfig context, and `--cluster` selects the target CAPI cluster.
 
@@ -154,7 +160,7 @@ Navigation is keyboard-only; the mouse was removed so native terminal text selec
 
 ### Non-interactive use
 
-`horizon version` remains as the only non-interactive subcommand and prints the build version.
+The dashboard is the primary interface; two subcommands run outside it. `horizon version` prints the build version and exits, and `horizon init` runs the setup wizard.
 
 ## Configuration
 
@@ -163,6 +169,7 @@ The config file sets the kubeconfig, the bedrock checkout used for GitOps writes
 Key fields:
 
 - `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
+- `context`: target kubeconfig context; the `--context` flag overrides it, and the setup wizard records the chosen context here.
 - `cluster`: default CAPI cluster name; falls back to the pool cluster when unset.
 - `bedrock_path`: path to the bedrock git work tree, required only for the GitOps write action. It is resolved to an absolute path and must exist.
 - `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `:theme` picker writes this field. Defaults to `auto`.
