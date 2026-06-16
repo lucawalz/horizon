@@ -89,6 +89,21 @@ func TestRestConfigForContextUnknownContextFails(t *testing.T) {
 	}
 }
 
+func TestContexts(t *testing.T) {
+	path := writeKubeconfig(t)
+
+	names, current, err := k8s.Contexts(path)
+	if err != nil {
+		t.Fatalf("Contexts: %v", err)
+	}
+	if current != "alpha" {
+		t.Errorf("current = %q, want alpha", current)
+	}
+	if len(names) != 2 || names[0] != "alpha" || names[1] != "beta" {
+		t.Errorf("names = %v, want [alpha beta]", names)
+	}
+}
+
 func TestInCluster(t *testing.T) {
 	t.Run("set", func(t *testing.T) {
 		t.Setenv("KUBERNETES_SERVICE_HOST", "10.43.0.1")

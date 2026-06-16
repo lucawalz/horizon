@@ -3,6 +3,7 @@ package k8s
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -58,6 +59,23 @@ func RestConfigForContext(kubeconfigPath, contextName string) (*rest.Config, err
 	restCfg.WarningHandler = rest.NoWarnings{}
 	applyRateLimits(restCfg)
 	return restCfg, nil
+}
+
+func Contexts(kubeconfigPath string) (names []string, current string, err error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		rules.ExplicitPath = kubeconfigPath
+	}
+	apiCfg, err := rules.Load()
+	if err != nil {
+		return nil, "", fmt.Errorf("load kubeconfig %q: %w", kubeconfigPath, err)
+	}
+	names = make([]string, 0, len(apiCfg.Contexts))
+	for name := range apiCfg.Contexts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, apiCfg.CurrentContext, nil
 }
 
 func NewClient(kubeconfigPath string) (kubernetes.Interface, error) {
