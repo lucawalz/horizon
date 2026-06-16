@@ -156,6 +156,8 @@ The available commands are:
 - `drain <node>` cordons a node and evicts its pods.
 - `theme [light|dark|auto]` sets the theme directly, or opens a live picker with no argument. The choice persists to the config file.
 
+Any command accepts a trailing `--debug` flag. It streams a curated step trace of the action alongside the raw Kubernetes API calls into the command log, dimmed and prefixed for separation, and pauses the periodic refresh for the duration so the trace stays focused on the action. The flag is per-command and off by default.
+
 Navigation is keyboard-only; the mouse was removed so native terminal text selection works as usual. Outside the command line the arrow keys and pgup/pgdn scroll the log, `r` refreshes, `?` toggles help, and `q` quits. Type `help` at the prompt for the full list of commands.
 
 ### Non-interactive use
