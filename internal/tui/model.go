@@ -19,9 +19,13 @@ type model struct {
 	app     *core.App
 	context string
 
-	snap   core.Snapshot
-	loaded bool
-	width  int
+	snap     core.Snapshot
+	loaded   bool
+	width    int
+	height   int
+	showHelp bool
+
+	overlay overlayState
 }
 
 func newModel(app *core.App, contextName string) model {
@@ -51,6 +55,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case snapshotMsg:
 		m.snap = msg.snap
@@ -58,13 +63,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tickMsg:
 		return m, tea.Batch(m.loadSnapshot(), tick())
-	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, keys.Quit):
-			return m, tea.Quit
-		case key.Matches(msg, keys.Refresh):
-			return m, m.loadSnapshot()
-		}
+	}
+
+	if m.overlay.mode != overlayNone {
+		return m.updateOverlay(msg)
+	}
+
+	if km, ok := msg.(tea.KeyMsg); ok {
+		return m.updateBase(km)
+	}
+	return m, nil
+}
+
+func (m model) updateBase(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, keys.Help):
+		m.showHelp = !m.showHelp
+		return m, nil
+	case key.Matches(msg, keys.Refresh):
+		return m, m.loadSnapshot()
+	case key.Matches(msg, keys.Up):
+		return m.openForm(m.poolUpForm()), nil
+	case key.Matches(msg, keys.Down):
+		return m.openForm(m.poolDownForm()), nil
+	case key.Matches(msg, keys.Nudge):
+		return m.openForm(m.nudgeForm()), nil
+	case key.Matches(msg, keys.Burst):
+		return m.openForm(m.burstForm()), nil
+	case key.Matches(msg, keys.Drain):
+		return m.openNodePicker(), nil
+	case key.Matches(msg, keys.Cluster):
+		return m.openClusterMenu(), nil
+	case key.Matches(msg, keys.Backup):
+		return m.openBackupMenu(), nil
+	case key.Matches(msg, keys.Restore):
+		return m.openRestoreMenu(), nil
 	}
 	return m, nil
 }
