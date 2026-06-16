@@ -34,6 +34,12 @@ type VeleroClient interface {
 	DeleteBackup(ctx context.Context, name string) error
 	ListRestores(ctx context.Context) ([]velerov1.Restore, error)
 	GetRestore(ctx context.Context, name string) (*velerov1.Restore, error)
+	CreateSchedule(ctx context.Context, spec velerov1.ScheduleSpec, name string) error
+	ListSchedules(ctx context.Context) ([]velerov1.Schedule, error)
+	GetSchedule(ctx context.Context, name string) (*velerov1.Schedule, error)
+	DeleteSchedule(ctx context.Context, name string) error
+	ListBackupStorageLocations(ctx context.Context) ([]velerov1.BackupStorageLocation, error)
+	CreateBackupStorageLocation(ctx context.Context, spec velerov1.BackupStorageLocationSpec, name string) error
 }
 
 type BurstParams struct {

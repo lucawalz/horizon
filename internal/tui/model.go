@@ -112,6 +112,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.onRestoresLoaded(msg)
 	case clustersLoadedMsg:
 		return m.onClustersLoaded(msg)
+	case schedulesLoadedMsg:
+		return m.onSchedulesLoaded(msg)
+	case storageLocationsLoadedMsg:
+		return m.onStorageLocationsLoaded(msg)
 	case tea.KeyMsg:
 		return m.onKey(msg)
 	}
@@ -360,6 +364,46 @@ func (m model) onClustersLoaded(msg clustersLoadedMsg) (tea.Model, tea.Cmd) {
 	rows := [][]string{{"NAME", "PHASE"}}
 	for _, c := range msg.clusters {
 		rows = append(rows, []string{c.name, c.phase})
+	}
+	m.log.append(renderLogTable(rows))
+	return m, nil
+}
+
+func (m model) onSchedulesLoaded(msg schedulesLoadedMsg) (tea.Model, tea.Cmd) {
+	m.mode = modeNav
+	if msg.err != nil {
+		m.log.append(errStyle.Render("error: " + msg.err.Error()))
+		return m, nil
+	}
+	rows := [][]string{{"NAME", "SCHEDULE", "STATUS", "LAST-BACKUP", "PAUSED"}}
+	for i := range msg.schedules {
+		s := &msg.schedules[i]
+		rows = append(rows, []string{
+			s.Name, s.Spec.Schedule, phaseOrDash(string(s.Status.Phase)),
+			fmtTime(s.Status.LastBackup), fmtBool(s.Spec.Paused),
+		})
+	}
+	m.log.append(renderLogTable(rows))
+	return m, nil
+}
+
+func (m model) onStorageLocationsLoaded(msg storageLocationsLoadedMsg) (tea.Model, tea.Cmd) {
+	m.mode = modeNav
+	if msg.err != nil {
+		m.log.append(errStyle.Render("error: " + msg.err.Error()))
+		return m, nil
+	}
+	rows := [][]string{{"NAME", "PROVIDER", "BUCKET", "PHASE", "DEFAULT"}}
+	for i := range msg.locations {
+		l := &msg.locations[i]
+		bucket := "-"
+		if l.Spec.ObjectStorage != nil {
+			bucket = l.Spec.ObjectStorage.Bucket
+		}
+		rows = append(rows, []string{
+			l.Name, l.Spec.Provider, bucket,
+			phaseOrDash(string(l.Status.Phase)), fmtBool(l.Spec.Default),
+		})
 	}
 	m.log.append(renderLogTable(rows))
 	return m, nil

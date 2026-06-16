@@ -25,6 +25,17 @@ func (m model) describeRestoreCmd(name string) tea.Cmd {
 	return func() tea.Msg { return detailMsg{body: m.describeRestore(name)} }
 }
 
+func (m model) describeScheduleCmd(name string) tea.Cmd {
+	return func() tea.Msg { return detailMsg{body: m.describeSchedule(name)} }
+}
+
+func fmtBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+
 func phaseOrDash(phase string) string {
 	if phase == "" {
 		return "-"
@@ -79,6 +90,32 @@ func (m model) describeBackup(name string) string {
 	fmt.Fprintf(&sb, "Errors:            %d\n", b.Status.Errors)
 	fmt.Fprintf(&sb, "Warnings:          %d\n", b.Status.Warnings)
 	fmt.Fprintf(&sb, "ValidationErrors:  %s", joinOrDash(b.Status.ValidationErrors))
+	return sb.String()
+}
+
+func (m model) describeSchedule(name string) string {
+	vc, err := newVeleroClient(m.app)
+	if err != nil {
+		return err.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), snapshotTimeout)
+	defer cancel()
+	s, err := core.GetSchedule(ctx, vc, name)
+	if err != nil {
+		return err.Error()
+	}
+	t := s.Spec.Template
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Name:              %s\n", s.Name)
+	fmt.Fprintf(&sb, "Schedule:          %s\n", s.Spec.Schedule)
+	fmt.Fprintf(&sb, "Phase:             %s\n", phaseOrDash(string(s.Status.Phase)))
+	fmt.Fprintf(&sb, "Paused:            %s\n", fmtBool(s.Spec.Paused))
+	fmt.Fprintf(&sb, "Last Backup:       %s\n", fmtTime(s.Status.LastBackup))
+	fmt.Fprintf(&sb, "Namespaces:        %s\n", joinOrDash(t.IncludedNamespaces))
+	fmt.Fprintf(&sb, "Resources:         %s\n", joinOrDash(t.IncludedResources))
+	fmt.Fprintf(&sb, "Storage Location:  %s\n", t.StorageLocation)
+	fmt.Fprintf(&sb, "TTL:               %s\n", t.TTL.Duration)
+	fmt.Fprintf(&sb, "ValidationErrors:  %s", joinOrDash(s.Status.ValidationErrors))
 	return sb.String()
 }
 

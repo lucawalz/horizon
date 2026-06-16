@@ -37,6 +37,16 @@ type restoresLoadedMsg struct {
 	err      error
 }
 
+type schedulesLoadedMsg struct {
+	schedules []velerov1.Schedule
+	err       error
+}
+
+type storageLocationsLoadedMsg struct {
+	locations []velerov1.BackupStorageLocation
+	err       error
+}
+
 type clusterChoice struct {
 	name  string
 	phase string
@@ -153,6 +163,48 @@ func (m model) runRestoreCreate(spec velerov1.RestoreSpec, name string, wait boo
 	})
 }
 
+func (m model) runScheduleCreate(spec velerov1.ScheduleSpec, name string) tea.Cmd {
+	app := m.app
+	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+		vc, err := newVeleroClient(app)
+		if err != nil {
+			return "", err
+		}
+		if err := core.CreateSchedule(ctx, vc, spec, name); err != nil {
+			return "", err
+		}
+		return name, nil
+	})
+}
+
+func (m model) runScheduleDelete(name string) tea.Cmd {
+	app := m.app
+	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+		vc, err := newVeleroClient(app)
+		if err != nil {
+			return "", err
+		}
+		if err := core.DeleteSchedule(ctx, vc, name); err != nil {
+			return "", err
+		}
+		return "deleted schedule " + name, nil
+	})
+}
+
+func (m model) runBSLCreate(spec velerov1.BackupStorageLocationSpec, name string) tea.Cmd {
+	app := m.app
+	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+		vc, err := newVeleroClient(app)
+		if err != nil {
+			return "", err
+		}
+		if err := core.CreateBackupStorageLocation(ctx, vc, spec, name); err != nil {
+			return "", err
+		}
+		return "created storage location " + name + "; this registers the CR only, the bucket must already exist via the operator's IaC", nil
+	})
+}
+
 func (m model) runClusterApply(spec capi.ClusterSpec) tea.Cmd {
 	app := m.app
 	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
@@ -253,6 +305,40 @@ func (m model) loadRestores() tea.Cmd {
 			return restoresLoadedMsg{err: err}
 		}
 		return restoresLoadedMsg{restores: restores}
+	}
+}
+
+func (m model) loadSchedules() tea.Cmd {
+	app := m.app
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), snapshotTimeout)
+		defer cancel()
+		vc, err := newVeleroClient(app)
+		if err != nil {
+			return schedulesLoadedMsg{err: err}
+		}
+		schedules, err := core.ListSchedules(ctx, vc)
+		if err != nil {
+			return schedulesLoadedMsg{err: err}
+		}
+		return schedulesLoadedMsg{schedules: schedules}
+	}
+}
+
+func (m model) loadStorageLocations() tea.Cmd {
+	app := m.app
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), snapshotTimeout)
+		defer cancel()
+		vc, err := newVeleroClient(app)
+		if err != nil {
+			return storageLocationsLoadedMsg{err: err}
+		}
+		locations, err := core.ListBackupStorageLocations(ctx, vc)
+		if err != nil {
+			return storageLocationsLoadedMsg{err: err}
+		}
+		return storageLocationsLoadedMsg{locations: locations}
 	}
 }
 

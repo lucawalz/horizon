@@ -62,3 +62,27 @@ func ListRestores(ctx context.Context, vc VeleroClient) ([]velerov1.Restore, err
 func GetRestore(ctx context.Context, vc VeleroClient, name string) (*velerov1.Restore, error) {
 	return vc.GetRestore(ctx, name)
 }
+
+func CreateSchedule(ctx context.Context, vc VeleroClient, spec velerov1.ScheduleSpec, name string) error {
+	return vc.CreateSchedule(ctx, spec, name)
+}
+
+func ListSchedules(ctx context.Context, vc VeleroClient) ([]velerov1.Schedule, error) {
+	return vc.ListSchedules(ctx)
+}
+
+func GetSchedule(ctx context.Context, vc VeleroClient, name string) (*velerov1.Schedule, error) {
+	return vc.GetSchedule(ctx, name)
+}
+
+func DeleteSchedule(ctx context.Context, vc VeleroClient, name string) error {
+	return vc.DeleteSchedule(ctx, name)
+}
+
+func ListBackupStorageLocations(ctx context.Context, vc VeleroClient) ([]velerov1.BackupStorageLocation, error) {
+	return vc.ListBackupStorageLocations(ctx)
+}
+
+func CreateBackupStorageLocation(ctx context.Context, vc VeleroClient, spec velerov1.BackupStorageLocationSpec, name string) error {
+	return vc.CreateBackupStorageLocation(ctx, spec, name)
+}

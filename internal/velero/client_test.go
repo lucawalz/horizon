@@ -275,6 +275,72 @@ func TestCreateBackup_NoWait(t *testing.T) {
 	}
 }
 
+func TestScheduleLifecycle(t *testing.T) {
+	fakeCl := fake.NewClientBuilder().WithScheme(newSchemeForTest(t)).Build()
+	c := velero.NewClientWithCRClient(fakeCl)
+	ctx := context.Background()
+
+	spec := velerov1.ScheduleSpec{
+		Schedule: "0 3 * * *",
+		Template: velerov1.BackupSpec{IncludedNamespaces: []string{"app"}, StorageLocation: "default"},
+	}
+	if err := c.CreateSchedule(ctx, spec, "nightly"); err != nil {
+		t.Fatalf("CreateSchedule: %v", err)
+	}
+
+	got, err := c.GetSchedule(ctx, "nightly")
+	if err != nil {
+		t.Fatalf("GetSchedule: %v", err)
+	}
+	if got.Spec.Schedule != "0 3 * * *" || len(got.Spec.Template.IncludedNamespaces) != 1 {
+		t.Errorf("unexpected schedule %+v", got.Spec)
+	}
+
+	list, err := c.ListSchedules(ctx)
+	if err != nil {
+		t.Fatalf("ListSchedules: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "nightly" {
+		t.Fatalf("ListSchedules = %v, want [nightly]", list)
+	}
+
+	if err := c.DeleteSchedule(ctx, "nightly"); err != nil {
+		t.Fatalf("DeleteSchedule: %v", err)
+	}
+	if _, err := c.GetSchedule(ctx, "nightly"); err == nil {
+		t.Fatal("expected error getting deleted schedule")
+	}
+}
+
+func TestBackupStorageLocationCreateAndList(t *testing.T) {
+	fakeCl := fake.NewClientBuilder().WithScheme(newSchemeForTest(t)).Build()
+	c := velero.NewClientWithCRClient(fakeCl)
+	ctx := context.Background()
+
+	spec := velerov1.BackupStorageLocationSpec{
+		Provider:    "aws",
+		StorageType: velerov1.StorageType{ObjectStorage: &velerov1.ObjectStorageLocation{Bucket: "horizon-backups"}},
+	}
+	if err := c.CreateBackupStorageLocation(ctx, spec, "secondary"); err != nil {
+		t.Fatalf("CreateBackupStorageLocation: %v", err)
+	}
+
+	list, err := c.ListBackupStorageLocations(ctx)
+	if err != nil {
+		t.Fatalf("ListBackupStorageLocations: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("ListBackupStorageLocations = %d, want 1", len(list))
+	}
+	bsl := list[0]
+	if bsl.Name != "secondary" || bsl.Namespace != "velero" {
+		t.Errorf("name/namespace = %q/%q, want secondary/velero", bsl.Name, bsl.Namespace)
+	}
+	if bsl.Spec.Provider != "aws" || bsl.Spec.ObjectStorage == nil || bsl.Spec.ObjectStorage.Bucket != "horizon-backups" {
+		t.Errorf("unexpected BSL spec %+v", bsl.Spec)
+	}
+}
+
 func TestNewClient_RateLimiterDisabled(t *testing.T) {
 	dir := t.TempDir()
 	kubeconfigPath := filepath.Join(dir, "kubeconfig")

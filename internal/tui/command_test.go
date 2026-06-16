@@ -77,6 +77,11 @@ func TestDispatchNonDestructiveHaveNoConfirm(t *testing.T) {
 		"backup describe foo",
 		"restore list",
 		"restore describe r1",
+		"schedule list",
+		"schedule create nightly --schedule @daily --include-namespaces app",
+		"schedule describe nightly",
+		"bsl list",
+		"bsl create secondary --provider aws --bucket horizon-backups",
 	} {
 		res := m.dispatch(input)
 		if len(res.lines) != 0 {
@@ -103,6 +108,7 @@ func TestDispatchDestructiveRequireConfirm(t *testing.T) {
 		{"backup delete b1", "delete backup"},
 		{"drain worker-1", "drain node"},
 		{"restore create --from-backup b1", "restore from backup"},
+		{"schedule delete nightly", "delete schedule"},
 	}
 	for _, tc := range cases {
 		res := m.dispatch(tc.input)
@@ -133,6 +139,17 @@ func TestDispatchMissingRequiredArgs(t *testing.T) {
 		"cluster bogus",
 		"backup bogus",
 		"restore bogus",
+		"schedule",
+		"schedule create nightly",
+		"schedule create --schedule @daily",
+		"schedule describe",
+		"schedule delete",
+		"schedule bogus",
+		"bsl",
+		"bsl create secondary",
+		"bsl create secondary --provider aws",
+		"bsl create --provider aws --bucket b",
+		"bsl bogus",
 	} {
 		res := m.dispatch(input)
 		if len(res.lines) == 0 {

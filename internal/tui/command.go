@@ -75,6 +75,10 @@ func (m model) dispatch(input string) commandResult {
 		return m.parseBackup(args)
 	case "restore":
 		return m.parseRestore(args)
+	case "schedule":
+		return m.parseSchedule(args)
+	case "bsl":
+		return m.parseBSL(args)
 	case "drain":
 		return m.parseDrain(args)
 	case "theme":
@@ -435,6 +439,97 @@ func (m model) parseRestoreCreate(args []string) commandResult {
 	}
 }
 
+func (m model) parseSchedule(args []string) commandResult {
+	if len(args) == 0 {
+		return errResult("schedule: want create|list|describe|delete")
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "list":
+		return commandResult{cmd: m.loadSchedules()}
+	case "describe":
+		if len(rest) == 0 {
+			return errResult("schedule describe: name argument is required")
+		}
+		return commandResult{cmd: m.describeScheduleCmd(rest[0])}
+	case "delete":
+		if len(rest) == 0 {
+			return errResult("schedule delete: name argument is required")
+		}
+		return commandResult{
+			cmd:     m.runScheduleDelete(rest[0]),
+			confirm: fmt.Sprintf("delete schedule %q?", rest[0]),
+		}
+	case "create":
+		return m.parseScheduleCreate(rest)
+	default:
+		return errResult("schedule: unknown subcommand %q", sub)
+	}
+}
+
+func (m model) parseScheduleCreate(args []string) commandResult {
+	fs := newFlagSet("schedule create")
+	cron := fs.String("schedule", "", "")
+	values := map[string]*string{
+		"include-namespaces": fs.String("include-namespaces", "", ""),
+		"exclude-namespaces": fs.String("exclude-namespaces", "", ""),
+		"include-resources":  fs.String("include-resources", "", ""),
+		"selector":           fs.String("selector", "", ""),
+		"storage-location":   fs.String("storage-location", core.DefaultStorageLocation, ""),
+		"ttl":                fs.String("ttl", core.DefaultBackupTTL.String(), ""),
+		"snapshot-volumes":   fs.String("snapshot-volumes", "true", ""),
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return errResult("schedule create: %v", err)
+	}
+	rest := fs.Args()
+	if len(rest) == 0 {
+		return errResult("schedule create: name argument is required")
+	}
+	spec, err := buildScheduleSpecFromValues(*cron, flatten(values))
+	if err != nil {
+		return errResult("schedule create: %v", err)
+	}
+	return commandResult{cmd: m.runScheduleCreate(spec, rest[0])}
+}
+
+func (m model) parseBSL(args []string) commandResult {
+	if len(args) == 0 {
+		return errResult("bsl: want create|list")
+	}
+	sub, rest := args[0], args[1:]
+	switch sub {
+	case "list":
+		return commandResult{cmd: m.loadStorageLocations()}
+	case "create":
+		return m.parseBSLCreate(rest)
+	default:
+		return errResult("bsl: unknown subcommand %q", sub)
+	}
+}
+
+func (m model) parseBSLCreate(args []string) commandResult {
+	fs := newFlagSet("bsl create")
+	values := map[string]*string{
+		"provider":   fs.String("provider", "", ""),
+		"bucket":     fs.String("bucket", "", ""),
+		"prefix":     fs.String("prefix", "", ""),
+		"credential": fs.String("credential", "", ""),
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return errResult("bsl create: %v", err)
+	}
+	rest := fs.Args()
+	if len(rest) == 0 {
+		return errResult("bsl create: name argument is required")
+	}
+	spec, err := buildBSLSpecFromValues(flatten(values))
+	if err != nil {
+		return errResult("bsl create: %v", err)
+	}
+	return commandResult{cmd: m.runBSLCreate(spec, rest[0])}
+}
+
 func (m model) parseDrain(args []string) commandResult {
 	if len(args) == 0 {
 		return errResult("drain: node argument is required")
@@ -488,6 +583,10 @@ func helpLines() []helpEntry {
 		{"backup list · describe <name> · delete <name>", "inspect velero backups"},
 		{"restore create --from-backup <name> [--wait]", "restore from a backup"},
 		{"restore list · restore describe <name>", "inspect velero restores"},
+		{"schedule create <name> --schedule \"<cron>\" [--include-namespaces ...]", "create a recurring backup schedule"},
+		{"schedule list · describe <name> · delete <name>", "inspect velero schedules"},
+		{"bsl create <name> --provider <p> --bucket <b>", "register a storage location CR (no bucket provisioning)"},
+		{"bsl list", "inspect backup storage locations"},
 		{"drain <node>", "cordon and evict a node"},
 		{"theme [light|dark|auto]", "set theme directly, or open the live picker with no argument"},
 		{"refresh · clear · help · quit", "session controls"},

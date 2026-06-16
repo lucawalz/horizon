@@ -127,6 +127,63 @@ func (c *Client) DeleteBackup(ctx context.Context, name string) error {
 	return nil
 }
 
+func (c *Client) CreateSchedule(ctx context.Context, spec velerov1.ScheduleSpec, name string) error {
+	schedule := &velerov1.Schedule{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: backupNamespace},
+		Spec:       spec,
+	}
+	if err := c.cl.Create(ctx, schedule); err != nil {
+		return fmt.Errorf("velero: schedule create %q: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) ListSchedules(ctx context.Context) ([]velerov1.Schedule, error) {
+	var list velerov1.ScheduleList
+	if err := c.cl.List(ctx, &list, crClient.InNamespace(backupNamespace)); err != nil {
+		return nil, fmt.Errorf("velero: schedule list: %w", err)
+	}
+	return list.Items, nil
+}
+
+func (c *Client) GetSchedule(ctx context.Context, name string) (*velerov1.Schedule, error) {
+	var schedule velerov1.Schedule
+	key := types.NamespacedName{Name: name, Namespace: backupNamespace}
+	if err := c.cl.Get(ctx, key, &schedule); err != nil {
+		return nil, fmt.Errorf("velero: schedule get %q: %w", name, err)
+	}
+	return &schedule, nil
+}
+
+func (c *Client) DeleteSchedule(ctx context.Context, name string) error {
+	schedule := &velerov1.Schedule{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: backupNamespace},
+	}
+	if err := c.cl.Delete(ctx, schedule); err != nil {
+		return fmt.Errorf("velero: schedule delete %q: %w", name, err)
+	}
+	return nil
+}
+
+func (c *Client) ListBackupStorageLocations(ctx context.Context) ([]velerov1.BackupStorageLocation, error) {
+	var list velerov1.BackupStorageLocationList
+	if err := c.cl.List(ctx, &list, crClient.InNamespace(backupNamespace)); err != nil {
+		return nil, fmt.Errorf("velero: backup storage location list: %w", err)
+	}
+	return list.Items, nil
+}
+
+func (c *Client) CreateBackupStorageLocation(ctx context.Context, spec velerov1.BackupStorageLocationSpec, name string) error {
+	bsl := &velerov1.BackupStorageLocation{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: backupNamespace},
+		Spec:       spec,
+	}
+	if err := c.cl.Create(ctx, bsl); err != nil {
+		return fmt.Errorf("velero: backup storage location create %q: %w", name, err)
+	}
+	return nil
+}
+
 func (c *Client) ListRestores(ctx context.Context) ([]velerov1.Restore, error) {
 	var list velerov1.RestoreList
 	if err := c.cl.List(ctx, &list, crClient.InNamespace(backupNamespace)); err != nil {

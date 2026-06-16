@@ -9,6 +9,7 @@ import (
 	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/core"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -72,6 +73,49 @@ func buildBackupSpecFromValues(v map[string]string) (velerov1.BackupSpec, error)
 			return velerov1.BackupSpec{}, fmt.Errorf("invalid selector %q: %w", sel, err)
 		}
 		spec.LabelSelector = ls
+	}
+	return spec, nil
+}
+
+func buildScheduleSpecFromValues(cron string, v map[string]string) (velerov1.ScheduleSpec, error) {
+	cron = strings.TrimSpace(cron)
+	if cron == "" {
+		return velerov1.ScheduleSpec{}, fmt.Errorf("--schedule is required")
+	}
+	template, err := buildBackupSpecFromValues(v)
+	if err != nil {
+		return velerov1.ScheduleSpec{}, err
+	}
+	return velerov1.ScheduleSpec{Schedule: cron, Template: template}, nil
+}
+
+func buildBSLSpecFromValues(v map[string]string) (velerov1.BackupStorageLocationSpec, error) {
+	provider := strings.TrimSpace(v["provider"])
+	if provider == "" {
+		return velerov1.BackupStorageLocationSpec{}, fmt.Errorf("--provider is required")
+	}
+	bucket := strings.TrimSpace(v["bucket"])
+	if bucket == "" {
+		return velerov1.BackupStorageLocationSpec{}, fmt.Errorf("--bucket is required")
+	}
+	spec := velerov1.BackupStorageLocationSpec{
+		Provider: provider,
+		StorageType: velerov1.StorageType{
+			ObjectStorage: &velerov1.ObjectStorageLocation{
+				Bucket: bucket,
+				Prefix: strings.TrimSpace(v["prefix"]),
+			},
+		},
+	}
+	if cred := strings.TrimSpace(v["credential"]); cred != "" {
+		secret, key, ok := strings.Cut(cred, "/")
+		if !ok || secret == "" || key == "" {
+			return velerov1.BackupStorageLocationSpec{}, fmt.Errorf("invalid --credential %q, want secretName/key", cred)
+		}
+		spec.Credential = &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: secret},
+			Key:                  key,
+		}
 	}
 	return spec, nil
 }

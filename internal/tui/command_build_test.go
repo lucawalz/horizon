@@ -41,6 +41,72 @@ func TestBuildBackupSpecFromValuesBadSelector(t *testing.T) {
 	}
 }
 
+func TestBuildScheduleSpecFromValues(t *testing.T) {
+	spec, err := buildScheduleSpecFromValues("0 3 * * *", map[string]string{
+		"include-namespaces": "app",
+		"include-resources":  "deployments",
+		"ttl":                "168h",
+		"snapshot-volumes":   "true",
+	})
+	if err != nil {
+		t.Fatalf("buildScheduleSpecFromValues: %v", err)
+	}
+	if spec.Schedule != "0 3 * * *" {
+		t.Errorf("Schedule = %q, want 0 3 * * *", spec.Schedule)
+	}
+	if len(spec.Template.IncludedNamespaces) != 1 || spec.Template.IncludedNamespaces[0] != "app" {
+		t.Errorf("template namespaces = %v, want [app]", spec.Template.IncludedNamespaces)
+	}
+	if spec.Template.TTL != (metav1.Duration{Duration: 168 * time.Hour}) {
+		t.Errorf("template TTL = %v, want 168h", spec.Template.TTL)
+	}
+}
+
+func TestBuildScheduleSpecFromValuesRequiresCron(t *testing.T) {
+	if _, err := buildScheduleSpecFromValues("  ", map[string]string{"include-namespaces": "app"}); err == nil {
+		t.Fatal("expected error for empty cron")
+	}
+}
+
+func TestBuildBSLSpecFromValues(t *testing.T) {
+	spec, err := buildBSLSpecFromValues(map[string]string{
+		"provider":   "aws",
+		"bucket":     "horizon-backups",
+		"prefix":     "cluster-a",
+		"credential": "velero-creds/cloud",
+	})
+	if err != nil {
+		t.Fatalf("buildBSLSpecFromValues: %v", err)
+	}
+	if spec.Provider != "aws" {
+		t.Errorf("Provider = %q, want aws", spec.Provider)
+	}
+	if spec.ObjectStorage == nil || spec.ObjectStorage.Bucket != "horizon-backups" || spec.ObjectStorage.Prefix != "cluster-a" {
+		t.Errorf("unexpected ObjectStorage %+v", spec.ObjectStorage)
+	}
+	if spec.Credential == nil || spec.Credential.Name != "velero-creds" || spec.Credential.Key != "cloud" {
+		t.Errorf("unexpected Credential %+v", spec.Credential)
+	}
+}
+
+func TestBuildBSLSpecFromValuesMissingProvider(t *testing.T) {
+	if _, err := buildBSLSpecFromValues(map[string]string{"bucket": "b"}); err == nil {
+		t.Fatal("expected error for missing provider")
+	}
+}
+
+func TestBuildBSLSpecFromValuesMissingBucket(t *testing.T) {
+	if _, err := buildBSLSpecFromValues(map[string]string{"provider": "aws"}); err == nil {
+		t.Fatal("expected error for missing bucket")
+	}
+}
+
+func TestBuildBSLSpecFromValuesBadCredential(t *testing.T) {
+	if _, err := buildBSLSpecFromValues(map[string]string{"provider": "aws", "bucket": "b", "credential": "noslash"}); err == nil {
+		t.Fatal("expected error for malformed credential")
+	}
+}
+
 func TestBuildRestoreSpecFromValues(t *testing.T) {
 	spec, err := buildRestoreSpecFromValues("bk1", map[string]string{
 		"include-namespaces": "ns1",

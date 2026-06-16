@@ -192,17 +192,25 @@ func captureStdout(fn func()) string {
 }
 
 type fakeVeleroClient struct {
-	backups  []velerov1.Backup
-	restores []velerov1.Restore
+	backups   []velerov1.Backup
+	restores  []velerov1.Restore
+	schedules []velerov1.Schedule
+	locations []velerov1.BackupStorageLocation
 
-	createBackupErr  error
-	triggerBackupErr error
-	createRestoreErr error
-	listBackupsErr   error
-	getBackupErr     error
-	deleteBackupErr  error
-	listRestoresErr  error
-	getRestoreErr    error
+	createBackupErr   error
+	triggerBackupErr  error
+	createRestoreErr  error
+	listBackupsErr    error
+	getBackupErr      error
+	deleteBackupErr   error
+	listRestoresErr   error
+	getRestoreErr     error
+	createScheduleErr error
+	listSchedulesErr  error
+	getScheduleErr    error
+	deleteScheduleErr error
+	listBSLErr        error
+	createBSLErr      error
 
 	createdBackupSpec    velerov1.BackupSpec
 	createdBackupName    string
@@ -211,6 +219,11 @@ type fakeVeleroClient struct {
 	triggeredBackupSpec  velerov1.BackupSpec
 	triggeredRestoreSpec velerov1.RestoreSpec
 	deletedBackup        string
+	createdScheduleSpec  velerov1.ScheduleSpec
+	createdScheduleName  string
+	deletedSchedule      string
+	createdBSLSpec       velerov1.BackupStorageLocationSpec
+	createdBSLName       string
 	waited               bool
 }
 
@@ -275,4 +288,41 @@ func (f *fakeVeleroClient) GetRestore(_ context.Context, name string) (*velerov1
 		}
 	}
 	return &velerov1.Restore{}, nil
+}
+
+func (f *fakeVeleroClient) CreateSchedule(_ context.Context, spec velerov1.ScheduleSpec, name string) error {
+	f.createdScheduleSpec = spec
+	f.createdScheduleName = name
+	return f.createScheduleErr
+}
+
+func (f *fakeVeleroClient) ListSchedules(_ context.Context) ([]velerov1.Schedule, error) {
+	return f.schedules, f.listSchedulesErr
+}
+
+func (f *fakeVeleroClient) GetSchedule(_ context.Context, name string) (*velerov1.Schedule, error) {
+	if f.getScheduleErr != nil {
+		return nil, f.getScheduleErr
+	}
+	for i := range f.schedules {
+		if f.schedules[i].Name == name {
+			return &f.schedules[i], nil
+		}
+	}
+	return &velerov1.Schedule{}, nil
+}
+
+func (f *fakeVeleroClient) DeleteSchedule(_ context.Context, name string) error {
+	f.deletedSchedule = name
+	return f.deleteScheduleErr
+}
+
+func (f *fakeVeleroClient) ListBackupStorageLocations(_ context.Context) ([]velerov1.BackupStorageLocation, error) {
+	return f.locations, f.listBSLErr
+}
+
+func (f *fakeVeleroClient) CreateBackupStorageLocation(_ context.Context, spec velerov1.BackupStorageLocationSpec, name string) error {
+	f.createdBSLSpec = spec
+	f.createdBSLName = name
+	return f.createBSLErr
 }
