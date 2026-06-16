@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/stopwatch"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lucawalz/horizon/internal/core"
@@ -27,12 +29,15 @@ type model struct {
 	width  int
 	height int
 
-	mode     mode
-	showHelp bool
+	mode mode
 
 	input  textinput.Model
 	log    logModel
 	stream <-chan streamEvent
+
+	spinner spinner.Model
+	age     stopwatch.Model
+	loading bool
 
 	pending tea.Cmd
 	confirm string
@@ -41,16 +46,20 @@ type model struct {
 func newModel(app *core.App, contextName string) model {
 	ti := textinput.New()
 	ti.Prompt = commandPrompt
+	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(refreshLabelStyle))
 	return model{
 		app:     app,
 		context: contextName,
 		input:   ti,
 		log:     newLog(1, 1),
+		spinner: sp,
+		age:     stopwatch.New(),
+		loading: true,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.loadSnapshot(), tick())
+	return tea.Batch(m.loadSnapshot(), tick(), m.spinner.Tick, m.age.Start())
 }
 
 func (m model) loadSnapshot() tea.Cmd {
@@ -78,9 +87,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotMsg:
 		m.snap = msg.snap
 		m.loaded = true
-		return m, nil
+		m.loading = false
+		return m, m.age.Reset()
 	case tickMsg:
-		return m, tea.Batch(m.loadSnapshot(), tick())
+		m.loading = true
+		return m, tea.Batch(m.loadSnapshot(), tick(), m.spinner.Tick)
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case stopwatch.TickMsg, stopwatch.StartStopMsg, stopwatch.ResetMsg:
+		var cmd tea.Cmd
+		m.age, cmd = m.age.Update(msg)
+		return m, cmd
 	case streamStartedMsg:
 		m.stream = msg.ch
 		return m, waitForStream(msg.ch)
@@ -125,9 +144,12 @@ func (m model) onNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		return m, m.input.Focus()
 	case key.Matches(msg, keys.Refresh):
-		return m, m.loadSnapshot()
+		m.loading = true
+		return m, tea.Batch(m.loadSnapshot(), m.spinner.Tick)
 	case key.Matches(msg, keys.Help):
-		m.showHelp = !m.showHelp
+		for _, line := range helpLines() {
+			m.log.append(line)
+		}
 		return m, nil
 	case key.Matches(msg, keys.ScrollUp):
 		m.log.view.ScrollUp(1)
@@ -271,7 +293,7 @@ func (m model) onBackupsLoaded(msg backupsLoadedMsg) (tea.Model, tea.Cmd) {
 			itoa(b.Status.Errors),
 		})
 	}
-	m.log.append(renderTable(rows))
+	m.log.append(renderLogTable(rows))
 	return m, nil
 }
 
@@ -289,7 +311,7 @@ func (m model) onRestoresLoaded(msg restoresLoadedMsg) (tea.Model, tea.Cmd) {
 			itoa(r.Status.Warnings), itoa(r.Status.Errors),
 		})
 	}
-	m.log.append(renderTable(rows))
+	m.log.append(renderLogTable(rows))
 	return m, nil
 }
 
@@ -303,6 +325,6 @@ func (m model) onClustersLoaded(msg clustersLoadedMsg) (tea.Model, tea.Cmd) {
 	for _, c := range msg.clusters {
 		rows = append(rows, []string{c.name, c.phase})
 	}
-	m.log.append(renderTable(rows))
+	m.log.append(renderLogTable(rows))
 	return m, nil
 }

@@ -1,55 +1,47 @@
 package tui
 
-import "strings"
+import (
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
+)
 
-const columnGap = 2
-
-func renderTable(rows [][]string) string {
+func renderLogTable(rows [][]string) string {
 	if len(rows) == 0 {
 		return ""
 	}
-	cols := 0
-	for _, r := range rows {
-		if len(r) > cols {
-			cols = len(r)
-		}
-	}
-	widths := make([]int, cols)
-	for _, r := range rows {
-		for i, cell := range r {
-			if n := len([]rune(cell)); n > widths[i] {
-				widths[i] = n
+	headers := rows[0]
+	body := rows[1:]
+	t := table.New().
+		Border(lipgloss.HiddenBorder()).
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderColumn(false).
+		BorderRow(false).
+		BorderHeader(false).
+		Headers(headers...).
+		Rows(body...).
+		StyleFunc(func(row, _ int) lipgloss.Style {
+			if row == table.HeaderRow {
+				return tableHeaderStyle.Padding(0, 1).PaddingLeft(0)
 			}
-		}
-	}
-
-	var b strings.Builder
-	for ri, r := range rows {
-		for i := 0; i < cols; i++ {
-			cell := ""
-			if i < len(r) {
-				cell = r[i]
-			}
-			text := cell
-			if i < cols-1 {
-				text = pad(cell, widths[i]+columnGap)
-			}
-			if ri == 0 {
-				text = tableHeaderStyle.Render(text)
-			}
-			b.WriteString(text)
-		}
-		if ri < len(rows)-1 {
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
+			return tableCellStyle.PaddingLeft(0)
+		})
+	return t.Render()
 }
 
-func pad(s string, width int) string {
-	n := len([]rune(s))
-	if n >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-n)
+func newPanelTable(headers []string, styleFunc table.StyleFunc) *table.Table {
+	return table.New().
+		Wrap(false).
+		Border(lipgloss.NormalBorder()).
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderColumn(false).
+		BorderRow(false).
+		BorderHeader(false).
+		Headers(headers...).
+		StyleFunc(styleFunc)
 }

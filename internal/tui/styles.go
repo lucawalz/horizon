@@ -3,7 +3,7 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 const (
-	refreshInterval = 10
+	refreshInterval = 2
 
 	gradientStartHex = "#22d3ee"
 	gradientEndHex   = "#d946ef"
@@ -15,12 +15,23 @@ const (
 	dotYellow = "#eab308"
 	dotGreen  = "#22c55e"
 
-	colorDim   = "#6b7280"
-	colorTitle = "#e5e7eb"
-	colorErr   = "#f87171"
-	colorWarn  = "#eab308"
+	colorDim    = "#6b7280"
+	colorTitle  = "#e5e7eb"
+	colorErr    = "#f87171"
+	colorWarn   = "#eab308"
+	colorAccent = "#22d3ee"
 
 	warnThresholdRatio = 0.75
+
+	wideBreakpoint   = 100
+	mediumBreakpoint = 70
+
+	gaugeWidth   = 10
+	minLogHeight = 3
+	minLogWidth  = 24
+	columnGap    = 2
+
+	twoColumnRatio = 0.5
 )
 
 var (
@@ -37,11 +48,17 @@ var (
 				Bold(true).
 				Foreground(lipgloss.Color(colorTitle))
 
+	tableCellStyle = lipgloss.NewStyle().Padding(0, 1)
+
 	dimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim))
 
 	errStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorErr))
 
 	warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarn))
 
-	footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim))
+	statusStripStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim))
+
+	inputRuleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim))
+
+	refreshLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorAccent))
 )

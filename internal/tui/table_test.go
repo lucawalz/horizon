@@ -5,22 +5,22 @@ import (
 	"testing"
 )
 
-func TestRenderTableEmpty(t *testing.T) {
-	if got := renderTable(nil); got != "" {
+func TestRenderLogTableEmpty(t *testing.T) {
+	if got := renderLogTable(nil); got != "" {
 		t.Errorf("empty table = %q, want empty", got)
 	}
-	if got := renderTable([][]string{}); got != "" {
+	if got := renderLogTable([][]string{}); got != "" {
 		t.Errorf("zero-row table = %q, want empty", got)
 	}
 }
 
-func TestRenderTableAlignsColumns(t *testing.T) {
+func TestRenderLogTableAlignsColumns(t *testing.T) {
 	rows := [][]string{
 		{"NAME", "STATUS"},
 		{"a", "Ready"},
 		{"longer-name", "NotReady"},
 	}
-	out := renderTable(rows)
+	out := renderLogTable(rows)
 	lines := strings.Split(out, "\n")
 	if len(lines) != 3 {
 		t.Fatalf("expected 3 lines, got %d:\n%s", len(lines), out)
@@ -32,15 +32,6 @@ func TestRenderTableAlignsColumns(t *testing.T) {
 	}
 	if !strings.Contains(stripStyling(lines[2]), "longer-name") {
 		t.Errorf("data row missing content:\n%s", out)
-	}
-}
-
-func TestPad(t *testing.T) {
-	if got := pad("ab", 5); got != "ab   " {
-		t.Errorf("pad = %q, want %q", got, "ab   ")
-	}
-	if got := pad("toolong", 3); got != "toolong" {
-		t.Errorf("pad must not truncate, got %q", got)
 	}
 }
 

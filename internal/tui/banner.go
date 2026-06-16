@@ -56,6 +56,12 @@ func renderBanner(width int, cluster, context string) string {
 	return banner
 }
 
+func compactBanner(cluster, context string) string {
+	title := panelTitleStyle.Render("HORIZON")
+	sub := dimStyle.Render(fmt.Sprintf("  %s · ctx:%s", valueOr(cluster, "default"), valueOr(context, "current")))
+	return title + sub
+}
+
 func valueOr(s, fallback string) string {
 	if strings.TrimSpace(s) == "" {
 		return fallback

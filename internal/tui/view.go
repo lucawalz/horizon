@@ -1,60 +1,35 @@
 package tui
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/stopwatch"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/lucawalz/horizon/internal/core"
 )
 
 const (
-	commandPrompt = "horizon › "
-
+	commandPrompt   = "horizon › "
 	bannerTopMargin = 1
-	columnGapWidth  = 2
-	minDashboardCol = 40
-	minLogCol       = 24
-	dashboardRatio  = 0.55
-	chromeRows      = 4
 )
 
 func (m *model) resize() {
-	_, logWidth := splitWidths(m.width)
-	m.log.resize(logWidth, m.bodyHeight())
+	m.log.resize(m.logWidth(), minLogHeight)
 	m.input.Width = m.inputWidth()
 }
 
-func splitWidths(total int) (dashboard, log int) {
-	if total <= 0 {
-		return minDashboardCol, minLogCol
+func (m model) logWidth() int {
+	w := m.width
+	if w < minLogWidth {
+		return minLogWidth
 	}
-	usable := total - columnGapWidth
-	if usable < minDashboardCol+minLogCol {
-		return minDashboardCol, minLogCol
-	}
-	dashboard = int(float64(usable) * dashboardRatio)
-	if dashboard < minDashboardCol {
-		dashboard = minDashboardCol
-	}
-	log = usable - dashboard
-	if log < minLogCol {
-		log = minLogCol
-		dashboard = usable - log
-	}
-	return dashboard, log
-}
-
-func (m model) bodyHeight() int {
-	bannerRows := bannerTopMargin + len(strings.Split(bannerArt, "\n")) + 1
-	h := m.height - bannerRows - chromeRows
-	if h < 1 {
-		h = 1
-	}
-	return h
+	return w
 }
 
 func (m model) inputWidth() int {
-	w := m.width - len(commandPrompt) - 1
+	w := m.width - len([]rune(m.input.Prompt)) - 1
 	if w < 1 {
 		w = 1
 	}
@@ -62,48 +37,204 @@ func (m model) inputWidth() int {
 }
 
 func (m model) View() string {
-	dashWidth, _ := splitWidths(m.width)
+	if m.width <= 0 || m.height <= 0 {
+		return ""
+	}
 
-	var b strings.Builder
-	b.WriteString(strings.Repeat("\n", bannerTopMargin))
-	b.WriteString(renderBanner(m.width, m.app.Cluster, m.context))
-	b.WriteString("\n\n")
-	b.WriteString(m.body(dashWidth))
-	b.WriteString("\n")
-	b.WriteString(m.input.View())
-	b.WriteString("\n")
-	b.WriteString(footerStyle.Render(m.footer()))
-	return b.String()
+	header := m.headerBand()
+	inputBox := m.inputBand()
+
+	dashboard := m.dashboardBand()
+	if !m.fits(header, dashboard, inputBox) {
+		dashboard = m.collapsedDashboard()
+	}
+
+	logView := m.logBand(header, dashboard, inputBox)
+
+	out := lipgloss.JoinVertical(lipgloss.Left, header, dashboard, logView, inputBox)
+	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(out)
 }
 
-func (m model) body(dashWidth int) string {
-	left := m.dashboardView(dashWidth)
-	right := m.log.view.View()
-	gap := strings.Repeat(" ", columnGapWidth)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, gap, right)
+func (m model) fits(header, dashboard, inputBox string) bool {
+	used := lipgloss.Height(header) + lipgloss.Height(dashboard) + lipgloss.Height(inputBox)
+	return m.height-used >= minLogHeight
 }
 
-func (m model) dashboardView(width int) string {
+func (m model) logBand(header, dashboard, inputBox string) string {
+	used := lipgloss.Height(header) + lipgloss.Height(dashboard) + lipgloss.Height(inputBox)
+	h := m.height - used
+	if h < minLogHeight {
+		h = minLogHeight
+	}
+	m.log.resize(m.logWidth(), h)
+	return m.log.view.View()
+}
+
+func (m model) headerBand() string {
+	left := renderBanner(m.width, m.app.Cluster, m.context)
+	if m.width < mediumBreakpoint {
+		left = compactBanner(m.app.Cluster, m.context)
+	}
+	right := m.refreshIndicator()
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	row := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
+	return strings.Repeat("\n", bannerTopMargin) + row
+}
+
+func (m model) refreshIndicator() string {
+	if m.loading {
+		return m.spinner.View() + refreshLabelStyle.Render(" refreshing…")
+	}
+	if !m.loaded {
+		return ""
+	}
+	return statusDot(dotGreen) + dimStyle.Render(fmt.Sprintf(" updated %s ago", ageLabel(m.age)))
+}
+
+func (m model) dashboardBand() string {
 	if !m.loaded {
 		return dimStyle.Render("loading cluster snapshot…")
 	}
-	return renderDashboard(m.snap, width)
+	pressure := renderPressure(m.snap.Pressure)
+	switch {
+	case m.width >= wideBreakpoint:
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, m.wideDashboard())
+	case m.width >= mediumBreakpoint:
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, m.mediumDashboard())
+	default:
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, m.narrowDashboard())
+	}
 }
 
-func (m model) footer() string {
+func (m model) wideDashboard() string {
+	colWidth := int(float64(m.width-columnGap) * twoColumnRatio)
+	rightWidth := m.width - columnGap - colWidth
+	left := nodesPanel(m.snap, colWidth, true)
+	right := lipgloss.JoinVertical(lipgloss.Left,
+		clusterStatusPanel(m.snap, rightWidth, false),
+		clustersPanel(m.snap, rightWidth),
+	)
+	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", columnGap), right)
+	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, m.width, true))
+}
+
+func (m model) mediumDashboard() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		nodesPanel(m.snap, m.width, false),
+		poolsPanel(m.snap, m.width, true),
+		clusterStatusPanel(m.snap, m.width, false),
+		clustersPanel(m.snap, m.width),
+	)
+}
+
+func (m model) narrowDashboard() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		nodesPanel(m.snap, m.width, false),
+		poolsPanel(m.snap, m.width, false),
+		clusterStatusPanel(m.snap, m.width, true),
+	)
+}
+
+func (m model) collapsedDashboard() string {
+	if !m.loaded {
+		return dimStyle.Render("loading cluster snapshot…")
+	}
+	return dimStyle.Render(m.summaryLine())
+}
+
+func (m model) summaryLine() string {
+	parts := []string{
+		pressureSummaryLine(m.snap),
+		fmt.Sprintf("%d nodes Ready", readyNodeCount(m.snap)),
+		fmt.Sprintf("pools %d", len(m.snap.Pools)),
+		controlPlaneGlyph(m.snap.Nudge),
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m model) inputBand() string {
+	width := m.width
+	topRule := ruleWithLabel(width, m.app.Cluster)
+	prompt := m.inputLine()
+	bottomRule := inputRuleStyle.Render(strings.Repeat("─", width))
+	strip := m.statusStrip(width)
+	return lipgloss.JoinVertical(lipgloss.Left, topRule, prompt, bottomRule, strip)
+}
+
+func (m model) inputLine() string {
 	switch m.mode {
 	case modeCommand:
-		return "enter run  esc cancel"
-	case modeConfirm:
-		return "y confirm  n/esc cancel"
-	case modeRunning:
-		return "running…"
+		return m.input.View()
 	default:
-		if m.showHelp {
-			return strings.Join(helpLines(), "\n")
-		}
-		return ": command  ↑↓ scroll  pgup/pgdn page  r refresh  ? help  q quit"
+		return inputRuleStyle.Render(m.input.Prompt)
 	}
+}
+
+func ruleWithLabel(width int, label string) string {
+	label = valueOr(label, "default")
+	tag := " " + label + " "
+	dashes := width - lipgloss.Width(tag) - 1
+	if dashes < 1 {
+		return inputRuleStyle.Render(strings.Repeat("─", width))
+	}
+	return inputRuleStyle.Render(strings.Repeat("─", dashes) + tag + "─")
+}
+
+func (m model) statusStrip(width int) string {
+	switch m.mode {
+	case modeCommand:
+		return statusStripStyle.Render("enter run · esc cancel")
+	case modeConfirm:
+		return statusStripStyle.Render("y confirm · n/esc cancel")
+	case modeRunning:
+		return statusStripStyle.Render("running…")
+	}
+	left := strings.Join([]string{
+		fmt.Sprintf("%s · ctx:%s", valueOr(m.app.Cluster, "default"), valueOr(m.context, "current")),
+		fmt.Sprintf("%d nodes Ready", readyNodeCount(m.snap)),
+		fmt.Sprintf("pools %d", len(m.snap.Pools)),
+		controlPlaneGlyph(m.snap.Nudge),
+		": command · ? help · q quit",
+	}, " · ")
+	right := ""
+	if m.loaded {
+		right = fmt.Sprintf("updated %s ago", ageLabel(m.age))
+	}
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return statusStripStyle.Render(left + strings.Repeat(" ", gap) + right)
+}
+
+func readyNodeCount(snap core.Snapshot) int {
+	n := 0
+	for _, r := range snap.Nodes {
+		if r.Status == "Ready" {
+			n++
+		}
+	}
+	return n
+}
+
+func controlPlaneGlyph(state core.NudgeState) string {
+	switch state.Kind {
+	case core.NudgeInitialized:
+		return "cp ✓"
+	case core.NudgeUninitialized:
+		return "cp !"
+	case core.NudgeNotFound:
+		return "cp -"
+	default:
+		return "cp ?"
+	}
+}
+
+func ageLabel(sw stopwatch.Model) string {
+	return fmt.Sprintf("%ds", int(sw.Elapsed().Seconds()))
 }
 
 func splitLines(s string) []string {

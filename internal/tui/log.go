@@ -31,12 +31,15 @@ func (l *logModel) resize(width, height int) {
 }
 
 func (l *logModel) append(line string) {
+	atBottom := l.view.AtBottom()
 	l.lines = append(l.lines, line)
 	if len(l.lines) > logScrollback {
 		l.lines = l.lines[len(l.lines)-logScrollback:]
 	}
 	l.sync()
-	l.view.GotoBottom()
+	if atBottom {
+		l.view.GotoBottom()
+	}
 }
 
 func (l *logModel) echo(input string) {
