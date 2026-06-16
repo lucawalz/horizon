@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
 )
+
+var ErrNotConfigured = errors.New("horizon is not configured")
 
 type ThresholdConfig struct {
 	Burst           float64 `mapstructure:"burst" yaml:"burst"`
@@ -51,6 +54,7 @@ type Config struct {
 	BedrockPath   string          `mapstructure:"bedrock_path" yaml:"bedrock_path"`
 	Cluster       string          `mapstructure:"cluster" yaml:"cluster"`
 	Kubeconfig    string          `mapstructure:"kubeconfig" yaml:"kubeconfig"`
+	Context       string          `mapstructure:"context" yaml:"context"`
 	Theme         string          `mapstructure:"theme" yaml:"theme"`
 	Thresholds    ThresholdConfig `mapstructure:"thresholds" yaml:"thresholds"`
 	Pools         PoolDefaults    `mapstructure:"pools" yaml:"pools"`
@@ -77,18 +81,31 @@ const (
 	ThemeDark  = "dark"
 )
 
+func DefaultConfigPath() string {
+	var dir string
+	switch {
+	case os.Getenv("HORIZON_CONFIG_DIR") != "":
+		dir = os.Getenv("HORIZON_CONFIG_DIR")
+	case os.Getenv("XDG_CONFIG_HOME") != "":
+		dir = filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "horizon")
+	default:
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".config", "horizon")
+	}
+	return filepath.Join(dir, "config.yaml")
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
-	if dir := os.Getenv("HORIZON_CONFIG_DIR"); dir != "" {
-		v.AddConfigPath(dir)
-	} else {
-		home, _ := os.UserHomeDir()
-		v.AddConfigPath(filepath.Join(home, ".config", "horizon"))
-	}
+	v.AddConfigPath(filepath.Dir(DefaultConfigPath()))
 
 	if err := v.ReadInConfig(); err != nil {
+		var nf viper.ConfigFileNotFoundError
+		if errors.As(err, &nf) {
+			return nil, fmt.Errorf("%w: run `horizon init`", ErrNotConfigured)
+		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 
@@ -114,6 +131,15 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("infra_path is retired; set bedrock_path")
 	}
 
+	applyDefaults(&cfg)
+	if err := validateTheme(cfg.Theme); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func applyDefaults(cfg *Config) {
 	if cfg.Pools.Namespace == "" {
 		cfg.Pools.Namespace = defaultPoolNamespace
 	}
@@ -138,11 +164,12 @@ func Load() (*Config, error) {
 	if cfg.Theme == "" {
 		cfg.Theme = ThemeAuto
 	}
-	if err := validateTheme(cfg.Theme); err != nil {
-		return nil, err
-	}
+}
 
-	return &cfg, nil
+func Default(path string) *Config {
+	cfg := &Config{path: path}
+	applyDefaults(cfg)
+	return cfg
 }
 
 func validateTheme(theme string) error {
@@ -169,6 +196,9 @@ func (c *Config) Save() error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
 	}
 	if err := os.WriteFile(c.path, data, 0600); err != nil {
 		return fmt.Errorf("write config %q: %w", c.path, err)

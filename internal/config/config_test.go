@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,6 +265,90 @@ func TestSetThemeRejectsInvalid(t *testing.T) {
 	cfg := &config.Config{}
 	if err := cfg.SetTheme("neon"); err == nil {
 		t.Fatal("expected error for invalid theme")
+	}
+}
+
+func TestDefaultConfigPath(t *testing.T) {
+	t.Run("HORIZON_CONFIG_DIR wins", func(t *testing.T) {
+		t.Setenv("HORIZON_CONFIG_DIR", "/tmp/horizon-cfg")
+		t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
+		if got := config.DefaultConfigPath(); got != "/tmp/horizon-cfg/config.yaml" {
+			t.Errorf("got %q, want /tmp/horizon-cfg/config.yaml", got)
+		}
+	})
+	t.Run("XDG_CONFIG_HOME second", func(t *testing.T) {
+		t.Setenv("HORIZON_CONFIG_DIR", "")
+		t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
+		if got := config.DefaultConfigPath(); got != "/tmp/xdg/horizon/config.yaml" {
+			t.Errorf("got %q, want /tmp/xdg/horizon/config.yaml", got)
+		}
+	})
+	t.Run("home fallback", func(t *testing.T) {
+		t.Setenv("HORIZON_CONFIG_DIR", "")
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("HOME", "/tmp/home")
+		if got := config.DefaultConfigPath(); got != "/tmp/home/.config/horizon/config.yaml" {
+			t.Errorf("got %q, want /tmp/home/.config/horizon/config.yaml", got)
+		}
+	})
+}
+
+func TestLoadNotConfigured(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	_, err := config.Load()
+	if !errors.Is(err, config.ErrNotConfigured) {
+		t.Fatalf("Load() error = %v, want ErrNotConfigured", err)
+	}
+}
+
+func TestLoadParseErrorIsNotNotConfigured(t *testing.T) {
+	dir := t.TempDir()
+	content := "bedrock_path: [unterminated\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error for malformed yaml, got nil")
+	}
+	if errors.Is(err, config.ErrNotConfigured) {
+		t.Errorf("parse error must not be ErrNotConfigured: %v", err)
+	}
+}
+
+func TestDefaultSaveRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "nested", "horizon")
+	path := filepath.Join(cfgDir, "config.yaml")
+
+	cfg := config.Default(path)
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := os.Stat(cfgDir); err != nil {
+		t.Fatalf("config dir not created: %v", err)
+	}
+
+	t.Setenv("HORIZON_CONFIG_DIR", cfgDir)
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Pools.Namespace != "caph-system" {
+		t.Errorf("Pools.Namespace: got %q, want caph-system", reloaded.Pools.Namespace)
+	}
+	if reloaded.Pools.DefaultType != "reserved" {
+		t.Errorf("Pools.DefaultType: got %q, want reserved", reloaded.Pools.DefaultType)
+	}
+	if reloaded.Cluster != "burst" {
+		t.Errorf("Cluster: got %q, want burst", reloaded.Cluster)
+	}
+	if reloaded.Theme != config.ThemeAuto {
+		t.Errorf("Theme: got %q, want %q", reloaded.Theme, config.ThemeAuto)
 	}
 }
 
