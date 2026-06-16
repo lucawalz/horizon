@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/lucawalz/horizon/internal/core"
+	"github.com/lucawalz/horizon/internal/tui"
 	"github.com/lucawalz/horizon/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -33,6 +34,13 @@ var rootCmd = &cobra.Command{
 		}
 		*app = *built
 		return nil
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		contextName, err := cmd.Flags().GetString("context")
+		if err != nil {
+			return err
+		}
+		return tui.Run(app, contextName)
 	},
 }
 
