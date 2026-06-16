@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/lucawalz/horizon/internal/version.version=$(VERSION)
 PREFIX ?= $(HOME)/.local/bin
 
-.PHONY: build test vet install uninstall
+.PHONY: build test vet fmt install uninstall
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o horizon ./cmd/horizon
@@ -12,6 +12,9 @@ test:
 
 vet:
 	go vet ./...
+
+fmt:
+	gofumpt -w .
 
 install: build
 	mkdir -p $(PREFIX)
