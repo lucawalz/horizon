@@ -10,3 +10,4 @@ These records capture horizon's own design decisions, the choices behind the Go 
 - [0006. Become a thin Cluster-API operator instead of a provisioning controller](0006-cluster-api-operator-pivot.md) (accepted)
 - [0007. Add on-demand capacity through MachineDeployments in two modes](0007-on-demand-pools-via-machinedeployments.md) (accepted)
 - [0008. Retire the laptop watch daemon and WireGuard](0008-retire-watch-daemon-and-wireguard.md) (accepted)
+- [0009. Make an interactive TUI the primary interface](0009-interactive-tui-as-primary-interface.md) (accepted)
