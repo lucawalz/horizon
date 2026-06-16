@@ -161,6 +161,34 @@ func TestDispatchMissingRequiredArgs(t *testing.T) {
 	}
 }
 
+func TestDispatchStripsDebugFlag(t *testing.T) {
+	m := testModel()
+	res := m.dispatch("down --debug")
+	if len(res.lines) != 0 {
+		t.Fatalf("down --debug unexpected error: %v", res.lines)
+	}
+	if res.cmd == nil {
+		t.Error("down --debug expected a cmd")
+	}
+
+	if _, debug := stripDebugFlag([]string{"--type", "elastic", "--debug", "3"}); !debug {
+		t.Error("expected debug true when --debug present")
+	}
+	got, debug := stripDebugFlag([]string{"--type", "elastic", "3"})
+	if debug {
+		t.Error("expected debug false when --debug absent")
+	}
+	if strings.Join(got, " ") != "--type elastic 3" {
+		t.Errorf("stripped args = %q", got)
+	}
+	stripped, _ := stripDebugFlag([]string{"--debug", "--type", "elastic"})
+	for _, a := range stripped {
+		if a == "--debug" {
+			t.Error("--debug should be removed from args")
+		}
+	}
+}
+
 func TestUpParsesTypeAndReplicas(t *testing.T) {
 	m := testModel()
 	target, err := m.poolTargetFrom("elastic", "", "", 4)

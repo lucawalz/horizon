@@ -11,6 +11,7 @@ type streamEvent struct {
 	line    string
 	summary string
 	done    bool
+	debug   bool
 	err     error
 }
 
@@ -20,16 +21,21 @@ type streamStartedMsg struct {
 
 type actionFunc func(ctx context.Context, p core.Progress) (summary string, err error)
 
-func streamCmd(fn actionFunc) tea.Cmd {
+func streamCmd(debug bool, fn actionFunc) tea.Cmd {
 	return func() tea.Msg {
 		ch := make(chan streamEvent, progressBuffer)
 		go func() {
 			defer close(ch)
 			ctx, cancel := context.WithTimeout(context.Background(), actionTimeout)
 			defer cancel()
-			progress := core.Progress(func(line string) {
-				ch <- streamEvent{line: line}
-			})
+			emitSink := func(line string) { ch <- streamEvent{line: line} }
+			var debugSink func(string)
+			if debug {
+				debugSink = func(line string) { ch <- streamEvent{line: line, debug: true} }
+				restore := enableAPITrace(debugSink)
+				defer restore()
+			}
+			progress := core.NewProgress(emitSink, debugSink)
 			summary, err := fn(ctx, progress)
 			ch <- streamEvent{done: true, summary: summary, err: err}
 		}()

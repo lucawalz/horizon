@@ -15,6 +15,8 @@ import (
 
 const snapshotTimeout = 30 * time.Second
 
+const debugLinePrefix = "» "
+
 type snapshotMsg struct{ snap core.Snapshot }
 
 type tickMsg struct{}
@@ -39,6 +41,8 @@ type model struct {
 
 	pending tea.Cmd
 	confirm string
+
+	debug bool
 
 	picker themePicker
 }
@@ -90,6 +94,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.relayout()
 		return m, nil
 	case tickMsg:
+		if m.stream != nil {
+			return m, tick()
+		}
 		m.loading = true
 		return m, tea.Batch(m.loadSnapshot(), tick(), m.spinner.Tick)
 	case spinner.TickMsg:
@@ -299,7 +306,11 @@ func (m model) onStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 		m.log.append(dimStyle.Render("done"))
 		return m, m.loadSnapshot()
 	}
-	m.log.append(ev.line)
+	if ev.debug {
+		m.log.append(dimStyle.Render(debugLinePrefix + ev.line))
+	} else {
+		m.log.append(ev.line)
+	}
 	return m, waitForStream(m.stream)
 }
 

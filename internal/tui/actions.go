@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"io"
 	"sort"
 	"time"
 
@@ -74,7 +75,7 @@ func newVeleroClient(app *core.App) (core.VeleroClient, error) {
 
 func (m model) runScaleUp(target core.PoolTarget, nudge bool) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		err := core.ScaleUp(ctx, app.CapiClient, target, false, nudge, p)
 		return "", err
 	})
@@ -82,7 +83,7 @@ func (m model) runScaleUp(target core.PoolTarget, nudge bool) tea.Cmd {
 
 func (m model) runScaleDown(target core.PoolTarget, del bool) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		err := core.ScaleDown(ctx, app.CapiClient, target, false, del, p)
 		return "", err
 	})
@@ -90,18 +91,19 @@ func (m model) runScaleDown(target core.PoolTarget, del bool) tea.Cmd {
 
 func (m model) runNudge(target core.PoolTarget) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		p.Debug("nudge control-plane-initialized " + target.Namespace + "/" + target.Cluster)
 		if err := app.CapiClient.NudgeControlPlaneInitialized(ctx, target.Namespace, target.Cluster); err != nil {
 			return "", err
 		}
-		p("Nudged control-plane-initialized for cluster " + target.Cluster + ".")
+		p.Emit("Nudged control-plane-initialized for cluster " + target.Cluster + ".")
 		return "", nil
 	})
 }
 
 func (m model) runBurst(params core.BurstParams) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
@@ -113,8 +115,12 @@ func (m model) runBurst(params core.BurstParams) tea.Cmd {
 
 func (m model) runDrain(node string) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
-		if err := core.Drain(ctx, app.KubeClient, node, drainTimeout); err != nil {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		var out io.Writer
+		if m.debug {
+			out = &lineWriter{sink: p.Debug}
+		}
+		if err := core.Drain(ctx, app.KubeClient, node, drainTimeout, out); err != nil {
 			return "", err
 		}
 		return "0 non-DaemonSet pods remain on " + node, nil
@@ -123,12 +129,12 @@ func (m model) runDrain(node string) tea.Cmd {
 
 func (m model) runBackupCreate(spec velerov1.BackupSpec, name string, wait bool) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
 		}
-		if err := core.CreateBackup(ctx, vc, spec, name, wait); err != nil {
+		if err := core.CreateBackup(ctx, vc, spec, name, wait, p); err != nil {
 			return "", err
 		}
 		return name, nil
@@ -137,12 +143,12 @@ func (m model) runBackupCreate(spec velerov1.BackupSpec, name string, wait bool)
 
 func (m model) runBackupDelete(name string) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
 		}
-		if err := core.DeleteBackup(ctx, vc, name); err != nil {
+		if err := core.DeleteBackup(ctx, vc, name, p); err != nil {
 			return "", err
 		}
 		return "delete request submitted; velero removes the backup and its snapshots in the background", nil
@@ -151,12 +157,12 @@ func (m model) runBackupDelete(name string) tea.Cmd {
 
 func (m model) runRestoreCreate(spec velerov1.RestoreSpec, name string, wait bool) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
 		}
-		if err := core.CreateRestore(ctx, vc, spec, name, wait); err != nil {
+		if err := core.CreateRestore(ctx, vc, spec, name, wait, p); err != nil {
 			return "", err
 		}
 		return name, nil
@@ -165,12 +171,12 @@ func (m model) runRestoreCreate(spec velerov1.RestoreSpec, name string, wait boo
 
 func (m model) runScheduleCreate(spec velerov1.ScheduleSpec, name string) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
 		}
-		if err := core.CreateSchedule(ctx, vc, spec, name); err != nil {
+		if err := core.CreateSchedule(ctx, vc, spec, name, p); err != nil {
 			return "", err
 		}
 		return name, nil
@@ -179,12 +185,12 @@ func (m model) runScheduleCreate(spec velerov1.ScheduleSpec, name string) tea.Cm
 
 func (m model) runScheduleDelete(name string) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
 		}
-		if err := core.DeleteSchedule(ctx, vc, name); err != nil {
+		if err := core.DeleteSchedule(ctx, vc, name, p); err != nil {
 			return "", err
 		}
 		return "deleted schedule " + name, nil
@@ -193,12 +199,12 @@ func (m model) runScheduleDelete(name string) tea.Cmd {
 
 func (m model) runBSLCreate(spec velerov1.BackupStorageLocationSpec, name string) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
 		}
-		if err := core.CreateBackupStorageLocation(ctx, vc, spec, name); err != nil {
+		if err := core.CreateBackupStorageLocation(ctx, vc, spec, name, p); err != nil {
 			return "", err
 		}
 		return "created storage location " + name + "; this registers the CR only, the bucket must already exist via the operator's IaC", nil
@@ -207,8 +213,8 @@ func (m model) runBSLCreate(spec velerov1.BackupStorageLocationSpec, name string
 
 func (m model) runClusterApply(spec capi.ClusterSpec) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
-		if err := core.ApplyCluster(ctx, app, spec); err != nil {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		if err := core.ApplyCluster(ctx, app, spec, p); err != nil {
 			return "", err
 		}
 		return "applied cluster " + spec.Namespace + "/" + spec.Name, nil
@@ -217,8 +223,8 @@ func (m model) runClusterApply(spec capi.ClusterSpec) tea.Cmd {
 
 func (m model) runClusterWrite(spec capi.ClusterSpec) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
-		path, err := core.WriteClusterManifests(app, spec)
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		path, err := core.WriteClusterManifests(app, spec, p)
 		if err != nil {
 			return "", err
 		}
@@ -228,8 +234,8 @@ func (m model) runClusterWrite(spec capi.ClusterSpec) tea.Cmd {
 
 func (m model) runClusterDelete(namespace, name string) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
-		if err := core.DeleteCluster(ctx, app, namespace, name); err != nil {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		if err := core.DeleteCluster(ctx, app, namespace, name, p); err != nil {
 			return "", err
 		}
 		return "deleted cluster " + namespace + "/" + name, nil
@@ -245,8 +251,8 @@ func (m model) renderClusterPreview(spec capi.ClusterSpec) tea.Cmd {
 
 func (m model) runFlavorApply(req flavorRequest) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
-		if err := core.ApplyFlavor(ctx, app, req.template, req.vars); err != nil {
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		if err := core.ApplyFlavor(ctx, app, req.template, req.vars, p); err != nil {
 			return "", err
 		}
 		return "applied flavor cluster " + req.name, nil
@@ -255,8 +261,8 @@ func (m model) runFlavorApply(req flavorRequest) tea.Cmd {
 
 func (m model) runFlavorWrite(req flavorRequest) tea.Cmd {
 	app := m.app
-	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
-		path, err := core.WriteFlavorManifests(app, req.name, req.template, req.vars)
+	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		path, err := core.WriteFlavorManifests(app, req.name, req.template, req.vars, p)
 		if err != nil {
 			return "", err
 		}

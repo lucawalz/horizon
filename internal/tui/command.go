@@ -52,6 +52,7 @@ func (m model) dispatch(input string) commandResult {
 		return commandResult{}
 	}
 	verb, args := fields[0], fields[1:]
+	args, m.debug = stripDebugFlag(args)
 	switch verb {
 	case "help":
 		return commandResult{builtin: builtinHelp}
@@ -86,6 +87,19 @@ func (m model) dispatch(input string) commandResult {
 	default:
 		return errResult("unknown command %q (try help)", verb)
 	}
+}
+
+func stripDebugFlag(args []string) ([]string, bool) {
+	out := args[:0:0]
+	debug := false
+	for _, a := range args {
+		if a == "--debug" || a == "-debug" {
+			debug = true
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, debug
 }
 
 func newFlagSet(name string) *flag.FlagSet {
@@ -589,6 +603,7 @@ func helpLines() []helpEntry {
 		{"bsl list", "inspect backup storage locations"},
 		{"drain <node>", "cordon and evict a node"},
 		{"theme [light|dark|auto]", "set or live-pick the theme"},
+		{"<any command> --debug", "stream the underlying steps and API calls"},
 		{"refresh · clear · help · quit", "session controls"},
 		{"↑↓ · pgup/pgdn", "scroll the command log"},
 	}
