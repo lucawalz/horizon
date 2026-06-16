@@ -62,6 +62,7 @@ type Config struct {
 func (c *Config) Path() string { return c.path }
 
 const (
+	// namespace where the CAPI infra provider's MachineDeployments live; override via pools.namespace per provider
 	defaultPoolNamespace = "caph-system"
 	defaultPoolCluster   = "burst"
 	defaultPoolType      = "reserved"

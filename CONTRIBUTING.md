@@ -3,8 +3,7 @@
 ## Prerequisites
 
 - Go ≥ 1.26
-- Terraform ≥ 1.9
-- `kubectl` configured against a K3s cluster or the Hetzner eval environment
+- `kubectl` configured against a Cluster API management cluster
 - `golangci-lint` for linting
 
 ## Setup

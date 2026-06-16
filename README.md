@@ -46,12 +46,64 @@ flowchart LR
 
 ## Requirements
 
-- Go 1.26 or newer to build.
-- A reachable Kubernetes cluster with the CAPI substrate from bedrock installed: CAPH, cluster-api-k3s, and Rancher Turtles.
-- A kubeconfig with a context that reaches the management cluster, over Tailscale in the homelab setup.
-- Velero in the cluster for backups, and kube-prometheus-stack for the read-only pressure header in the dashboard.
+horizon is provider-agnostic. It reads and writes Cluster API objects through a kubeconfig and holds no cloud credentials, so the same binary runs over any infrastructure provider that Cluster API supports. The homelab substrate in [bedrock](https://github.com/lucawalz/bedrock) is one concrete instance, not a hard dependency.
+
+### Running horizon on any cluster
+
+The minimum substrate falls into a hard set that horizon always needs and an optional set that gates individual features.
+
+Hard requirements:
+
+- A Kubernetes management cluster and a kubeconfig with a context that reaches it.
+- Cluster API core installed, providing the Cluster, MachineDeployment, and Machine CRDs.
+- At least one infrastructure provider installed and configured. Cloud credentials and machine templates live in the provider's namespace, managed by Cluster API, never by horizon.
+- MachineDeployments labeled `horizon.dev/pool-type=<type>` so horizon recognizes them as pools, with `pools.types` mapping each type to its MachineDeployment name and `pools.namespace` pointing at the namespace where those MachineDeployments live.
+
+For managed `cluster create`, additionally:
+
+- A control-plane provider and a bootstrap provider, for example cluster-api-k3s or kubeadm.
+- Either a ClusterClass and the `CLUSTER_TOPOLOGY` feature gate enabled for the `--class` path, or a clusterctl flavor template for the `--flavor` path.
+
+Optional, each gating one feature:
+
+- metrics-server for the dashboard CPU and memory header.
+- cluster-autoscaler for the autoscaler status line and elastic-pool scaling.
+- Velero for backups, restores, schedules, and the burst workflow.
+
+horizon never calls a cloud API and stores no cloud credentials. The infrastructure provider does all cloud work through Cluster API; horizon only manipulates Cluster API objects.
+
+### Minimal configuration
+
+A minimal `config.yaml` names the kubeconfig, the target cluster, and the pool layout. Theme and `cluster_create` defaults are optional.
+
+```yaml
+kubeconfig: ""
+cluster: burst
+theme: auto
+
+pools:
+  namespace: caph-system
+  default_type: reserved
+  types:
+    elastic: elastic-workers
+    reserved: reserved-workers
+
+cluster_create:
+  class: ""
+  worker_class: ""
+```
+
+Set `pools.namespace` to the namespace where the chosen provider's MachineDeployments live. The full template is in [`config.example.yaml`](config.example.yaml).
 
 ## Installation
+
+Homebrew is the recommended path once a release is published:
+
+```
+brew install lucawalz/tap/horizon
+```
+
+Building from source needs Go 1.26 or newer:
 
 ```
 go build -o horizon ./cmd/horizon
@@ -82,9 +134,23 @@ The pool panel shows the type read from each MachineDeployment's `horizon.dev/po
 
 ### Actions
 
-The dashboard is driven by a command line. Pressing `:` focuses a prompt at the bottom, where the same verbs the retired subcommands used run as typed commands: scale a pool up or down, latch the control-plane nudge, run a guided burst of a workload, create, delete, or list on-demand clusters, manage Velero backups and restores, and drain a node. Output streams into the command log on the right, and the dashboard refreshes when a command changes cluster state. Destructive commands ask for confirmation before they run, and long operations such as a burst or a cluster create stream their progress. Cluster creation takes preview, apply, and write actions, where apply creates the cluster live and write renders the manifests into the bedrock tree for Flux to reconcile.
+The dashboard is driven by a command line. Pressing `:` focuses a prompt at the bottom and the output streams into the command log on the right. The dashboard refreshes when a command changes cluster state. Destructive commands ask for confirmation first, and long operations such as a burst or a cluster create stream their progress.
 
-Outside the command line the arrow keys scroll the log, `r` refreshes, `?` toggles help, and `q` quits. Type `help` at the prompt for the full list of commands.
+The available commands are:
+
+- `up [--type elastic|reserved] [--nudge] [<replicas>]` and `down [--type ...] [--delete]` scale a pool up or to zero, or delete it.
+- `nudge [--namespace ns] [--cluster name]` latches the externally managed control plane as initialized.
+- `burst <namespace> [--type ...] [--replicas n]` backs up a workload, scales the pool, and migrates the workload onto the new nodes.
+- `cluster create <name> --class <cc> [--set k=v ...] [--preview|--write|--apply]` renders, writes, or applies a cluster from a ClusterClass topology. The `--flavor <file>` fallback renders the same actions from a clusterctl flavor template instead; `--class` and `--flavor` are mutually exclusive. `--preview` is the default, `--apply` creates the cluster live, and `--write` renders the manifests into the bedrock tree for Flux to reconcile.
+- `cluster delete <name>` and `cluster list` manage CAPI-managed clusters.
+- `backup create [--include-namespaces ...] [--wait]`, `backup list`, `backup describe <name>`, and `backup delete <name>` drive Velero backups.
+- `restore create --from-backup <name> [--wait]`, `restore list`, and `restore describe <name>` drive Velero restores.
+- `schedule create <name> --schedule "<cron>" [--include-namespaces ...]`, `schedule list`, `schedule describe <name>`, and `schedule delete <name>` manage recurring backup schedules.
+- `bsl create <name> --provider <p> --bucket <b>` registers a backup storage location CR without provisioning the bucket, and `bsl list` inspects them.
+- `drain <node>` cordons a node and evicts its pods.
+- `theme [light|dark|auto]` sets the theme directly, or opens a live picker with no argument. The choice persists to the config file.
+
+Navigation is keyboard-only; the mouse was removed so native terminal text selection works as usual. Outside the command line the arrow keys and pgup/pgdn scroll the log, `r` refreshes, `?` toggles help, and `q` quits. Type `help` at the prompt for the full list of commands.
 
 ### Non-interactive use
 
@@ -99,10 +165,21 @@ Key fields:
 - `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
 - `cluster`: default CAPI cluster name; falls back to the pool cluster when unset.
 - `bedrock_path`: path to the bedrock git work tree, required only for the GitOps write action. It is resolved to an absolute path and must exist.
-- `pools`: the default `namespace` (`caph-system`) and `cluster` (`burst`), the `default_type` (`reserved`), the Kubernetes `version` used by `cluster create` when `--version` is omitted, and a `types` map from pool type to MachineDeployment name (`elastic` to `elastic-workers`, `reserved` to `reserved-workers`).
+- `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `:theme` picker writes this field. Defaults to `auto`.
+- `cluster_create`: optional defaults for `cluster create`, with `class` and `worker_class` used when the corresponding flags are omitted.
+- `pools`: the default `namespace` and `cluster` (`burst`), the `default_type` (`reserved`), the Kubernetes `version` used by `cluster create` when `--version` is omitted, and a `types` map from pool type to MachineDeployment name (`elastic` to `elastic-workers`, `reserved` to `reserved-workers`). Set `namespace` to the namespace where the chosen provider's MachineDeployments live; it defaults to `caph-system` for the bedrock setup.
 - `thresholds`: the `burst` and `scale_down` scores and the `window` size, retained only for the read-only pressure header in the dashboard. They no longer drive any scaling decision.
 
 The retired `infra_path` field is rejected at load time; set `bedrock_path` instead.
+
+## Releases
+
+Pushing a `v*` tag triggers the GoReleaser workflow, which builds the darwin and linux binaries, publishes a GitHub release, and updates the Homebrew formula in the tap.
+
+The tap requires a one-time operator setup that cannot be automated from this repository:
+
+1. Create a public `lucawalz/homebrew-tap` repository to hold the generated formula.
+2. Add a `HOMEBREW_TAP_GITHUB_TOKEN` repository secret to this repository, holding a personal access token with `contents:write` on the tap.
 
 ## How it works
 
