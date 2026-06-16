@@ -18,14 +18,6 @@ const (
 	drainTimeout  = 5 * time.Minute
 
 	progressBuffer = 256
-
-	infrastructureGroup     = "infrastructure.cluster.x-k8s.io"
-	bootstrapGroup          = "bootstrap.cluster.x-k8s.io"
-	defaultInfraKind        = "HCloudMachineTemplate"
-	defaultClusterInfraKind = "HetznerCluster"
-	defaultBootstrapKind    = "KThreesConfigTemplate"
-	defaultPodCIDR          = "10.42.0.0/16"
-	defaultServiceCIDR      = "10.43.0.0/16"
 )
 
 type progressMsg struct{ line string }
@@ -56,9 +48,14 @@ type clustersLoadedMsg struct {
 }
 
 type manifestRenderedMsg struct {
-	spec capi.ClusterSpec
 	data []byte
 	err  error
+}
+
+type flavorRequest struct {
+	name     string
+	template []byte
+	vars     map[string]string
 }
 
 func newVeleroClient(app *core.App) (core.VeleroClient, error) {
@@ -162,7 +159,7 @@ func (m model) runClusterApply(spec capi.ClusterSpec) tea.Cmd {
 		if err := core.ApplyCluster(ctx, app, spec); err != nil {
 			return "", err
 		}
-		return "applied cluster " + spec.Namespace + "/" + spec.ClusterName, nil
+		return "applied cluster " + spec.Namespace + "/" + spec.Name, nil
 	})
 }
 
@@ -190,7 +187,35 @@ func (m model) runClusterDelete(namespace, name string) tea.Cmd {
 func (m model) renderClusterPreview(spec capi.ClusterSpec) tea.Cmd {
 	return func() tea.Msg {
 		data, err := core.RenderCluster(spec)
-		return manifestRenderedMsg{spec: spec, data: data, err: err}
+		return manifestRenderedMsg{data: data, err: err}
+	}
+}
+
+func (m model) runFlavorApply(req flavorRequest) tea.Cmd {
+	app := m.app
+	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+		if err := core.ApplyFlavor(ctx, app, req.template, req.vars); err != nil {
+			return "", err
+		}
+		return "applied flavor cluster " + req.name, nil
+	})
+}
+
+func (m model) runFlavorWrite(req flavorRequest) tea.Cmd {
+	app := m.app
+	return streamCmd(func(ctx context.Context, p core.Progress) (string, error) {
+		path, err := core.WriteFlavorManifests(app, req.name, req.template, req.vars)
+		if err != nil {
+			return "", err
+		}
+		return "wrote manifests to " + path, nil
+	})
+}
+
+func (m model) renderFlavorPreview(req flavorRequest) tea.Cmd {
+	return func() tea.Msg {
+		data, err := core.RenderFlavor(req.template, req.vars)
+		return manifestRenderedMsg{data: data, err: err}
 	}
 }
 

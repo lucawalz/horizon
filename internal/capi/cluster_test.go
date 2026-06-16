@@ -6,101 +6,43 @@ import (
 
 	"github.com/lucawalz/horizon/internal/capi"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func controlPlaneGVK() schema.GroupVersionKind {
-	return schema.GroupVersionKind{
-		Group:   "controlplane.cluster.x-k8s.io",
-		Version: "v1beta2",
-		Kind:    "KThreesControlPlane",
-	}
-}
-
-func TestApplyClusterExternal(t *testing.T) {
+func TestApplyClusterTopology(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
 	c := capi.NewClientWithCRClient(cl)
-	spec := testClusterSpec(capi.External)
+	spec := topologyClusterSpec()
 
 	if err := c.ApplyCluster(context.Background(), spec); err != nil {
 		t.Fatalf("ApplyCluster create: %v", err)
 	}
-	got, err := c.GetCluster(context.Background(), spec.Namespace, spec.ClusterName)
+	got, err := c.GetCluster(context.Background(), spec.Namespace, spec.Name)
 	if err != nil {
 		t.Fatalf("GetCluster: %v", err)
 	}
-	if got.Spec.ControlPlaneRef.Name != "" {
-		t.Errorf("external cluster set controlPlaneRef %q", got.Spec.ControlPlaneRef.Name)
+	if got.Spec.Topology.ClassRef.Name != "hetzner-k3s" {
+		t.Errorf("topology classRef name = %q, want hetzner-k3s", got.Spec.Topology.ClassRef.Name)
 	}
 
-	spec.PodCIDR = "10.99.0.0/16"
+	spec.WorkerReplicas = 5
 	if err := c.ApplyCluster(context.Background(), spec); err != nil {
 		t.Fatalf("ApplyCluster update: %v", err)
 	}
-	got, err = c.GetCluster(context.Background(), spec.Namespace, spec.ClusterName)
+	got, err = c.GetCluster(context.Background(), spec.Namespace, spec.Name)
 	if err != nil {
 		t.Fatalf("GetCluster after update: %v", err)
 	}
-	if got.Spec.ClusterNetwork.Pods.CIDRBlocks[0] != "10.99.0.0/16" {
-		t.Errorf("pod cidr = %v, want updated", got.Spec.ClusterNetwork.Pods.CIDRBlocks)
-	}
-
-	pool, err := c.GetPool(context.Background(), spec.Namespace, "burst-workers")
-	if err != nil {
-		t.Fatalf("GetPool: %v", err)
-	}
-	if pool.Name != "burst-workers" {
-		t.Errorf("worker pool name = %q", pool.Name)
-	}
-}
-
-func TestApplyClusterManaged(t *testing.T) {
-	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
-	c := capi.NewClientWithCRClient(cl)
-	spec := testClusterSpec(capi.Managed)
-
-	if err := c.ApplyCluster(context.Background(), spec); err != nil {
-		t.Fatalf("ApplyCluster create: %v", err)
-	}
-	got, err := c.GetCluster(context.Background(), spec.Namespace, spec.ClusterName)
-	if err != nil {
-		t.Fatalf("GetCluster: %v", err)
-	}
-	if got.Spec.ControlPlaneRef.Kind != "KThreesControlPlane" {
-		t.Errorf("controlPlaneRef kind = %q", got.Spec.ControlPlaneRef.Kind)
-	}
-
-	cp := &unstructured.Unstructured{}
-	cp.SetGroupVersionKind(controlPlaneGVK())
-	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: spec.Namespace, Name: spec.Name}, cp); err != nil {
-		t.Fatalf("get control plane: %v", err)
-	}
-
-	spec.Replicas = 5
-	if err := c.ApplyCluster(context.Background(), spec); err != nil {
-		t.Fatalf("ApplyCluster update: %v", err)
-	}
-	cp = &unstructured.Unstructured{}
-	cp.SetGroupVersionKind(controlPlaneGVK())
-	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: spec.Namespace, Name: spec.Name}, cp); err != nil {
-		t.Fatalf("get control plane after update: %v", err)
-	}
-	replicas, found, err := unstructured.NestedInt64(cp.Object, "spec", "replicas")
-	if err != nil || !found {
-		t.Fatalf("read replicas: found=%v err=%v", found, err)
-	}
-	if replicas != 5 {
-		t.Errorf("control plane replicas = %d, want 5", replicas)
+	mds := got.Spec.Topology.Workers.MachineDeployments
+	if len(mds) != 1 || mds[0].Replicas == nil || *mds[0].Replicas != 5 {
+		t.Errorf("worker replicas after update = %+v, want 5", mds)
 	}
 }
 
 func TestListClusters(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
 	c := capi.NewClientWithCRClient(cl)
-	spec := testClusterSpec(capi.Managed)
+	spec := topologyClusterSpec()
 	if err := c.ApplyCluster(context.Background(), spec); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
 	}
@@ -112,22 +54,41 @@ func TestListClusters(t *testing.T) {
 	if len(clusters) != 1 {
 		t.Fatalf("ListClusters returned %d clusters, want 1", len(clusters))
 	}
-	if clusters[0].Name != spec.ClusterName {
-		t.Errorf("cluster name = %q, want %q", clusters[0].Name, spec.ClusterName)
+	if clusters[0].Name != spec.Name {
+		t.Errorf("cluster name = %q, want %q", clusters[0].Name, spec.Name)
 	}
 }
 
 func TestDeleteCluster(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
 	c := capi.NewClientWithCRClient(cl)
-	spec := testClusterSpec(capi.External)
+	spec := topologyClusterSpec()
 	if err := c.ApplyCluster(context.Background(), spec); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
 	}
-	if err := c.DeleteCluster(context.Background(), spec.Namespace, spec.ClusterName); err != nil {
+	if err := c.DeleteCluster(context.Background(), spec.Namespace, spec.Name); err != nil {
 		t.Fatalf("DeleteCluster: %v", err)
 	}
-	if _, err := c.GetCluster(context.Background(), spec.Namespace, spec.ClusterName); !apierrors.IsNotFound(err) {
+	if _, err := c.GetCluster(context.Background(), spec.Namespace, spec.Name); !apierrors.IsNotFound(err) {
 		t.Errorf("GetCluster after delete = %v, want NotFound", err)
+	}
+}
+
+func TestApplyManifestsCreatesAndUpdates(t *testing.T) {
+	cl := fake.NewClientBuilder().WithScheme(mustScheme(t)).Build()
+	c := capi.NewClientWithCRClient(cl)
+
+	data, err := capi.RenderCluster(topologyClusterSpec())
+	if err != nil {
+		t.Fatalf("RenderCluster: %v", err)
+	}
+	if err := c.ApplyManifests(context.Background(), data); err != nil {
+		t.Fatalf("ApplyManifests create: %v", err)
+	}
+	if _, err := c.GetCluster(context.Background(), "caph-system", "edge"); err != nil {
+		t.Fatalf("GetCluster after apply: %v", err)
+	}
+	if err := c.ApplyManifests(context.Background(), data); err != nil {
+		t.Fatalf("ApplyManifests update: %v", err)
 	}
 }

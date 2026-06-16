@@ -95,45 +95,64 @@ func buildRestoreSpecFromValues(fromBackup string, v map[string]string) (velerov
 	return spec, nil
 }
 
-func (m model) clusterSpecFrom(name, namespace, version, podCIDR, serviceCIDR string, replicas int32) (capi.ClusterSpec, error) {
-	if strings.TrimSpace(name) == "" {
+const workerNameSuffix = "-workers"
+
+func (m model) clusterSpecFrom(in clusterCreateInput) (capi.ClusterSpec, error) {
+	name := strings.TrimSpace(in.name)
+	if name == "" {
 		return capi.ClusterSpec{}, fmt.Errorf("name is required")
 	}
-	namespace = orDefault(strings.TrimSpace(namespace), m.app.Config.Pools.Namespace)
-	version = orDefault(strings.TrimSpace(version), m.app.Config.Pools.Version)
+	class := orDefault(strings.TrimSpace(in.class), m.app.Config.ClusterCreate.Class)
+	if class == "" {
+		return capi.ClusterSpec{}, fmt.Errorf("--class is required (or set cluster_create.class)")
+	}
+	version := orDefault(strings.TrimSpace(in.version), m.app.Config.Pools.Version)
 	if version == "" {
 		return capi.ClusterSpec{}, fmt.Errorf("version is required")
 	}
+	variables, err := parseSetVars(in.sets)
+	if err != nil {
+		return capi.ClusterSpec{}, err
+	}
 	return capi.ClusterSpec{
-		Name:             name,
-		Namespace:        namespace,
-		ClusterName:      name,
-		ControlPlaneMode: capi.Managed,
-		PodCIDR:          orDefault(strings.TrimSpace(podCIDR), defaultPodCIDR),
-		ServiceCIDR:      orDefault(strings.TrimSpace(serviceCIDR), defaultServiceCIDR),
-		Version:          version,
-		Replicas:         replicas,
-		ClusterInfrastructure: capi.TemplateRef{
-			APIGroup: infrastructureGroup,
-			Kind:     defaultClusterInfraKind,
-			Name:     name,
-		},
-		Infrastructure: capi.TemplateRef{
-			APIGroup: infrastructureGroup,
-			Kind:     defaultInfraKind,
-			Name:     name + "-workers",
-		},
-		ControlPlaneInfra: capi.TemplateRef{
-			APIGroup: infrastructureGroup,
-			Kind:     defaultInfraKind,
-			Name:     name + "-control-plane",
-		},
-		Bootstrap: capi.TemplateRef{
-			APIGroup: bootstrapGroup,
-			Kind:     defaultBootstrapKind,
-			Name:     name,
-		},
+		Name:                 name,
+		Namespace:            orDefault(strings.TrimSpace(in.namespace), m.app.Config.Pools.Namespace),
+		Class:                class,
+		WorkerClass:          orDefault(strings.TrimSpace(in.workerClass), m.app.Config.ClusterCreate.WorkerClass),
+		WorkerName:           name + workerNameSuffix,
+		Version:              version,
+		ControlPlaneReplicas: in.controlPlaneReplicas,
+		WorkerReplicas:       in.replicas,
+		Variables:            variables,
 	}, nil
+}
+
+func parseSetVars(sets []string) ([]capi.ClusterVariable, error) {
+	if len(sets) == 0 {
+		return nil, nil
+	}
+	out := make([]capi.ClusterVariable, 0, len(sets))
+	for _, s := range sets {
+		key, value, ok := strings.Cut(s, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, fmt.Errorf("invalid --set %q, want key=value", s)
+		}
+		out = append(out, capi.ClusterVariable{Name: key, Value: value})
+	}
+	return out, nil
+}
+
+func setVarMap(sets []string) (map[string]string, error) {
+	vars, err := parseSetVars(sets)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(vars))
+	for _, v := range vars {
+		out[v.Name] = v.Value
+	}
+	return out, nil
 }
 
 func orDefault(s, fallback string) string {

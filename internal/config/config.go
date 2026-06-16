@@ -42,13 +42,19 @@ func (p PoolDefaults) Resolve(typeName string) (string, error) {
 	return "", fmt.Errorf("unknown pool type %q (known: %s)", typeName, strings.Join(known, ", "))
 }
 
+type ClusterDefaults struct {
+	Class       string `mapstructure:"class" yaml:"class"`
+	WorkerClass string `mapstructure:"worker_class" yaml:"worker_class"`
+}
+
 type Config struct {
-	BedrockPath string          `mapstructure:"bedrock_path" yaml:"bedrock_path"`
-	Cluster     string          `mapstructure:"cluster" yaml:"cluster"`
-	Kubeconfig  string          `mapstructure:"kubeconfig" yaml:"kubeconfig"`
-	Theme       string          `mapstructure:"theme" yaml:"theme"`
-	Thresholds  ThresholdConfig `mapstructure:"thresholds" yaml:"thresholds"`
-	Pools       PoolDefaults    `mapstructure:"pools" yaml:"pools"`
+	BedrockPath   string          `mapstructure:"bedrock_path" yaml:"bedrock_path"`
+	Cluster       string          `mapstructure:"cluster" yaml:"cluster"`
+	Kubeconfig    string          `mapstructure:"kubeconfig" yaml:"kubeconfig"`
+	Theme         string          `mapstructure:"theme" yaml:"theme"`
+	Thresholds    ThresholdConfig `mapstructure:"thresholds" yaml:"thresholds"`
+	Pools         PoolDefaults    `mapstructure:"pools" yaml:"pools"`
+	ClusterCreate ClusterDefaults `mapstructure:"cluster_create" yaml:"cluster_create"`
 
 	path string
 }

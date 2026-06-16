@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +14,15 @@ import (
 )
 
 const helpColumnGap = 2
+
+type stringSlice []string
+
+func (s *stringSlice) String() string { return strings.Join(*s, ",") }
+
+func (s *stringSlice) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
 
 type builtinKind int
 
@@ -222,13 +232,28 @@ func (m model) parseCluster(args []string) commandResult {
 	}
 }
 
+type clusterCreateInput struct {
+	name                 string
+	namespace            string
+	class                string
+	workerClass          string
+	version              string
+	replicas             int32
+	controlPlaneReplicas int32
+	sets                 []string
+}
+
 func (m model) parseClusterCreate(args []string) commandResult {
 	fs := newFlagSet("cluster create")
 	namespace := fs.String("namespace", "", "")
+	class := fs.String("class", "", "")
+	workerClass := fs.String("worker-class", "", "")
+	flavor := fs.String("flavor", "", "")
 	version := fs.String("version", "", "")
-	podCIDR := fs.String("pod-cidr", defaultPodCIDR, "")
-	serviceCIDR := fs.String("service-cidr", defaultServiceCIDR, "")
 	replicas := fs.Int("replicas", 1, "")
+	controlPlaneReplicas := fs.Int("control-plane-replicas", 1, "")
+	var sets stringSlice
+	fs.Var(&sets, "set", "")
 	fs.Bool("preview", false, "")
 	write := fs.Bool("write", false, "")
 	apply := fs.Bool("apply", false, "")
@@ -239,20 +264,69 @@ func (m model) parseClusterCreate(args []string) commandResult {
 	if len(rest) == 0 {
 		return errResult("cluster create: name argument is required")
 	}
-	spec, err := m.clusterSpecFrom(rest[0], *namespace, *version, *podCIDR, *serviceCIDR, int32(*replicas))
+	mode := createMode{apply: *apply, write: *write}
+
+	if strings.TrimSpace(*flavor) != "" {
+		if strings.TrimSpace(*class) != "" {
+			return errResult("cluster create: --class and --flavor are mutually exclusive")
+		}
+		return m.dispatchFlavorCreate(rest[0], *flavor, sets, mode)
+	}
+	if strings.TrimSpace(*class) == "" && m.app.Config.ClusterCreate.Class == "" {
+		return errResult("cluster create: one of --class or --flavor is required")
+	}
+
+	spec, err := m.clusterSpecFrom(clusterCreateInput{
+		name:                 rest[0],
+		namespace:            *namespace,
+		class:                *class,
+		workerClass:          *workerClass,
+		version:              *version,
+		replicas:             int32(*replicas),
+		controlPlaneReplicas: int32(*controlPlaneReplicas),
+		sets:                 sets,
+	})
 	if err != nil {
 		return errResult("cluster create: %v", err)
 	}
 	switch {
-	case *apply:
+	case mode.apply:
 		return commandResult{cmd: m.runClusterApply(spec)}
-	case *write:
+	case mode.write:
 		if m.app.Config.BedrockPath == "" {
 			return errResult("cluster create: --write disabled, bedrock_path unset in config")
 		}
 		return commandResult{cmd: m.runClusterWrite(spec)}
 	default:
 		return commandResult{cmd: m.renderClusterPreview(spec)}
+	}
+}
+
+type createMode struct {
+	apply bool
+	write bool
+}
+
+func (m model) dispatchFlavorCreate(name, flavorPath string, sets stringSlice, mode createMode) commandResult {
+	template, err := os.ReadFile(flavorPath)
+	if err != nil {
+		return errResult("cluster create: read flavor %q: %v", flavorPath, err)
+	}
+	vars, err := setVarMap(sets)
+	if err != nil {
+		return errResult("cluster create: %v", err)
+	}
+	req := flavorRequest{name: name, template: template, vars: vars}
+	switch {
+	case mode.apply:
+		return commandResult{cmd: m.runFlavorApply(req)}
+	case mode.write:
+		if m.app.Config.BedrockPath == "" {
+			return errResult("cluster create: --write disabled, bedrock_path unset in config")
+		}
+		return commandResult{cmd: m.runFlavorWrite(req)}
+	default:
+		return commandResult{cmd: m.renderFlavorPreview(req)}
 	}
 }
 
@@ -408,7 +482,7 @@ func helpLines() []helpEntry {
 		{"down [--type ...] [--delete]", "scale a pool to zero or delete it"},
 		{"nudge [--namespace ns] [--cluster name]", "latch control-plane-initialized"},
 		{"burst <namespace> [--type ...] [--replicas n]", "back up, scale, migrate a workload"},
-		{"cluster create <name> [--preview|--write|--apply]", "render, write, or apply a cluster"},
+		{"cluster create <name> --class <cc> [--set k=v] · or --flavor <file>", "render, write, or apply a cluster"},
 		{"cluster delete <name> · cluster list", "manage CAPI-managed clusters"},
 		{"backup create [--include-namespaces ...] [--wait]", "create a velero backup"},
 		{"backup list · describe <name> · delete <name>", "inspect velero backups"},

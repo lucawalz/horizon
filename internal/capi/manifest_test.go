@@ -1,7 +1,7 @@
 package capi_test
 
 import (
-	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/capi"
@@ -9,35 +9,20 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func testClusterSpec(mode capi.ControlPlaneMode) capi.ClusterSpec {
+func topologyClusterSpec() capi.ClusterSpec {
 	return capi.ClusterSpec{
-		Name:             "burst",
-		Namespace:        "caph-system",
-		ClusterName:      "burst",
-		ControlPlaneMode: mode,
-		PodCIDR:          "10.42.0.0/16",
-		ServiceCIDR:      "10.43.0.0/16",
-		Version:          "v1.35.2+k3s1",
-		Replicas:         3,
-		ClusterInfrastructure: capi.TemplateRef{
-			APIGroup: "infrastructure.cluster.x-k8s.io",
-			Kind:     "HetznerCluster",
-			Name:     "burst",
-		},
-		Infrastructure: capi.TemplateRef{
-			APIGroup: "infrastructure.cluster.x-k8s.io",
-			Kind:     "HCloudMachineTemplate",
-			Name:     "burst-workers",
-		},
-		ControlPlaneInfra: capi.TemplateRef{
-			APIGroup: "infrastructure.cluster.x-k8s.io",
-			Kind:     "HCloudMachineTemplate",
-			Name:     "burst-control-plane",
-		},
-		Bootstrap: capi.TemplateRef{
-			APIGroup: "bootstrap.cluster.x-k8s.io",
-			Kind:     "KThreesConfigTemplate",
-			Name:     "burst",
+		Name:                 "edge",
+		Namespace:            "caph-system",
+		Class:                "hetzner-k3s",
+		WorkerClass:          "default-worker",
+		WorkerName:           "edge-workers",
+		Version:              "v1.35.2+k3s1",
+		ControlPlaneReplicas: 1,
+		WorkerReplicas:       3,
+		Variables: []capi.ClusterVariable{
+			{Name: "machineType", Value: "cpx22"},
+			{Name: "diskSize", Value: "40"},
+			{Name: "config", Value: `{"location":"fsn1"}`},
 		},
 	}
 }
@@ -72,90 +57,89 @@ func TestRenderPoolRoundTrips(t *testing.T) {
 	}
 }
 
-func splitDocs(data []byte) [][]byte {
-	parts := bytes.Split(data, []byte("---\n"))
-	docs := make([][]byte, 0, len(parts))
-	for _, p := range parts {
-		if len(bytes.TrimSpace(p)) > 0 {
-			docs = append(docs, p)
-		}
-	}
-	return docs
-}
-
-func TestRenderClusterExternal(t *testing.T) {
-	data, err := capi.RenderCluster(testClusterSpec(capi.External))
+func TestRenderClusterTopology(t *testing.T) {
+	data, err := capi.RenderCluster(topologyClusterSpec())
 	if err != nil {
 		t.Fatalf("RenderCluster: %v", err)
 	}
-	docs := splitDocs(data)
-	if len(docs) != 2 {
-		t.Fatalf("doc count = %d, want 2 (cluster + worker md)", len(docs))
-	}
 
 	var cluster clusterv1.Cluster
-	if err := yaml.Unmarshal(docs[0], &cluster); err != nil {
+	if err := yaml.Unmarshal(data, &cluster); err != nil {
 		t.Fatalf("unmarshal cluster: %v", err)
 	}
 	if cluster.Kind != "Cluster" {
 		t.Errorf("kind = %q, want Cluster", cluster.Kind)
 	}
-	if cluster.Spec.ControlPlaneRef.Name != "" {
-		t.Errorf("external cluster must not set controlPlaneRef, got %q", cluster.Spec.ControlPlaneRef.Name)
+	if got := cluster.Spec.Topology.ClassRef.Name; got != "hetzner-k3s" {
+		t.Errorf("topology classRef name = %q, want hetzner-k3s", got)
 	}
-	if got := cluster.Spec.InfrastructureRef.Kind; got != "HetznerCluster" {
-		t.Errorf("infrastructureRef kind = %q, want HetznerCluster", got)
+	if got := cluster.Spec.Topology.Version; got != "v1.35.2+k3s1" {
+		t.Errorf("topology version = %q", got)
 	}
-	if got := cluster.Spec.InfrastructureRef.APIGroup; got != "infrastructure.cluster.x-k8s.io" {
-		t.Errorf("infrastructureRef apiGroup = %q, want infrastructure.cluster.x-k8s.io", got)
+	if cluster.Spec.Topology.ControlPlane.Replicas == nil || *cluster.Spec.Topology.ControlPlane.Replicas != 1 {
+		t.Errorf("control plane replicas = %v, want 1", cluster.Spec.Topology.ControlPlane.Replicas)
 	}
-	if got := cluster.Spec.InfrastructureRef.Name; got != "burst" {
-		t.Errorf("infrastructureRef name = %q, want burst", got)
+	mds := cluster.Spec.Topology.Workers.MachineDeployments
+	if len(mds) != 1 {
+		t.Fatalf("worker md count = %d, want 1", len(mds))
 	}
-	if got := cluster.Spec.ClusterNetwork.Pods.CIDRBlocks; len(got) != 1 || got[0] != "10.42.0.0/16" {
-		t.Errorf("pod cidr = %v", got)
+	if mds[0].Class != "default-worker" || mds[0].Name != "edge-workers" {
+		t.Errorf("worker md = %+v", mds[0])
 	}
-
-	var md clusterv1.MachineDeployment
-	if err := yaml.Unmarshal(docs[1], &md); err != nil {
-		t.Fatalf("unmarshal md: %v", err)
-	}
-	if md.Name != "burst-workers" {
-		t.Errorf("worker md name = %q, want burst-workers", md.Name)
-	}
-	if got := md.Spec.Template.Spec.InfrastructureRef.Kind; got != "HCloudMachineTemplate" {
-		t.Errorf("worker md infrastructureRef kind = %q, want HCloudMachineTemplate", got)
+	if mds[0].Replicas == nil || *mds[0].Replicas != 3 {
+		t.Errorf("worker replicas = %v, want 3", mds[0].Replicas)
 	}
 }
 
-func TestRenderClusterManaged(t *testing.T) {
-	data, err := capi.RenderCluster(testClusterSpec(capi.Managed))
+func TestRenderClusterTopologyHasNoProviderKinds(t *testing.T) {
+	data, err := capi.RenderCluster(topologyClusterSpec())
 	if err != nil {
 		t.Fatalf("RenderCluster: %v", err)
 	}
-	docs := splitDocs(data)
-	if len(docs) != 3 {
-		t.Fatalf("doc count = %d, want 3 (cluster + cp + worker md)", len(docs))
+	rendered := string(data)
+	for _, forbidden := range []string{"HetznerCluster", "HCloudMachineTemplate", "KThreesControlPlane", "KThreesConfigTemplate", "infrastructure.cluster.x-k8s.io"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Errorf("topology cluster must not contain provider kind %q:\n%s", forbidden, rendered)
+		}
 	}
+}
 
+func TestRenderClusterEncodesVariables(t *testing.T) {
+	data, err := capi.RenderCluster(topologyClusterSpec())
+	if err != nil {
+		t.Fatalf("RenderCluster: %v", err)
+	}
 	var cluster clusterv1.Cluster
-	if err := yaml.Unmarshal(docs[0], &cluster); err != nil {
+	if err := yaml.Unmarshal(data, &cluster); err != nil {
 		t.Fatalf("unmarshal cluster: %v", err)
 	}
-	if got := cluster.Spec.ControlPlaneRef.Kind; got != "KThreesControlPlane" {
-		t.Errorf("controlPlaneRef kind = %q, want KThreesControlPlane", got)
+	vars := map[string]string{}
+	for _, v := range cluster.Spec.Topology.Variables {
+		vars[v.Name] = string(v.Value.Raw)
 	}
-	if got := cluster.Spec.InfrastructureRef.Kind; got != "HetznerCluster" {
-		t.Errorf("infrastructureRef kind = %q, want HetznerCluster", got)
+	if vars["machineType"] != `"cpx22"` {
+		t.Errorf("machineType encoded = %s, want quoted string", vars["machineType"])
 	}
+	if vars["diskSize"] != "40" {
+		t.Errorf("diskSize encoded = %s, want bare number 40", vars["diskSize"])
+	}
+	if vars["config"] != `{"location":"fsn1"}` {
+		t.Errorf("config encoded = %s, want passthrough object", vars["config"])
+	}
+}
 
-	if !bytes.Contains(docs[1], []byte("kind: KThreesControlPlane")) {
-		t.Errorf("second doc is not a KThreesControlPlane:\n%s", docs[1])
+func TestRenderClusterOmitsWorkerWhenZeroReplicas(t *testing.T) {
+	spec := topologyClusterSpec()
+	spec.WorkerReplicas = 0
+	data, err := capi.RenderCluster(spec)
+	if err != nil {
+		t.Fatalf("RenderCluster: %v", err)
 	}
-	if !bytes.Contains(docs[1], []byte("controlplane.cluster.x-k8s.io/v1beta2")) {
-		t.Errorf("control plane apiVersion missing:\n%s", docs[1])
+	var cluster clusterv1.Cluster
+	if err := yaml.Unmarshal(data, &cluster); err != nil {
+		t.Fatalf("unmarshal cluster: %v", err)
 	}
-	if !bytes.Contains(docs[1], []byte("kind: HCloudMachineTemplate")) {
-		t.Errorf("control plane machineTemplate must reference HCloudMachineTemplate:\n%s", docs[1])
+	if len(cluster.Spec.Topology.Workers.MachineDeployments) != 0 {
+		t.Errorf("expected no worker machine deployments, got %d", len(cluster.Spec.Topology.Workers.MachineDeployments))
 	}
 }

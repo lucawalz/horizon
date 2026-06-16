@@ -21,6 +21,10 @@ func testModel() model {
 					"elastic":  "elastic-workers",
 				},
 			},
+			ClusterCreate: config.ClusterDefaults{
+				Class:       "hetzner-k3s",
+				WorkerClass: "default-worker",
+			},
 		},
 	}}
 }
@@ -154,6 +158,64 @@ func TestUpParsesTypeAndReplicas(t *testing.T) {
 	}
 	if res := m.dispatch("up notanumber"); len(res.lines) == 0 {
 		t.Error("expected error for non-numeric replicas")
+	}
+}
+
+func TestClusterCreateRequiresClassOrFlavor(t *testing.T) {
+	m := testModel()
+	m.app.Config.ClusterCreate.Class = ""
+	res := m.dispatch("cluster create demo")
+	if len(res.lines) == 0 {
+		t.Error("expected error when neither --class nor --flavor is given and no default class exists")
+	}
+}
+
+func TestClusterCreateClassAndFlavorMutuallyExclusive(t *testing.T) {
+	m := testModel()
+	res := m.dispatch("cluster create demo --class hetzner-k3s --flavor /tmp/x.yaml")
+	if len(res.lines) == 0 {
+		t.Error("expected error when both --class and --flavor are given")
+	}
+}
+
+func TestClusterCreateBuildsTopologySpec(t *testing.T) {
+	m := testModel()
+	spec, err := m.clusterSpecFrom(clusterCreateInput{
+		name:                 "demo",
+		class:                "hetzner-k3s",
+		workerClass:          "default-worker",
+		replicas:             3,
+		controlPlaneReplicas: 1,
+		sets:                 []string{"machineType=cpx22", "diskSize=40"},
+	})
+	if err != nil {
+		t.Fatalf("clusterSpecFrom: %v", err)
+	}
+	if spec.Class != "hetzner-k3s" || spec.WorkerClass != "default-worker" {
+		t.Errorf("spec class fields = %+v", spec)
+	}
+	if spec.WorkerReplicas != 3 || spec.ControlPlaneReplicas != 1 {
+		t.Errorf("spec replicas = cp %d worker %d", spec.ControlPlaneReplicas, spec.WorkerReplicas)
+	}
+	if len(spec.Variables) != 2 || spec.Variables[0].Name != "machineType" || spec.Variables[0].Value != "cpx22" {
+		t.Errorf("spec variables = %+v", spec.Variables)
+	}
+}
+
+func TestParseSetVarsRejectsMalformed(t *testing.T) {
+	if _, err := parseSetVars([]string{"noequals"}); err == nil {
+		t.Error("expected error for --set without =")
+	}
+	if _, err := parseSetVars([]string{"=value"}); err == nil {
+		t.Error("expected error for --set with empty key")
+	}
+}
+
+func TestClusterCreateFlavorMissingFileErrors(t *testing.T) {
+	m := testModel()
+	res := m.dispatch("cluster create demo --flavor /no/such/flavor.yaml")
+	if len(res.lines) == 0 {
+		t.Error("expected error when flavor file cannot be read")
 	}
 }
 

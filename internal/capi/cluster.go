@@ -42,48 +42,23 @@ func (c *Client) DeleteCluster(ctx context.Context, namespace, name string) erro
 }
 
 func (c *Client) ApplyCluster(ctx context.Context, spec ClusterSpec) error {
-	if err := c.applyClusterObject(ctx, spec); err != nil {
+	desired, err := buildTopologyCluster(spec)
+	if err != nil {
 		return err
 	}
-	if spec.ControlPlaneMode == Managed {
-		cp := buildControlPlane(spec)
-		existing := cp.DeepCopy()
-		key := client.ObjectKeyFromObject(cp)
-		err := c.crClient().Get(ctx, key, existing)
-		if apierrors.IsNotFound(err) {
-			if err := c.crClient().Create(ctx, cp); err != nil {
-				return fmt.Errorf("capi: create control plane %q: %w", spec.Name, err)
-			}
-		} else if err != nil {
-			return fmt.Errorf("capi: get control plane %q: %w", spec.Name, err)
-		} else {
-			existing.Object["spec"] = cp.Object["spec"]
-			if err := c.crClient().Update(ctx, existing); err != nil {
-				return fmt.Errorf("capi: update control plane %q: %w", spec.Name, err)
-			}
-		}
-	}
-	if _, err := c.ApplyPool(ctx, workerPoolSpec(spec)); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (c *Client) applyClusterObject(ctx context.Context, spec ClusterSpec) error {
-	desired := buildCluster(spec)
-	existing, err := c.GetCluster(ctx, spec.Namespace, spec.ClusterName)
+	existing, err := c.GetCluster(ctx, spec.Namespace, spec.Name)
 	if apierrors.IsNotFound(err) {
 		if err := c.crClient().Create(ctx, desired); err != nil {
-			return fmt.Errorf("capi: create cluster %q: %w", spec.ClusterName, err)
+			return fmt.Errorf("capi: create cluster %q: %w", spec.Name, err)
 		}
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("capi: get cluster %q: %w", spec.ClusterName, err)
+		return fmt.Errorf("capi: get cluster %q: %w", spec.Name, err)
 	}
 	existing.Spec = desired.Spec
 	if err := c.crClient().Update(ctx, existing); err != nil {
-		return fmt.Errorf("capi: update cluster %q: %w", spec.ClusterName, err)
+		return fmt.Errorf("capi: update cluster %q: %w", spec.Name, err)
 	}
 	return nil
 }

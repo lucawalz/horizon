@@ -13,25 +13,17 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-const (
-	infrastructureGroup = "infrastructure.cluster.x-k8s.io"
-	bootstrapGroup      = "bootstrap.cluster.x-k8s.io"
-)
-
-func managedClusterSpec(name, namespace, version string) capi.ClusterSpec {
+func topologyClusterSpec(name, namespace, version string) capi.ClusterSpec {
 	return capi.ClusterSpec{
-		Name:                  name,
-		Namespace:             namespace,
-		ClusterName:           name,
-		ControlPlaneMode:      capi.Managed,
-		PodCIDR:               "10.42.0.0/16",
-		ServiceCIDR:           "10.43.0.0/16",
-		Version:               version,
-		Replicas:              1,
-		ClusterInfrastructure: capi.TemplateRef{APIGroup: infrastructureGroup, Kind: "HetznerCluster", Name: name},
-		Infrastructure:        capi.TemplateRef{APIGroup: infrastructureGroup, Kind: "HCloudMachineTemplate", Name: name + "-workers"},
-		ControlPlaneInfra:     capi.TemplateRef{APIGroup: infrastructureGroup, Kind: "HCloudMachineTemplate", Name: name + "-control-plane"},
-		Bootstrap:             capi.TemplateRef{APIGroup: bootstrapGroup, Kind: "KThreesConfigTemplate", Name: name},
+		Name:                 name,
+		Namespace:            namespace,
+		Class:                "hetzner-k3s",
+		WorkerClass:          "default-worker",
+		WorkerName:           name + "-workers",
+		Version:              version,
+		ControlPlaneReplicas: 1,
+		WorkerReplicas:       2,
+		Variables:            []capi.ClusterVariable{{Name: "machineType", Value: "cpx22"}},
 	}
 }
 
@@ -45,7 +37,7 @@ func clusterTestApp(cc *capi.Client) *core.App {
 func TestApplyClusterLive(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
-	spec := managedClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
+	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
 	if err := core.ApplyCluster(context.Background(), app, spec); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
@@ -55,28 +47,33 @@ func TestApplyClusterLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCluster: %v", err)
 	}
-	if got.Spec.ControlPlaneRef.Kind != "KThreesControlPlane" {
-		t.Errorf("controlPlaneRef kind = %q, want managed control plane", got.Spec.ControlPlaneRef.Kind)
+	if got.Spec.Topology.ClassRef.Name != "hetzner-k3s" {
+		t.Errorf("topology classRef name = %q, want hetzner-k3s", got.Spec.Topology.ClassRef.Name)
 	}
 }
 
-func TestRenderClusterEmitsManifests(t *testing.T) {
-	spec := managedClusterSpec("edge", "caph-system", "v1.35.2+k3s1")
+func TestRenderClusterEmitsTopology(t *testing.T) {
+	spec := topologyClusterSpec("edge", "caph-system", "v1.35.2+k3s1")
 	out, err := core.RenderCluster(spec)
 	if err != nil {
 		t.Fatalf("RenderCluster: %v", err)
 	}
 	rendered := string(out)
-	for _, want := range []string{"kind: Cluster", "kind: HetznerCluster", "v1.35.2+k3s1"} {
+	for _, want := range []string{"kind: Cluster", "classRef:", "hetzner-k3s", "v1.35.2+k3s1"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("rendered manifests missing %q:\n%s", want, rendered)
+		}
+	}
+	for _, forbidden := range []string{"HetznerCluster", "HCloudMachineTemplate", "KThreesControlPlane"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Errorf("rendered manifests must not contain provider kind %q:\n%s", forbidden, rendered)
 		}
 	}
 }
 
 func TestRenderClusterDoesNotApply(t *testing.T) {
 	cc := capiClient(t)
-	spec := managedClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
+	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
 	if _, err := core.RenderCluster(spec); err != nil {
 		t.Fatalf("RenderCluster: %v", err)
@@ -102,7 +99,7 @@ func TestWriteClusterManifestsToBedrock(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
 	app.Config.BedrockPath = root
-	spec := managedClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
+	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
 	path, err := core.WriteClusterManifests(app, spec)
 	if err != nil {
@@ -124,7 +121,7 @@ func TestWriteClusterManifestsToBedrock(t *testing.T) {
 func TestWriteClusterManifestsRequiresBedrockPath(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
-	spec := managedClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
+	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
 	if _, err := core.WriteClusterManifests(app, spec); err == nil {
 		t.Fatal("expected error when bedrock_path unset")
@@ -134,7 +131,7 @@ func TestWriteClusterManifestsRequiresBedrockPath(t *testing.T) {
 func TestDeleteClusterRemovesCluster(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
-	spec := managedClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
+	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 	if err := core.ApplyCluster(context.Background(), app, spec); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
 	}
@@ -150,7 +147,7 @@ func TestDeleteClusterRemovesCluster(t *testing.T) {
 func TestListClustersReturnsCreated(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
-	spec := managedClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
+	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 	if err := core.ApplyCluster(context.Background(), app, spec); err != nil {
 		t.Fatalf("ApplyCluster: %v", err)
 	}
@@ -167,5 +164,23 @@ func TestListClustersReturnsCreated(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("ListClusters did not return created cluster edge: %+v", clusters)
+	}
+}
+
+func TestRenderFlavorMissingVariableFails(t *testing.T) {
+	template := []byte("kind: Cluster\nmetadata:\n  name: ${CLUSTER_NAME}\n")
+	if _, err := core.RenderFlavor(template, map[string]string{}); err == nil {
+		t.Fatal("expected error for missing flavor variable")
+	}
+}
+
+func TestRenderFlavorSubstitutes(t *testing.T) {
+	template := []byte("kind: Cluster\nmetadata:\n  name: ${CLUSTER_NAME}\n")
+	out, err := core.RenderFlavor(template, map[string]string{"CLUSTER_NAME": "edge"})
+	if err != nil {
+		t.Fatalf("RenderFlavor: %v", err)
+	}
+	if !strings.Contains(string(out), "name: edge") {
+		t.Errorf("flavor not substituted:\n%s", out)
 	}
 }
