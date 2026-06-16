@@ -23,7 +23,9 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 			if saved {
-				fmt.Fprintf(cmd.OutOrStdout(), "configuration written to %s\n", config.DefaultConfigPath())
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "configuration written to %s\n", config.DefaultConfigPath()); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
