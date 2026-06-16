@@ -439,34 +439,61 @@ func (m setupModel) View() string {
 }
 
 func (m setupModel) content() string {
+	var body string
 	switch m.step {
 	case stepContext:
-		return m.contextView()
+		body = m.contextView()
 	case stepDetect:
-		return m.detectView()
+		body = m.detectView()
 	case stepFields:
-		return m.fieldsView()
+		body = m.fieldsView()
 	case stepTheme:
-		return m.themeView()
+		body = m.themeView()
 	default:
-		return m.doneView()
+		body = m.doneView()
 	}
+	return lipgloss.JoinVertical(lipgloss.Left, header(), breadcrumb(m.step), "", body)
+}
+
+func header() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		panelTitleStyle.Render("horizon"),
+		dimStyle.Render("first-run setup"),
+	)
+}
+
+var breadcrumbSteps = []struct {
+	label string
+	step  setupStep
+}{
+	{"context", stepContext},
+	{"detect", stepDetect},
+	{"configure", stepFields},
+	{"theme", stepTheme},
+}
+
+func breadcrumb(active setupStep) string {
+	parts := make([]string, 0, len(breadcrumbSteps))
+	for _, s := range breadcrumbSteps {
+		if s.step == active {
+			parts = append(parts, helpCommandStyle.Render(s.label))
+		} else {
+			parts = append(parts, dimStyle.Render(s.label))
+		}
+	}
+	return strings.Join(parts, dimStyle.Render(" · "))
 }
 
 func (m setupModel) contextView() string {
 	if m.contextErr != nil {
 		return lipgloss.JoinVertical(lipgloss.Left,
-			helpTitleStyle.Render("horizon setup"),
 			errStyle.Render("kubeconfig: "+m.contextErr.Error()),
 			"",
 			dimStyle.Render("esc quit"),
 		)
 	}
 	if len(m.contexts) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			helpTitleStyle.Render("horizon setup"),
-			dimStyle.Render("loading contexts…"),
-		)
+		return dimStyle.Render("loading contexts…")
 	}
 	rows := make([]string, 0, len(m.contexts))
 	for i, name := range m.contexts {
@@ -480,7 +507,6 @@ func (m setupModel) contextView() string {
 		rows = append(rows, line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		helpTitleStyle.Render("select context"),
 		strings.Join(rows, "\n"),
 		"",
 		dimStyle.Render("↑↓ select · enter confirm · esc quit"),
@@ -490,30 +516,27 @@ func (m setupModel) contextView() string {
 func (m setupModel) detectView() string {
 	if m.detectErr != nil {
 		return lipgloss.JoinVertical(lipgloss.Left,
-			helpTitleStyle.Render("detect"),
 			errStyle.Render(m.detectErr.Error()),
 			"",
 			dimStyle.Render("r retry · esc back"),
 		)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left,
-		helpTitleStyle.Render("detect"),
-		m.spinner.View()+refreshLabelStyle.Render(" inspecting "+m.chosenCtx+"…"),
-	)
+	return m.spinner.View() + refreshLabelStyle.Render(" inspecting "+m.chosenCtx+"…")
 }
 
 func (m setupModel) fieldsView() string {
 	rows := make([]string, 0, fieldCount)
 	for i := range m.fields {
 		marker := pickerCursorIndent
+		label := dimStyle.Render(fieldLabels[i])
 		if i == m.fieldIndex {
 			marker = helpCommandStyle.Render(pickerCursor)
+			label = helpCommandStyle.Render(fieldLabels[i])
 		}
-		label := dimStyle.Render(fieldLabels[i])
 		rows = append(rows, marker+label)
 		rows = append(rows, pickerCursorIndent+m.fields[i].View())
 	}
-	parts := []string{helpTitleStyle.Render("configure"), strings.Join(rows, "\n")}
+	parts := []string{strings.Join(rows, "\n")}
 	if m.fieldErr != "" {
 		parts = append(parts, errStyle.Render(m.fieldErr))
 	}
@@ -531,7 +554,6 @@ func (m setupModel) themeView() string {
 		rows = append(rows, line)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		helpTitleStyle.Render("theme"),
 		strings.Join(rows, "\n"),
 		"",
 		dimStyle.Render("↑↓ select · enter save · esc back"),
@@ -541,14 +563,13 @@ func (m setupModel) themeView() string {
 func (m setupModel) doneView() string {
 	if m.saveErr != "" {
 		return lipgloss.JoinVertical(lipgloss.Left,
-			helpTitleStyle.Render("setup"),
 			errStyle.Render("save failed: "+m.saveErr),
 			"",
 			dimStyle.Render("enter quit"),
 		)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
-		helpTitleStyle.Render("setup complete"),
+		helpCommandStyle.Render("setup complete"),
 		dimStyle.Render("configuration written to "+m.savedAt),
 		"",
 		dimStyle.Render("enter quit"),
