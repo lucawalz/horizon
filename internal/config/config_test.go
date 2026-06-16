@@ -199,6 +199,74 @@ pools:
 	}
 }
 
+func TestThemeDefaultsToAuto(t *testing.T) {
+	dir := t.TempDir()
+	content := "bedrock_path: " + dir + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Theme != config.ThemeAuto {
+		t.Errorf("Theme: got %q, want %q", cfg.Theme, config.ThemeAuto)
+	}
+}
+
+func TestThemeInvalidRejected(t *testing.T) {
+	dir := t.TempDir()
+	content := "bedrock_path: " + dir + "\ntheme: neon\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error for invalid theme, got nil")
+	}
+}
+
+func TestSaveRoundTripsTheme(t *testing.T) {
+	dir := t.TempDir()
+	content := "bedrock_path: " + dir + "\ncluster: prod\ntheme: dark\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if err := cfg.SetTheme(config.ThemeLight); err != nil {
+		t.Fatalf("SetTheme: %v", err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("reload error: %v", err)
+	}
+	if reloaded.Theme != config.ThemeLight {
+		t.Errorf("Theme after reload: got %q, want %q", reloaded.Theme, config.ThemeLight)
+	}
+	if reloaded.Cluster != "prod" {
+		t.Errorf("Cluster after reload: got %q, want prod", reloaded.Cluster)
+	}
+}
+
+func TestSetThemeRejectsInvalid(t *testing.T) {
+	cfg := &config.Config{}
+	if err := cfg.SetTheme("neon"); err == nil {
+		t.Fatal("expected error for invalid theme")
+	}
+}
+
 func TestLegacyInfraPathWithoutBedrockFailsFast(t *testing.T) {
 	dir := t.TempDir()
 	content := `

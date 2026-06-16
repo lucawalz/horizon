@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/stopwatch"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lucawalz/horizon/internal/core"
@@ -36,11 +35,12 @@ type model struct {
 	stream <-chan streamEvent
 
 	spinner spinner.Model
-	age     stopwatch.Model
 	loading bool
 
 	pending tea.Cmd
 	confirm string
+
+	picker themePicker
 }
 
 func newModel(app *core.App, contextName string) model {
@@ -53,13 +53,12 @@ func newModel(app *core.App, contextName string) model {
 		input:   ti,
 		log:     newLog(1, 1),
 		spinner: sp,
-		age:     stopwatch.New(),
 		loading: true,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.loadSnapshot(), tick(), m.spinner.Tick, m.age.Start())
+	return tea.Batch(m.loadSnapshot(), tick(), m.spinner.Tick)
 }
 
 func (m model) loadSnapshot() tea.Cmd {
@@ -82,23 +81,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.resize()
+		m.relayout()
 		return m, nil
 	case snapshotMsg:
 		m.snap = msg.snap
 		m.loaded = true
 		m.loading = false
-		return m, m.age.Reset()
+		m.relayout()
+		return m, nil
 	case tickMsg:
 		m.loading = true
 		return m, tea.Batch(m.loadSnapshot(), tick(), m.spinner.Tick)
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
-	case stopwatch.TickMsg, stopwatch.StartStopMsg, stopwatch.ResetMsg:
-		var cmd tea.Cmd
-		m.age, cmd = m.age.Update(msg)
 		return m, cmd
 	case streamStartedMsg:
 		m.stream = msg.ch
@@ -133,9 +129,46 @@ func (m model) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case modeHelp:
 		m.mode = modeNav
 		return m, nil
+	case modeThemePicker:
+		return m.onThemePickerKey(msg)
 	default:
 		return m.onNavKey(msg)
 	}
+}
+
+func (m model) onThemePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.ScrollUp):
+		m.picker.moveUp()
+		return m, nil
+	case key.Matches(msg, keys.ScrollDown):
+		m.picker.moveDown()
+		return m, nil
+	case key.Matches(msg, keys.Confirm):
+		return m.commitTheme()
+	case key.Matches(msg, keys.Cancel):
+		m.picker.revert()
+		m.mode = modeNav
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) commitTheme() (tea.Model, tea.Cmd) {
+	pref := m.picker.selected().pref
+	m.mode = modeNav
+	if err := m.app.Config.SetTheme(pref); err != nil {
+		m.picker.revert()
+		m.log.append(errStyle.Render("theme: " + err.Error()))
+		return m, nil
+	}
+	applyThemePref(pref)
+	if err := m.app.Config.Save(); err != nil {
+		m.log.append(dimStyle.Render("theme set to " + pref + " (not persisted: " + err.Error() + ")"))
+		return m, nil
+	}
+	m.log.append(dimStyle.Render("theme set to " + pref))
+	return m, nil
 }
 
 func (m model) onNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -199,6 +232,10 @@ func (m model) runInput() (tea.Model, tea.Cmd) {
 	switch res.builtin {
 	case builtinHelp:
 		m.mode = modeHelp
+		return m, nil
+	case builtinThemePicker:
+		m.mode = modeThemePicker
+		m.picker = newThemePicker(m.app.Config.Theme)
 		return m, nil
 	case builtinRefresh:
 		return m, m.loadSnapshot()

@@ -8,4 +8,5 @@ const (
 	modeConfirm
 	modeRunning
 	modeHelp
+	modeThemePicker
 )

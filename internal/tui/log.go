@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/bubbles/viewport"
 )
 
@@ -27,7 +29,6 @@ func (l *logModel) resize(width, height int) {
 	}
 	l.view.Width = width
 	l.view.Height = height
-	l.sync()
 }
 
 func (l *logModel) append(line string) {
@@ -49,8 +50,26 @@ func (l *logModel) echo(input string) {
 func (l *logModel) clear() {
 	l.lines = nil
 	l.sync()
+	l.view.GotoTop()
 }
 
 func (l *logModel) sync() {
 	l.view.SetContent(joinLines(l.lines))
+}
+
+func (l logModel) scrollLabel() string {
+	if l.view.AtTop() && l.view.AtBottom() {
+		return "all"
+	}
+	if l.view.AtBottom() {
+		return "end"
+	}
+	if l.view.AtTop() {
+		return "top"
+	}
+	return fmt.Sprintf("%d%%", int(l.view.ScrollPercent()*100))
+}
+
+func (l logModel) render() string {
+	return l.view.View()
 }

@@ -8,22 +8,23 @@ import (
 	"strings"
 
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 type ThresholdConfig struct {
-	Burst           float64 `mapstructure:"burst"`
-	ScaleDown       float64 `mapstructure:"scale_down"`
-	Window          int     `mapstructure:"window"`
-	CooldownMinutes int     `mapstructure:"cooldown_minutes"`
-	MaxBurstNodes   int     `mapstructure:"max_burst_nodes"`
+	Burst           float64 `mapstructure:"burst" yaml:"burst"`
+	ScaleDown       float64 `mapstructure:"scale_down" yaml:"scale_down"`
+	Window          int     `mapstructure:"window" yaml:"window"`
+	CooldownMinutes int     `mapstructure:"cooldown_minutes" yaml:"cooldown_minutes"`
+	MaxBurstNodes   int     `mapstructure:"max_burst_nodes" yaml:"max_burst_nodes"`
 }
 
 type PoolDefaults struct {
-	Namespace   string            `mapstructure:"namespace"`
-	Cluster     string            `mapstructure:"cluster"`
-	DefaultType string            `mapstructure:"default_type"`
-	Version     string            `mapstructure:"version"`
-	Types       map[string]string `mapstructure:"types"`
+	Namespace   string            `mapstructure:"namespace" yaml:"namespace"`
+	Cluster     string            `mapstructure:"cluster" yaml:"cluster"`
+	DefaultType string            `mapstructure:"default_type" yaml:"default_type"`
+	Version     string            `mapstructure:"version" yaml:"version"`
+	Types       map[string]string `mapstructure:"types" yaml:"types"`
 }
 
 func (p PoolDefaults) Resolve(typeName string) (string, error) {
@@ -42,12 +43,17 @@ func (p PoolDefaults) Resolve(typeName string) (string, error) {
 }
 
 type Config struct {
-	BedrockPath    string          `mapstructure:"bedrock_path"`
-	Cluster        string          `mapstructure:"cluster"`
-	Kubeconfig     string          `mapstructure:"kubeconfig"`
-	Thresholds     ThresholdConfig `mapstructure:"thresholds"`
-	Pools          PoolDefaults    `mapstructure:"pools"`
+	BedrockPath string          `mapstructure:"bedrock_path" yaml:"bedrock_path"`
+	Cluster     string          `mapstructure:"cluster" yaml:"cluster"`
+	Kubeconfig  string          `mapstructure:"kubeconfig" yaml:"kubeconfig"`
+	Theme       string          `mapstructure:"theme" yaml:"theme"`
+	Thresholds  ThresholdConfig `mapstructure:"thresholds" yaml:"thresholds"`
+	Pools       PoolDefaults    `mapstructure:"pools" yaml:"pools"`
+
+	path string
 }
+
+func (c *Config) Path() string { return c.path }
 
 const (
 	defaultPoolNamespace = "caph-system"
@@ -58,6 +64,10 @@ const (
 	reservedPoolType     = "reserved"
 	elasticPoolName      = "elastic-workers"
 	reservedPoolName     = "reserved-workers"
+
+	ThemeAuto  = "auto"
+	ThemeLight = "light"
+	ThemeDark  = "dark"
 )
 
 func Load() (*Config, error) {
@@ -79,6 +89,7 @@ func Load() (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	cfg.path = v.ConfigFileUsed()
 
 	cfg.BedrockPath = os.ExpandEnv(cfg.BedrockPath)
 	if cfg.BedrockPath != "" {
@@ -117,6 +128,43 @@ func Load() (*Config, error) {
 	if cfg.Cluster == "" {
 		cfg.Cluster = cfg.Pools.Cluster
 	}
+	if cfg.Theme == "" {
+		cfg.Theme = ThemeAuto
+	}
+	if err := validateTheme(cfg.Theme); err != nil {
+		return nil, err
+	}
 
 	return &cfg, nil
+}
+
+func validateTheme(theme string) error {
+	switch theme {
+	case ThemeAuto, ThemeLight, ThemeDark:
+		return nil
+	default:
+		return fmt.Errorf("theme %q invalid (want %s|%s|%s)", theme, ThemeLight, ThemeDark, ThemeAuto)
+	}
+}
+
+func (c *Config) SetTheme(theme string) error {
+	if err := validateTheme(theme); err != nil {
+		return err
+	}
+	c.Theme = theme
+	return nil
+}
+
+func (c *Config) Save() error {
+	if c.path == "" {
+		return fmt.Errorf("config path unknown; cannot save")
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	if err := os.WriteFile(c.path, data, 0600); err != nil {
+		return fmt.Errorf("write config %q: %w", c.path, err)
+	}
+	return nil
 }

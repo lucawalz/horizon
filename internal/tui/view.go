@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/stopwatch"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/lucawalz/horizon/internal/core"
 )
@@ -16,9 +15,40 @@ const (
 	clusterTagPrefix = "⎈ "
 )
 
-func (m *model) resize() {
-	m.log.resize(m.logWidth(), minLogHeight)
+func (m *model) relayout() {
 	m.input.Width = m.inputWidth()
+	if m.width <= 0 || m.height <= 0 {
+		return
+	}
+	header := m.headerBand()
+	inputBox := m.inputBand()
+	dashboard := m.layoutDashboard(header, inputBox)
+	m.log.resize(m.logWidth(), m.logHeight(header, dashboard, inputBox))
+}
+
+func (m model) layoutDashboard(header, inputBox string) string {
+	dashboard := m.dashboardBand()
+	if !m.fits(header, dashboard, inputBox) {
+		return m.collapsedDashboard()
+	}
+	return dashboard
+}
+
+func (m model) logFloor() int {
+	floor := minLogHeight
+	if share := int(float64(m.height) * logHeightShare); share > floor {
+		floor = share
+	}
+	return floor
+}
+
+func (m model) logHeight(header, dashboard, inputBox string) int {
+	used := lipgloss.Height(header) + lipgloss.Height(dashboard) + lipgloss.Height(inputBox)
+	h := m.height - used
+	if floor := m.logFloor(); h < floor {
+		h = floor
+	}
+	return h
 }
 
 func (m model) logWidth() int {
@@ -42,53 +72,36 @@ func (m model) View() string {
 		return ""
 	}
 
+	if m.mode == modeHelp {
+		return m.helpOverlay()
+	}
+
+	if m.mode == modeThemePicker {
+		return m.picker.view(m.width, m.height)
+	}
+
 	header := m.headerBand()
 	inputBox := m.inputBand()
+	dashboard := m.layoutDashboard(header, inputBox)
 
-	if m.mode == modeHelp {
-		body := m.helpOverlay(header, inputBox)
-		out := lipgloss.JoinVertical(lipgloss.Left, header, body, inputBox)
-		return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(out)
-	}
-
-	dashboard := m.dashboardBand()
-	if !m.fits(header, dashboard, inputBox) {
-		dashboard = m.collapsedDashboard()
-	}
-
-	logView := m.logBand(header, dashboard, inputBox)
-
-	out := lipgloss.JoinVertical(lipgloss.Left, header, dashboard, logView, inputBox)
+	out := lipgloss.JoinVertical(lipgloss.Left, header, dashboard, m.log.render(), inputBox)
 	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(out)
 }
 
 func (m model) fits(header, dashboard, inputBox string) bool {
 	used := lipgloss.Height(header) + lipgloss.Height(dashboard) + lipgloss.Height(inputBox)
-	return m.height-used >= minLogHeight
+	return m.height-used >= m.logFloor()
 }
 
-func (m model) logBand(header, dashboard, inputBox string) string {
-	used := lipgloss.Height(header) + lipgloss.Height(dashboard) + lipgloss.Height(inputBox)
-	h := m.height - used
-	if h < minLogHeight {
-		h = minLogHeight
-	}
-	m.log.resize(m.logWidth(), h)
-	return m.log.view.View()
-}
-
-func (m model) helpOverlay(header, inputBox string) string {
-	h := m.height - lipgloss.Height(header) - lipgloss.Height(inputBox)
-	if h < 1 {
-		h = 1
-	}
+func (m model) helpOverlay() string {
 	content := lipgloss.JoinVertical(lipgloss.Left,
 		helpTitleStyle.Render("commands"),
 		renderHelp(),
 		"",
 		dimStyle.Render("press any key to dismiss"),
 	)
-	return lipgloss.NewStyle().Width(m.width).Height(h).MaxHeight(h).Render(content)
+	box := modalStyle.Render(content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
 func (m model) headerBand() string {
@@ -112,7 +125,7 @@ func (m model) refreshIndicator() string {
 	if !m.loaded {
 		return ""
 	}
-	return statusDot(dotGreen) + dimStyle.Render(fmt.Sprintf(" updated %s ago", ageLabel(m.age)))
+	return statusDot(theme.DotGreen)
 }
 
 func (m model) dashboardBand() string {
@@ -120,14 +133,13 @@ func (m model) dashboardBand() string {
 		return dimStyle.Render("loading cluster snapshot…")
 	}
 	pressure := renderPressure(m.snap.Pressure)
-	gap := strings.Repeat("\n", sectionMargin)
 	switch {
 	case m.width >= wideBreakpoint:
-		return lipgloss.JoinVertical(lipgloss.Left, pressure, gap, m.wideDashboard())
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, "", m.wideDashboard())
 	case m.width >= mediumBreakpoint:
-		return lipgloss.JoinVertical(lipgloss.Left, pressure, gap, m.mediumDashboard())
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, "", m.mediumDashboard())
 	default:
-		return lipgloss.JoinVertical(lipgloss.Left, pressure, gap, m.narrowDashboard())
+		return lipgloss.JoinVertical(lipgloss.Left, pressure, "", m.narrowDashboard())
 	}
 }
 
@@ -182,7 +194,7 @@ func (m model) summaryLine() string {
 
 func (m model) inputBand() string {
 	width := m.width
-	topRule := ruleWithLabel(width, clusterTagPrefix+valueOr(m.app.Cluster, "default"))
+	topRule := ruleWithLabel(width, m.log.scrollLabel(), clusterTagPrefix+valueOr(m.app.Cluster, "default"))
 	prompt := m.inputLine()
 	bottomRule := inputRuleStyle.Render(strings.Repeat("─", width))
 	strip := m.statusStrip(width)
@@ -198,14 +210,23 @@ func (m model) inputLine() string {
 	}
 }
 
-func ruleWithLabel(width int, label string) string {
-	label = valueOr(label, "default")
-	tag := " " + label + " "
-	dashes := width - lipgloss.Width(tag) - 1
-	if dashes < 1 {
+const (
+	ruleLeadDashes  = 2
+	ruleTrailDashes = 1
+)
+
+func ruleWithLabel(width int, leftLabel, rightLabel string) string {
+	rightTag := " " + valueOr(rightLabel, "default") + " "
+	leftTag := ""
+	if leftLabel != "" {
+		leftTag = " " + leftLabel + " "
+	}
+	fill := width - ruleLeadDashes - lipgloss.Width(leftTag) - lipgloss.Width(rightTag) - ruleTrailDashes
+	if fill < 1 {
 		return inputRuleStyle.Render(strings.Repeat("─", width))
 	}
-	return inputRuleStyle.Render(strings.Repeat("─", dashes) + tag + "─")
+	rule := strings.Repeat("─", ruleLeadDashes) + leftTag + strings.Repeat("─", fill) + rightTag + strings.Repeat("─", ruleTrailDashes)
+	return inputRuleStyle.Render(rule)
 }
 
 func (m model) statusStrip(width int) string {
@@ -224,15 +245,7 @@ func (m model) statusStrip(width int) string {
 		controlPlaneGlyph(m.snap.Nudge),
 		": command · ? help · q quit",
 	}, " · ")
-	right := ""
-	if m.loaded {
-		right = fmt.Sprintf("updated %s ago", ageLabel(m.age))
-	}
-	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 1 {
-		gap = 1
-	}
-	return statusStripStyle.Render(left + strings.Repeat(" ", gap) + right)
+	return statusStripStyle.Render(lipgloss.NewStyle().Width(width).Render(left))
 }
 
 func readyNodeCount(snap core.Snapshot) int {
@@ -256,10 +269,6 @@ func controlPlaneGlyph(state core.NudgeState) string {
 	default:
 		return "cp ?"
 	}
-}
-
-func ageLabel(sw stopwatch.Model) string {
-	return fmt.Sprintf("%ds", int(sw.Elapsed().Seconds()))
 }
 
 func splitLines(s string) []string {

@@ -4,6 +4,8 @@ cluster: burst
 
 bedrock_path: ""
 
+# theme: auto
+
 pools:
   namespace: caph-system
   default_type: reserved

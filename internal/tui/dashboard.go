@@ -15,19 +15,26 @@ const (
 	emptyCell = "-"
 )
 
-func gaugeColor(score, threshold float64) string {
+func gaugeColor(score, threshold float64) lipgloss.AdaptiveColor {
 	switch {
 	case score >= threshold:
-		return dotRed
+		return theme.DotRed
 	case score >= threshold*warnThresholdRatio:
-		return dotYellow
+		return theme.DotYellow
 	default:
-		return dotGreen
+		return theme.DotGreen
 	}
 }
 
-func statusDot(hex string) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Render("●")
+func statusDot(color lipgloss.TerminalColor) string {
+	return lipgloss.NewStyle().Foreground(color).Render("●")
+}
+
+func adaptiveHex(c lipgloss.AdaptiveColor) string {
+	if lipgloss.HasDarkBackground() {
+		return c.Dark
+	}
+	return c.Light
 }
 
 func renderPressure(p core.PressureSummary) string {
@@ -56,14 +63,14 @@ func renderPressure(p core.PressureSummary) string {
 }
 
 func gauge(label string, score, threshold float64) string {
-	hex := gaugeColor(score, threshold)
+	color := gaugeColor(score, threshold)
 	bar := progress.New(
-		progress.WithSolidFill(hex),
+		progress.WithSolidFill(adaptiveHex(color)),
 		progress.WithWidth(gaugeWidth),
 		progress.WithoutPercentage(),
 	)
-	bar.EmptyColor = colorGaugeBg
-	return fmt.Sprintf("%s %s %.2f/%.2f %s", gaugeLabelStyle.Render(label), bar.ViewAs(score), score, threshold, statusDot(hex))
+	bar.EmptyColor = adaptiveHex(theme.GaugeBg)
+	return fmt.Sprintf("%s %s %.2f/%.2f %s", gaugeLabelStyle.Render(label), bar.ViewAs(score), score, threshold, statusDot(color))
 }
 
 func pressureSummaryLine(snap core.Snapshot) string {
@@ -127,16 +134,16 @@ func nodesBody(snap core.Snapshot, inner int, full bool) string {
 func statusCellStyle(base lipgloss.Style, value string) lipgloss.Style {
 	switch value {
 	case "Ready":
-		return base.Foreground(lipgloss.Color(dotGreen))
+		return base.Foreground(theme.DotGreen)
 	case "NotReady", "Unknown":
-		return base.Foreground(lipgloss.Color(dotRed))
+		return base.Foreground(theme.DotRed)
 	}
 	return base
 }
 
 func dimNeutralCell(base lipgloss.Style, value string) lipgloss.Style {
 	if value == emptyCell || value == naCell {
-		return base.Foreground(lipgloss.Color(colorDim))
+		return base.Foreground(theme.Dim)
 	}
 	return base
 }
@@ -234,23 +241,23 @@ func neutralTable(headers []string, rows [][]string, inner int) string {
 func nudgeLine(state core.NudgeState) string {
 	switch state.Kind {
 	case core.NudgeError:
-		return fmt.Sprintf("control-plane %s %s", statusDot(dotRed), errStyle.Render("status unavailable"))
+		return fmt.Sprintf("control-plane %s %s", statusDot(theme.DotRed), errStyle.Render("status unavailable"))
 	case core.NudgeUninitialized:
-		return fmt.Sprintf("control-plane %s %s", statusDot(dotYellow), warnStyle.Render("uninitialized (workers will not bootstrap until nudged)"))
+		return fmt.Sprintf("control-plane %s %s", statusDot(theme.DotYellow), warnStyle.Render("uninitialized (workers will not bootstrap until nudged)"))
 	case core.NudgeInitialized:
-		return fmt.Sprintf("control-plane %s initialized", statusDot(dotGreen))
+		return fmt.Sprintf("control-plane %s initialized", statusDot(theme.DotGreen))
 	default:
-		return fmt.Sprintf("control-plane %s not found", statusDot(dotYellow))
+		return fmt.Sprintf("control-plane %s not found", statusDot(theme.DotYellow))
 	}
 }
 
 func autoscalerLine(state core.AutoscalerState) string {
 	switch {
 	case state.NotFound:
-		return fmt.Sprintf("autoscaler    %s not found", statusDot(dotYellow))
+		return fmt.Sprintf("autoscaler    %s not found", statusDot(theme.DotYellow))
 	case state.Unavailable:
-		return fmt.Sprintf("autoscaler    %s %s", statusDot(dotYellow), warnStyle.Render("status unavailable"))
+		return fmt.Sprintf("autoscaler    %s %s", statusDot(theme.DotYellow), warnStyle.Render("status unavailable"))
 	default:
-		return fmt.Sprintf("autoscaler    %s %s", statusDot(dotGreen), state.Activity)
+		return fmt.Sprintf("autoscaler    %s %s", statusDot(theme.DotGreen), state.Activity)
 	}
 }

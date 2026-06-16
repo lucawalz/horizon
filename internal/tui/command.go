@@ -22,6 +22,7 @@ const (
 	builtinRefresh
 	builtinClear
 	builtinQuit
+	builtinThemePicker
 )
 
 type commandResult struct {
@@ -66,6 +67,8 @@ func (m model) dispatch(input string) commandResult {
 		return m.parseRestore(args)
 	case "drain":
 		return m.parseDrain(args)
+	case "theme":
+		return m.parseTheme(args)
 	default:
 		return errResult("unknown command %q (try help)", verb)
 	}
@@ -369,6 +372,23 @@ func (m model) parseDrain(args []string) commandResult {
 	}
 }
 
+func (m model) parseTheme(args []string) commandResult {
+	if len(args) == 0 {
+		return commandResult{builtin: builtinThemePicker}
+	}
+	pref := args[0]
+	if err := m.app.Config.SetTheme(pref); err != nil {
+		return errResult("theme: %v", err)
+	}
+	applyThemePref(pref)
+	if err := m.app.Config.Save(); err != nil {
+		return commandResult{lines: []string{
+			dimStyle.Render(fmt.Sprintf("theme set to %s (not persisted: %v)", pref, err)),
+		}}
+	}
+	return commandResult{lines: []string{dimStyle.Render(fmt.Sprintf("theme set to %s", pref))}}
+}
+
 func flatten(values map[string]*string) map[string]string {
 	out := make(map[string]string, len(values))
 	for k, v := range values {
@@ -395,7 +415,9 @@ func helpLines() []helpEntry {
 		{"restore create --from-backup <name> [--wait]", "restore from a backup"},
 		{"restore list · restore describe <name>", "inspect velero restores"},
 		{"drain <node>", "cordon and evict a node"},
+		{"theme [light|dark|auto]", "set theme directly, or open the live picker with no argument"},
 		{"refresh · clear · help · quit", "session controls"},
+		{"↑↓ · pgup/pgdn", "scroll the command log"},
 	}
 }
 
