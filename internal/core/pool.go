@@ -6,6 +6,7 @@ import (
 
 	"github.com/lucawalz/horizon/internal/capi"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 const ElasticPoolType = "elastic"
@@ -44,56 +45,44 @@ func NotFoundPoolErr(namespace, name string) error {
 		namespace, name)
 }
 
+func currentReplicas(md *clusterv1.MachineDeployment) int32 {
+	if md.Spec.Replicas != nil {
+		return *md.Spec.Replicas
+	}
+	return 0
+}
+
+func getPool(ctx context.Context, cc *capi.Client, target PoolTarget) (*clusterv1.MachineDeployment, error) {
+	md, err := cc.GetPool(ctx, target.Namespace, target.Name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, NotFoundPoolErr(target.Namespace, target.Name)
+		}
+		return nil, fmt.Errorf("get pool: %w", err)
+	}
+	return md, nil
+}
+
 func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, nudge bool, progress Progress) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	if dryRun {
-		md, err := cc.GetPool(ctx, target.Namespace, target.Name)
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return NotFoundPoolErr(target.Namespace, target.Name)
-			}
-			return fmt.Errorf("get pool: %w", err)
-		}
-		current := int32(0)
-		if md.Spec.Replicas != nil {
-			current = *md.Spec.Replicas
-		}
-		progress.Emit(fmt.Sprintf("[dry-run] pool %s/%s (cluster %s): %d -> %d replicas",
-			target.Namespace, target.Name, target.Cluster, current, target.Replicas))
-		progress.Emit("[dry-run] No actions executed.")
-		return nil
+		return scaleUpDryRun(ctx, cc, target, progress)
 	}
 
-	initialized, err := cc.IsControlPlaneInitialized(ctx, target.Namespace, target.Cluster)
-	if err != nil {
-		return fmt.Errorf("control-plane status: %w", err)
-	}
-	if !initialized {
-		if !nudge {
-			return fmt.Errorf("control plane for cluster %q not initialized; rerun with --nudge to latch the externally-managed status", target.Cluster)
-		}
-		if err := cc.NudgeControlPlaneInitialized(ctx, target.Namespace, target.Cluster); err != nil {
-			return err
-		}
-		progress.Emit(fmt.Sprintf("Nudged control-plane-initialized for cluster %q.", target.Cluster))
+	if err := ensureControlPlaneInitialized(ctx, cc, target, nudge, progress); err != nil {
+		return err
 	}
 
 	progress.Debug(fmt.Sprintf("pool type %q resolves to MachineDeployment %s/%s", target.PoolType, target.Namespace, target.Name))
-	md, err := cc.GetPool(ctx, target.Namespace, target.Name)
+	md, err := getPool(ctx, cc, target)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return NotFoundPoolErr(target.Namespace, target.Name)
-		}
-		return fmt.Errorf("get pool: %w", err)
+		return err
 	}
 
-	current := int32(0)
-	if md.Spec.Replicas != nil {
-		current = *md.Spec.Replicas
-	}
+	current := currentReplicas(md)
 	progress.Debug(fmt.Sprintf("current replicas %d", current))
 	if current >= target.Replicas {
 		progress.Emit(fmt.Sprintf("pool %s/%s already at %d replicas (>= %d); nothing to do",
@@ -111,6 +100,36 @@ func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, nu
 	if target.PoolType == ElasticPoolType {
 		progress.Emit("Note: the cluster-autoscaler owns the elastic pool and may override this scale.")
 	}
+	return nil
+}
+
+func scaleUpDryRun(ctx context.Context, cc *capi.Client, target PoolTarget, progress Progress) error {
+	md, err := getPool(ctx, cc, target)
+	if err != nil {
+		return err
+	}
+	current := currentReplicas(md)
+	progress.Emit(fmt.Sprintf("[dry-run] pool %s/%s (cluster %s): %d -> %d replicas",
+		target.Namespace, target.Name, target.Cluster, current, target.Replicas))
+	progress.Emit("[dry-run] No actions executed.")
+	return nil
+}
+
+func ensureControlPlaneInitialized(ctx context.Context, cc *capi.Client, target PoolTarget, nudge bool, progress Progress) error {
+	initialized, err := cc.IsControlPlaneInitialized(ctx, target.Namespace, target.Cluster)
+	if err != nil {
+		return fmt.Errorf("control-plane status: %w", err)
+	}
+	if initialized {
+		return nil
+	}
+	if !nudge {
+		return fmt.Errorf("control plane for cluster %q not initialized; rerun with --nudge to latch the externally-managed status", target.Cluster)
+	}
+	if err := cc.NudgeControlPlaneInitialized(ctx, target.Namespace, target.Cluster); err != nil {
+		return err
+	}
+	progress.Emit(fmt.Sprintf("Nudged control-plane-initialized for cluster %q.", target.Cluster))
 	return nil
 }
 
