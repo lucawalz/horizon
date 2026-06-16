@@ -6,12 +6,23 @@ import (
 	"sort"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lucawalz/horizon/internal/core"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+type detailMsg struct{ body string }
+
 func joinLines(lines []string) string {
 	return strings.Join(lines, "\n")
+}
+
+func (m model) describeBackupCmd(name string) tea.Cmd {
+	return func() tea.Msg { return detailMsg{body: m.describeBackup(name)} }
+}
+
+func (m model) describeRestoreCmd(name string) tea.Cmd {
+	return func() tea.Msg { return detailMsg{body: m.describeRestore(name)} }
 }
 
 func phaseOrDash(phase string) string {

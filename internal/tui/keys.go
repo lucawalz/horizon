@@ -3,56 +3,24 @@ package tui
 import "github.com/charmbracelet/bubbles/key"
 
 type keyMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Nudge   key.Binding
-	Burst   key.Binding
-	Cluster key.Binding
-	Backup  key.Binding
-	Restore key.Binding
-	Drain   key.Binding
+	Command key.Binding
 	Refresh key.Binding
 	Help    key.Binding
 	Quit    key.Binding
 
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
+	PageUp     key.Binding
+	PageDown   key.Binding
+
 	Confirm key.Binding
 	Cancel  key.Binding
-	Next    key.Binding
-	Prev    key.Binding
 }
 
 var keys = keyMap{
-	Up: key.NewBinding(
-		key.WithKeys("u"),
-		key.WithHelp("u", "pool up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("d"),
-		key.WithHelp("d", "pool down"),
-	),
-	Nudge: key.NewBinding(
-		key.WithKeys("n"),
-		key.WithHelp("n", "nudge"),
-	),
-	Burst: key.NewBinding(
-		key.WithKeys("b"),
-		key.WithHelp("b", "burst"),
-	),
-	Cluster: key.NewBinding(
-		key.WithKeys("c"),
-		key.WithHelp("c", "cluster"),
-	),
-	Backup: key.NewBinding(
-		key.WithKeys("k"),
-		key.WithHelp("k", "backups"),
-	),
-	Restore: key.NewBinding(
-		key.WithKeys("t"),
-		key.WithHelp("t", "restore"),
-	),
-	Drain: key.NewBinding(
-		key.WithKeys("x"),
-		key.WithHelp("x", "drain"),
+	Command: key.NewBinding(
+		key.WithKeys(":"),
+		key.WithHelp(":", "command"),
 	),
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
@@ -66,20 +34,28 @@ var keys = keyMap{
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q", "quit"),
 	),
+	ScrollUp: key.NewBinding(
+		key.WithKeys("up", "k"),
+		key.WithHelp("↑", "scroll up"),
+	),
+	ScrollDown: key.NewBinding(
+		key.WithKeys("down", "j"),
+		key.WithHelp("↓", "scroll down"),
+	),
+	PageUp: key.NewBinding(
+		key.WithKeys("pgup"),
+		key.WithHelp("pgup", "page up"),
+	),
+	PageDown: key.NewBinding(
+		key.WithKeys("pgdown"),
+		key.WithHelp("pgdn", "page down"),
+	),
 	Confirm: key.NewBinding(
 		key.WithKeys("enter"),
-		key.WithHelp("enter", "confirm"),
+		key.WithHelp("enter", "run"),
 	),
 	Cancel: key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "cancel"),
-	),
-	Next: key.NewBinding(
-		key.WithKeys("tab", "down"),
-		key.WithHelp("tab", "next field"),
-	),
-	Prev: key.NewBinding(
-		key.WithKeys("shift+tab", "up"),
-		key.WithHelp("shift+tab", "prev field"),
 	),
 }

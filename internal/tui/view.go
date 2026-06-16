@@ -1,105 +1,115 @@
 package tui
 
 import (
-	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-func (m model) View() string {
-	if m.overlay.mode != overlayNone {
-		return m.renderOverlay()
+const (
+	commandPrompt = "horizon › "
+
+	bannerTopMargin = 1
+	columnGapWidth  = 2
+	minDashboardCol = 40
+	minLogCol       = 24
+	dashboardRatio  = 0.55
+	chromeRows      = 4
+)
+
+func (m *model) resize() {
+	_, logWidth := splitWidths(m.width)
+	m.log.resize(logWidth, m.bodyHeight())
+	m.input.Width = m.inputWidth()
+}
+
+func splitWidths(total int) (dashboard, log int) {
+	if total <= 0 {
+		return minDashboardCol, minLogCol
 	}
+	usable := total - columnGapWidth
+	if usable < minDashboardCol+minLogCol {
+		return minDashboardCol, minLogCol
+	}
+	dashboard = int(float64(usable) * dashboardRatio)
+	if dashboard < minDashboardCol {
+		dashboard = minDashboardCol
+	}
+	log = usable - dashboard
+	if log < minLogCol {
+		log = minLogCol
+		dashboard = usable - log
+	}
+	return dashboard, log
+}
+
+func (m model) bodyHeight() int {
+	bannerRows := bannerTopMargin + len(strings.Split(bannerArt, "\n")) + 1
+	h := m.height - bannerRows - chromeRows
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+func (m model) inputWidth() int {
+	w := m.width - len(commandPrompt) - 1
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+func (m model) View() string {
+	dashWidth, _ := splitWidths(m.width)
 
 	var b strings.Builder
+	b.WriteString(strings.Repeat("\n", bannerTopMargin))
 	b.WriteString(renderBanner(m.width, m.app.Cluster, m.context))
 	b.WriteString("\n\n")
+	b.WriteString(m.body(dashWidth))
+	b.WriteString("\n")
+	b.WriteString(m.input.View())
+	b.WriteString("\n")
+	b.WriteString(footerStyle.Render(m.footer()))
+	return b.String()
+}
 
+func (m model) body(dashWidth int) string {
+	left := m.dashboardView(dashWidth)
+	right := m.log.view.View()
+	gap := strings.Repeat(" ", columnGapWidth)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, gap, right)
+}
+
+func (m model) dashboardView(width int) string {
 	if !m.loaded {
-		b.WriteString(dimStyle.Render("loading cluster snapshot…"))
-		b.WriteString("\n\n")
-	} else {
-		b.WriteString(renderDashboard(m.snap, m.width))
-		b.WriteString("\n\n")
+		return dimStyle.Render("loading cluster snapshot…")
 	}
-
-	if m.showHelp {
-		b.WriteString(footerStyle.Render(fullHelp()))
-	} else {
-		b.WriteString(footerStyle.Render(footerHint()))
-	}
-	return b.String()
+	return renderDashboard(m.snap, width)
 }
 
-func footerHint() string {
-	return "[u]p [d]own [n]udge [b]urst [c]luster [k]backups [t]restore [x]drain  [r]efresh [?]help [q]uit"
-}
-
-func fullHelp() string {
-	lines := []string{
-		"u  scale pool up        d  scale pool down       n  nudge control plane",
-		"b  burst workload       c  cluster create/delete k  backup create/describe/delete",
-		"t  restore create/desc  x  drain a node          r  refresh",
-		"?  toggle help          q  quit",
-		"in overlays: enter confirm/select · esc cancel · tab/shift+tab move",
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (m model) renderOverlay() string {
-	var body string
-	switch m.overlay.mode {
-	case overlayMenu:
-		body = m.overlay.menu.View() + "\n\n" + dimStyle.Render("enter select · esc cancel")
-	case overlayPicker:
-		body = m.overlay.picker.View() + "\n\n" + dimStyle.Render("enter select · / filter · esc cancel")
-	case overlayForm:
-		body = renderForm(m.overlay.form)
-	case overlayConfirm:
-		body = warnStyle.Render(m.overlay.confirm.prompt) + "\n\n" + dimStyle.Render("enter confirm · esc cancel")
-	case overlayProgress:
-		body = m.overlay.title + "\n\n" + m.overlay.log.View() + "\n\n" + dimStyle.Render("running…")
-	case overlayManifest:
-		body = m.renderManifest()
-	case overlayResult:
-		body = m.renderResult()
-	}
-	box := overlayBoxStyle.Render(panelTitleStyle.Render(m.overlay.title) + "\n\n" + body)
-	if m.width > 0 && m.height > 0 {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
-	}
-	return box
-}
-
-func renderForm(f formState) string {
-	var b strings.Builder
-	for i := range f.fields {
-		marker := "  "
-		if i == f.focus {
-			marker = "> "
+func (m model) footer() string {
+	switch m.mode {
+	case modeCommand:
+		return "enter run  esc cancel"
+	case modeConfirm:
+		return "y confirm  n/esc cancel"
+	case modeRunning:
+		return "running…"
+	default:
+		if m.showHelp {
+			return strings.Join(helpLines(), "\n")
 		}
-		label := fmt.Sprintf("%-20s", f.fields[i].label)
-		b.WriteString(marker + label + f.fields[i].input.View() + "\n")
+		return ": command  ↑↓ scroll  pgup/pgdn page  r refresh  ? help  q quit"
 	}
-	b.WriteString("\n" + dimStyle.Render("tab/shift+tab move · enter submit · esc cancel"))
-	return b.String()
 }
 
-func (m model) renderManifest() string {
-	hint := "a apply live"
-	if m.overlay.manifest.canWrite {
-		hint += " · w write to bedrock"
-	} else {
-		hint += " · (w disabled: bedrock_path unset)"
-	}
-	hint += " · esc cancel"
-	return m.overlay.manifest.view.View() + "\n\n" + dimStyle.Render(hint)
+func splitLines(s string) []string {
+	return strings.Split(strings.TrimRight(s, "\n"), "\n")
 }
 
-func (m model) renderResult() string {
-	if m.overlay.resultErr != nil {
-		return errStyle.Render(m.overlay.resultErr.Error()) + "\n\n" + dimStyle.Render("enter/esc dismiss")
-	}
-	return m.overlay.result + "\n\n" + dimStyle.Render("enter/esc dismiss")
+func itoa(n int) string {
+	return strconv.Itoa(n)
 }

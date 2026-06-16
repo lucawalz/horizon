@@ -21,8 +21,6 @@ const (
 	colorWarn  = "#eab308"
 
 	warnThresholdRatio = 0.75
-
-	overlayBorderPad = 4
 )
 
 var (
@@ -46,10 +44,4 @@ var (
 	warnStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorWarn))
 
 	footerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorDim))
-
-	overlayBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(gradientStartHex)).
-			Padding(panelVPadding, panelHPadding).
-			Width(overlayWidth + overlayBorderPad)
 )
