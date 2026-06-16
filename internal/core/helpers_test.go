@@ -1,9 +1,7 @@
 package core_test
 
 import (
-	"bytes"
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -177,18 +175,6 @@ func collectProgress(msgs *[]string) core.Progress {
 
 func fixedNow() time.Time {
 	return time.Date(2026, 6, 12, 14, 30, 5, 0, time.UTC)
-}
-
-func captureStdout(fn func()) string {
-	r, w, _ := os.Pipe()
-	old := os.Stdout
-	os.Stdout = w
-	fn()
-	w.Close()
-	os.Stdout = old
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-	return buf.String()
 }
 
 type fakeVeleroClient struct {

@@ -21,13 +21,6 @@ const (
 	progressBuffer = 256
 )
 
-type progressMsg struct{ line string }
-
-type actionDoneMsg struct {
-	summary string
-	err     error
-}
-
 type backupsLoadedMsg struct {
 	backups []velerov1.Backup
 	err     error

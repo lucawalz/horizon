@@ -388,8 +388,6 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 	return false
 }
 
-func IsDaemonSetPod(pod *corev1.Pod) bool { return isDaemonSetPod(pod) }
-
 func WaitWorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, poll, timeout time.Duration) error {
 	if namespace == "" {
 		return fmt.Errorf("wait-pods: namespace must not be empty")

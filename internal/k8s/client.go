@@ -80,10 +80,6 @@ func Contexts(kubeconfigPath string) (names []string, current string, err error)
 	return names, apiCfg.CurrentContext, nil
 }
 
-func NewClient(kubeconfigPath string) (kubernetes.Interface, error) {
-	return NewClientForContext(kubeconfigPath, "")
-}
-
 func NewClientForContext(kubeconfigPath, contextName string) (kubernetes.Interface, error) {
 	restCfg, err := RestConfigForContext(kubeconfigPath, contextName)
 	if err != nil {
