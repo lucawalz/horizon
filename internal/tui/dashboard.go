@@ -183,13 +183,17 @@ func poolsBody(snap core.Snapshot, inner int, full bool) string {
 			rows = append(rows, []string{pool.Name, pool.Type, pool.Desired, pool.Ready, emptyCell, emptyCell, emptyCell, emptyCell})
 			continue
 		}
-		for _, mc := range pool.Machines {
+		for i, mc := range pool.Machines {
+			name, typ, desired, ready := pool.Name, pool.Type, pool.Desired, pool.Ready
+			if i > 0 {
+				name, typ, desired, ready = "", "", "", ""
+			}
 			if mc.Err != nil {
-				rows = append(rows, []string{pool.Name, pool.Type, pool.Desired, pool.Ready, "error", mc.Err.Error(), emptyCell, emptyCell})
+				rows = append(rows, []string{name, typ, desired, ready, "error", mc.Err.Error(), emptyCell, emptyCell})
 				continue
 			}
 			rows = append(rows, []string{
-				pool.Name, pool.Type, pool.Desired, pool.Ready,
+				name, typ, desired, ready,
 				mc.Name, core.ValueOrDash(mc.Phase), core.ValueOrDash(mc.Node), core.ValueOrDash(mc.ProviderID),
 			})
 		}
