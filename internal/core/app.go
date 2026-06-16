@@ -16,6 +16,7 @@ type App struct {
 	MetricsClient metricsclient.Interface
 	CapiClient    *capi.Client
 	Cluster       string
+	Context       string
 }
 
 func NewApp(contextName, clusterName string) (*App, error) {
@@ -24,17 +25,22 @@ func NewApp(contextName, clusterName string) (*App, error) {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 
-	kc, err := k8s.NewClientForContext(cfg.Kubeconfig, contextName)
+	effectiveContext := contextName
+	if effectiveContext == "" {
+		effectiveContext = cfg.Context
+	}
+
+	kc, err := k8s.NewClientForContext(cfg.Kubeconfig, effectiveContext)
 	if err != nil {
 		return nil, fmt.Errorf("k8s client: %w", err)
 	}
 
-	mc, err := k8s.NewMetricsClient(cfg.Kubeconfig, contextName)
+	mc, err := k8s.NewMetricsClient(cfg.Kubeconfig, effectiveContext)
 	if err != nil {
 		return nil, fmt.Errorf("metrics client: %w", err)
 	}
 
-	cc, err := capi.NewClientForContext(cfg.Kubeconfig, contextName)
+	cc, err := capi.NewClientForContext(cfg.Kubeconfig, effectiveContext)
 	if err != nil {
 		return nil, fmt.Errorf("capi client: %w", err)
 	}
@@ -50,5 +56,6 @@ func NewApp(contextName, clusterName string) (*App, error) {
 		MetricsClient: mc,
 		CapiClient:    cc,
 		Cluster:       cluster,
+		Context:       effectiveContext,
 	}, nil
 }
