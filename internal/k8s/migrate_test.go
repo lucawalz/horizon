@@ -2,7 +2,6 @@ package k8s_test
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -206,7 +205,6 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 		t.Fatalf("RollbackMigrate: %v", err)
 	}
 
-	origJSON, _ := json.Marshal(originalAffinity)
 	var dep1RestoreFound, dep2NullFound bool
 	for _, a := range kc.Actions() {
 		if a.GetVerb() != "patch" || a.GetResource().Resource != "deployments" {
@@ -217,9 +215,6 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 		switch pa.GetName() {
 		case "dep1":
 			if strings.Contains(body, "kubernetes.io/hostname") && !strings.Contains(body, "nodeAffinity") {
-				var got map[string]interface{}
-				_ = json.Unmarshal(pa.GetPatch(), &got)
-				dep1RestoreFound = strings.Contains(body, string(origJSON[1:len(origJSON)-1]))
 				dep1RestoreFound = strings.Contains(body, "podAntiAffinity") && !strings.Contains(body, "nodeAffinity")
 			}
 		case "dep2":
