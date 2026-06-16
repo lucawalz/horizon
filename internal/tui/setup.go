@@ -34,7 +34,7 @@ type setupInput struct {
 	cluster        string
 	poolsNamespace string
 	poolTypesRaw   string
-	bedrockPath    string
+	repoPath       string
 	ccClass        string
 	ccWorkerClass  string
 	theme          string
@@ -87,7 +87,7 @@ func buildSetupConfig(in setupInput) (*config.Config, error) {
 	cfg.Cluster = in.cluster
 	cfg.Pools.Namespace = in.poolsNamespace
 	cfg.Pools.Types = types
-	cfg.BedrockPath = in.bedrockPath
+	cfg.RepoPath = in.repoPath
 	cfg.ClusterCreate.Class = in.ccClass
 	cfg.ClusterCreate.WorkerClass = in.ccWorkerClass
 	if err := cfg.SetTheme(in.theme); err != nil {
@@ -111,7 +111,7 @@ const (
 	fieldCluster = iota
 	fieldPoolsNamespace
 	fieldPoolTypes
-	fieldBedrockPath
+	fieldRepoPath
 	fieldClass
 	fieldWorkerClass
 	fieldCount
@@ -121,7 +121,7 @@ var fieldLabels = [fieldCount]string{
 	"cluster name",
 	"pools namespace",
 	"pool types (type=mdname,…)",
-	"bedrock path (optional)",
+	"repo path (optional)",
 	"cluster_create class (optional)",
 	"cluster_create worker_class (optional)",
 }
@@ -385,7 +385,7 @@ func (m setupModel) save() (tea.Model, tea.Cmd) {
 		cluster:        m.fields[fieldCluster].Value(),
 		poolsNamespace: m.fields[fieldPoolsNamespace].Value(),
 		poolTypesRaw:   m.fields[fieldPoolTypes].Value(),
-		bedrockPath:    m.fields[fieldBedrockPath].Value(),
+		repoPath:       m.fields[fieldRepoPath].Value(),
 		ccClass:        m.fields[fieldClass].Value(),
 		ccWorkerClass:  m.fields[fieldWorkerClass].Value(),
 		theme:          m.picker.selected().pref,
@@ -425,7 +425,7 @@ func (m *setupModel) prefillFields() {
 	m.fields[fieldCluster].SetValue(cluster)
 	m.fields[fieldPoolsNamespace].SetValue(ns)
 	m.fields[fieldPoolTypes].SetValue(formatPoolTypes(types))
-	m.fields[fieldBedrockPath].SetValue("")
+	m.fields[fieldRepoPath].SetValue("")
 	m.fields[fieldClass].SetValue(def.ClusterCreate.Class)
 	m.fields[fieldWorkerClass].SetValue(def.ClusterCreate.WorkerClass)
 }

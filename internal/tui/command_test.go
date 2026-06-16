@@ -236,15 +236,15 @@ func TestClusterCreateFlavorMissingFileErrors(t *testing.T) {
 	}
 }
 
-func TestClusterCreateWriteRequiresBedrockPath(t *testing.T) {
+func TestClusterCreateWriteRequiresRepoPath(t *testing.T) {
 	m := testModel()
 	res := m.dispatch("cluster create demo --write")
 	if len(res.lines) == 0 {
-		t.Error("expected error when bedrock_path is unset and --write is used")
+		t.Error("expected error when repo_path is unset and --write is used")
 	}
-	m.app.Config.BedrockPath = "/tmp/bedrock"
+	m.app.Config.RepoPath = "/tmp/repo"
 	res = m.dispatch("cluster create demo --write")
 	if len(res.lines) != 0 || res.cmd == nil {
-		t.Errorf("cluster create --write with bedrock_path should succeed, got %+v", res)
+		t.Errorf("cluster create --write with repo_path should succeed, got %+v", res)
 	}
 }

@@ -83,7 +83,7 @@ func TestRenderClusterDoesNotApply(t *testing.T) {
 	}
 }
 
-func TestWriteClusterManifestsToBedrock(t *testing.T) {
+func TestWriteClusterManifestsToRepo(t *testing.T) {
 	root := t.TempDir()
 	clusterDir := filepath.Join(root, "kubernetes", "clusters", "edge", "infrastructure", "cluster-api")
 	if err := os.MkdirAll(clusterDir, 0o755); err != nil {
@@ -98,7 +98,7 @@ func TestWriteClusterManifestsToBedrock(t *testing.T) {
 
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
-	app.Config.BedrockPath = root
+	app.Config.RepoPath = root
 	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
 	path, err := core.WriteClusterManifests(app, spec)
@@ -118,13 +118,13 @@ func TestWriteClusterManifestsToBedrock(t *testing.T) {
 	}
 }
 
-func TestWriteClusterManifestsRequiresBedrockPath(t *testing.T) {
+func TestWriteClusterManifestsRequiresRepoPath(t *testing.T) {
 	cc := capiClient(t)
 	app := clusterTestApp(cc)
 	spec := topologyClusterSpec("edge", "caph-system", "v1.31.0+k3s1")
 
 	if _, err := core.WriteClusterManifests(app, spec); err == nil {
-		t.Fatal("expected error when bedrock_path unset")
+		t.Fatal("expected error when repo_path unset")
 	}
 }
 

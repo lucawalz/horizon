@@ -45,10 +45,10 @@ func WriteFlavorManifests(app *App, name string, template []byte, vars map[strin
 }
 
 func writeClusterTree(app *App, name string, data []byte) (string, error) {
-	if app.Config.BedrockPath == "" {
-		return "", fmt.Errorf("--write requires bedrock_path in config")
+	if app.Config.RepoPath == "" {
+		return "", fmt.Errorf("--write requires repo_path in config")
 	}
-	repo, err := capi.OpenRepo(app.Config.BedrockPath)
+	repo, err := capi.OpenRepo(app.Config.RepoPath)
 	if err != nil {
 		return "", err
 	}

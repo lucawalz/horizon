@@ -13,13 +13,9 @@ import (
 func TestLoad(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-bedrock_path: ` + dir + `
+repo_path: ` + dir + `
 kubeconfig: ~/.kube/config
-thresholds:
-  burst: 0.80
-  scale_down: 0.40
-  window: 5
-  cooldown_minutes: 10
+cluster: prod
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -30,24 +26,15 @@ thresholds:
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.Thresholds.Burst != 0.80 {
-		t.Errorf("Thresholds.Burst: got %v, want 0.80", cfg.Thresholds.Burst)
-	}
-	if cfg.Thresholds.ScaleDown != 0.40 {
-		t.Errorf("Thresholds.ScaleDown: got %v, want 0.40", cfg.Thresholds.ScaleDown)
-	}
-	if cfg.Thresholds.Window != 5 {
-		t.Errorf("Thresholds.Window: got %v, want 5", cfg.Thresholds.Window)
-	}
-	if cfg.Thresholds.CooldownMinutes != 10 {
-		t.Errorf("Thresholds.CooldownMinutes: got %v, want 10", cfg.Thresholds.CooldownMinutes)
+	if cfg.Cluster != "prod" {
+		t.Errorf("Cluster: got %q, want prod", cfg.Cluster)
 	}
 }
 
-func TestBedrockPath(t *testing.T) {
+func TestRepoPath(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-bedrock_path: ` + dir + `
+repo_path: ` + dir + `
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -58,8 +45,8 @@ bedrock_path: ` + dir + `
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if !filepath.IsAbs(cfg.BedrockPath) {
-		t.Errorf("BedrockPath not absolute: %q", cfg.BedrockPath)
+	if !filepath.IsAbs(cfg.RepoPath) {
+		t.Errorf("RepoPath not absolute: %q", cfg.RepoPath)
 	}
 }
 
@@ -74,35 +61,10 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-func TestThresholdsMaxBurstNodes(t *testing.T) {
-	dir := t.TempDir()
-	content := `
-bedrock_path: ` + dir + `
-thresholds:
-  burst: 0.80
-  scale_down: 0.40
-  window: 5
-  cooldown_minutes: 10
-  max_burst_nodes: 3
-`
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-	if cfg.Thresholds.MaxBurstNodes != 3 {
-		t.Errorf("MaxBurstNodes: got %d, want 3", cfg.Thresholds.MaxBurstNodes)
-	}
-}
-
 func TestPoolDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-bedrock_path: ` + dir + `
+repo_path: ` + dir + `
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -136,7 +98,7 @@ bedrock_path: ` + dir + `
 func TestPoolResolve(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-bedrock_path: ` + dir + `
+repo_path: ` + dir + `
 `
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
@@ -164,7 +126,7 @@ bedrock_path: ` + dir + `
 func TestPoolOverrides(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-bedrock_path: ` + dir + `
+repo_path: ` + dir + `
 cluster: prod
 pools:
   namespace: capi-system
@@ -202,7 +164,7 @@ pools:
 
 func TestThemeDefaultsToAuto(t *testing.T) {
 	dir := t.TempDir()
-	content := "bedrock_path: " + dir + "\n"
+	content := "repo_path: " + dir + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +181,7 @@ func TestThemeDefaultsToAuto(t *testing.T) {
 
 func TestThemeInvalidRejected(t *testing.T) {
 	dir := t.TempDir()
-	content := "bedrock_path: " + dir + "\ntheme: neon\n"
+	content := "repo_path: " + dir + "\ntheme: neon\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +194,7 @@ func TestThemeInvalidRejected(t *testing.T) {
 
 func TestSaveRoundTripsTheme(t *testing.T) {
 	dir := t.TempDir()
-	content := "bedrock_path: " + dir + "\ncluster: prod\ntheme: dark\n"
+	content := "repo_path: " + dir + "\ncluster: prod\ntheme: dark\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +267,7 @@ func TestLoadNotConfigured(t *testing.T) {
 
 func TestLoadParseErrorIsNotNotConfigured(t *testing.T) {
 	dir := t.TempDir()
-	content := "bedrock_path: [unterminated\n"
+	content := "repo_path: [unterminated\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +314,7 @@ func TestDefaultSaveRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLegacyInfraPathWithoutBedrockFailsFast(t *testing.T) {
+func TestLegacyInfraPathWithoutRepoPathFailsFast(t *testing.T) {
 	dir := t.TempDir()
 	content := `
 infra_path: ` + dir + `
@@ -364,9 +326,48 @@ infra_path: ` + dir + `
 
 	_, err := config.Load()
 	if err == nil {
-		t.Fatal("expected error when infra_path is set without bedrock_path, got nil")
+		t.Fatal("expected error when infra_path is set without repo_path, got nil")
 	}
-	if !strings.Contains(err.Error(), "bedrock_path") {
-		t.Errorf("error %q must mention bedrock_path", err.Error())
+	if !strings.Contains(err.Error(), "repo_path") {
+		t.Errorf("error %q must mention repo_path", err.Error())
+	}
+}
+
+func TestLegacyBedrockPathWithoutRepoPathFailsFast(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+bedrock_path: ` + dir + `
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error when bedrock_path is set without repo_path, got nil")
+	}
+	if !strings.Contains(err.Error(), "repo_path") {
+		t.Errorf("error %q must mention repo_path", err.Error())
+	}
+}
+
+func TestEmptyLegacyBedrockPathLoadsCleanly(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+repo_path: ` + dir + `
+bedrock_path: ""
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !filepath.IsAbs(cfg.RepoPath) {
+		t.Errorf("RepoPath not absolute: %q", cfg.RepoPath)
 	}
 }

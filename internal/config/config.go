@@ -43,7 +43,7 @@ type ClusterDefaults struct {
 }
 
 type Config struct {
-	BedrockPath   string          `mapstructure:"bedrock_path" yaml:"bedrock_path"`
+	RepoPath      string          `mapstructure:"repo_path" yaml:"repo_path"`
 	Cluster       string          `mapstructure:"cluster" yaml:"cluster"`
 	Kubeconfig    string          `mapstructure:"kubeconfig" yaml:"kubeconfig"`
 	Context       string          `mapstructure:"context" yaml:"context"`
@@ -106,20 +106,24 @@ func Load() (*Config, error) {
 	}
 	cfg.path = v.ConfigFileUsed()
 
-	cfg.BedrockPath = os.ExpandEnv(cfg.BedrockPath)
-	if cfg.BedrockPath != "" {
-		abs, err := filepath.Abs(cfg.BedrockPath)
+	cfg.RepoPath = os.ExpandEnv(cfg.RepoPath)
+	if cfg.RepoPath != "" {
+		abs, err := filepath.Abs(cfg.RepoPath)
 		if err != nil {
-			return nil, fmt.Errorf("bedrock_path: %w", err)
+			return nil, fmt.Errorf("repo_path: %w", err)
 		}
 		if _, err := os.Stat(abs); err != nil {
-			return nil, fmt.Errorf("bedrock_path %q: %w", abs, err)
+			return nil, fmt.Errorf("repo_path %q: %w", abs, err)
 		}
-		cfg.BedrockPath = abs
+		cfg.RepoPath = abs
 	}
 
-	if v.IsSet("infra_path") && cfg.BedrockPath == "" {
-		return nil, fmt.Errorf("infra_path is retired; set bedrock_path")
+	if v.IsSet("infra_path") && cfg.RepoPath == "" {
+		return nil, fmt.Errorf("infra_path is retired; set repo_path")
+	}
+
+	if v.IsSet("bedrock_path") && v.GetString("bedrock_path") != "" && cfg.RepoPath == "" {
+		return nil, fmt.Errorf("bedrock_path is retired; set repo_path")
 	}
 
 	applyDefaults(&cfg)

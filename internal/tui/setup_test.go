@@ -13,7 +13,7 @@ func TestBuildSetupConfigValid(t *testing.T) {
 		cluster:        "burst",
 		poolsNamespace: "caph-system",
 		poolTypesRaw:   "elastic=elastic-workers,reserved=reserved-workers",
-		bedrockPath:    "/tmp/bedrock",
+		repoPath:       "/tmp/repo",
 		ccClass:        "hetzner",
 		ccWorkerClass:  "hetzner-worker",
 		theme:          config.ThemeDark,
@@ -35,8 +35,8 @@ func TestBuildSetupConfigValid(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Pools.Types, wantTypes) {
 		t.Errorf("Pools.Types = %v, want %v", cfg.Pools.Types, wantTypes)
 	}
-	if cfg.BedrockPath != "/tmp/bedrock" {
-		t.Errorf("BedrockPath = %q, want /tmp/bedrock", cfg.BedrockPath)
+	if cfg.RepoPath != "/tmp/repo" {
+		t.Errorf("RepoPath = %q, want /tmp/repo", cfg.RepoPath)
 	}
 	if cfg.ClusterCreate.Class != "hetzner" {
 		t.Errorf("Class = %q, want hetzner", cfg.ClusterCreate.Class)

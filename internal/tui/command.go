@@ -297,8 +297,8 @@ func (m model) parseClusterCreate(args []string) commandResult {
 	case mode.apply:
 		return commandResult{cmd: m.runClusterApply(spec)}
 	case mode.write:
-		if m.app.Config.BedrockPath == "" {
-			return errResult("cluster create: --write disabled, bedrock_path unset in config")
+		if m.app.Config.RepoPath == "" {
+			return errResult("cluster create: --write disabled, repo_path unset in config")
 		}
 		return commandResult{cmd: m.runClusterWrite(spec)}
 	default:
@@ -325,8 +325,8 @@ func (m model) dispatchFlavorCreate(name, flavorPath string, sets stringSlice, m
 	case mode.apply:
 		return commandResult{cmd: m.runFlavorApply(req)}
 	case mode.write:
-		if m.app.Config.BedrockPath == "" {
-			return errResult("cluster create: --write disabled, bedrock_path unset in config")
+		if m.app.Config.RepoPath == "" {
+			return errResult("cluster create: --write disabled, repo_path unset in config")
 		}
 		return commandResult{cmd: m.runFlavorWrite(req)}
 	default:
