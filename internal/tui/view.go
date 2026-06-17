@@ -122,7 +122,7 @@ func (m model) View() string {
 
 	band := m.log.render()
 	if bandHeight := m.logHeight(header, dashboard, inputBox); m.showMetricsAside(bandHeight) {
-		panel := metricsPanel(m.snap, m.rightColumnWidth(), bandHeight)
+		panel := metricsPanel(m.snap, m.rightColumnWidth())
 		band = lipgloss.JoinHorizontal(lipgloss.Top, band, strings.Repeat(" ", columnGap), panel)
 	}
 
@@ -188,14 +188,9 @@ func (m model) dashboardBand() string {
 }
 
 func (m model) wideDashboard() string {
-	frame := panelStyle.GetHorizontalFrameSize()
 	leftCol := m.leftColumnWidth()
 	rightWidth := m.rightColumnWidth()
-	nodesWidth := nodesNaturalWidth(m.snap) + frame
-	if nodesWidth > leftCol {
-		nodesWidth = leftCol
-	}
-	left := nodesPanel(m.snap, nodesWidth, true)
+	left := nodesPanel(m.snap, leftCol, true)
 	right := lipgloss.JoinVertical(
 		lipgloss.Left,
 		clusterStatusPanel(m.snap, rightWidth, false),
@@ -205,11 +200,7 @@ func (m model) wideDashboard() string {
 	left = lipgloss.NewStyle().Width(leftCol).Height(colHeight).Render(left)
 	right = lipgloss.NewStyle().Width(rightWidth).Height(colHeight).Render(right)
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", columnGap), right)
-	poolsWidth := poolsNaturalWidth(m.snap) + frame
-	if poolsWidth > leftCol {
-		poolsWidth = leftCol
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, poolsWidth, true))
+	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, leftCol, true))
 }
 
 func (m model) mediumDashboard() string {
@@ -219,7 +210,7 @@ func (m model) mediumDashboard() string {
 		poolsPanel(m.snap, m.width, true),
 		clusterStatusPanel(m.snap, m.width, false),
 		clustersPanel(m.snap, m.width),
-		metricsPanel(m.snap, m.width, 0),
+		metricsPanel(m.snap, m.width),
 	)
 }
 
@@ -229,7 +220,7 @@ func (m model) narrowDashboard() string {
 		nodesPanel(m.snap, m.width, false),
 		poolsPanel(m.snap, m.width, false),
 		clusterStatusPanel(m.snap, m.width, true),
-		metricsPanel(m.snap, m.width, 0),
+		metricsPanel(m.snap, m.width),
 	)
 }
 

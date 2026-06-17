@@ -345,7 +345,7 @@ func autoscalerLine(state core.AutoscalerState) string {
 	}
 }
 
-func metricsPanel(snap core.Snapshot, width, height int) string {
+func metricsPanel(snap core.Snapshot, width int) string {
 	style := panelStyle
 	inner := width - style.GetHorizontalFrameSize()
 	if inner < 1 {
@@ -353,11 +353,7 @@ func metricsPanel(snap core.Snapshot, width, height int) string {
 	}
 	title := lipgloss.NewStyle().MaxWidth(inner).Render(panelTitleStyle.Render("Metrics"))
 	content := title + "\n" + metricsBody(snap)
-	style = style.Width(width - panelBorderWidth(style))
-	if h := height - style.GetVerticalFrameSize(); h > 0 {
-		style = style.Height(h)
-	}
-	return style.Render(content)
+	return style.Width(width - panelBorderWidth(style)).Render(content)
 }
 
 func metricsBody(snap core.Snapshot) string {
