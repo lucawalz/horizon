@@ -300,3 +300,114 @@ func autoscalerLine(state core.AutoscalerState) string {
 		return fmt.Sprintf("autoscaler    %s %s", statusDot(theme.DotGreen), state.Activity)
 	}
 }
+
+func metricsPanel(snap core.Snapshot, width, height int) string {
+	style := panelStyle
+	inner := width - style.GetHorizontalFrameSize()
+	if inner < 1 {
+		inner = 1
+	}
+	title := lipgloss.NewStyle().MaxWidth(inner).Render(panelTitleStyle.Render("Metrics"))
+	content := title + "\n" + metricsBody(snap)
+	style = style.Width(inner)
+	if h := height - style.GetVerticalFrameSize(); h > 0 {
+		style = style.Height(h)
+	}
+	return style.Render(content)
+}
+
+func metricsBody(snap core.Snapshot) string {
+	return strings.Join([]string{
+		workloadSection(snap.Workload),
+		nodeHealthSection(snap.NodeHealth),
+		gitopsSection(snap.Flux),
+	}, "\n\n")
+}
+
+func metricsContentHeight(snap core.Snapshot) int {
+	return 1 + lipgloss.Height(metricsBody(snap))
+}
+
+func metricsContentWidth(snap core.Snapshot) int {
+	w := lipgloss.Width(panelTitleStyle.Render("Metrics"))
+	for _, line := range strings.Split(metricsBody(snap), "\n") {
+		if x := lipgloss.Width(line); x > w {
+			w = x
+		}
+	}
+	return w
+}
+
+func workloadSection(w core.WorkloadSummary) string {
+	if w.Err != nil {
+		return subLabelStyle.Render("Workload") + "\n" + errStyle.Render(fmt.Sprintf("unavailable: %v", w.Err))
+	}
+	phases := fmt.Sprintf("%s %d Running   %s %d Pending   %s %d Failed",
+		statusDot(theme.DotGreen), w.Running,
+		statusDot(dotForCount(w.Pending, theme.DotYellow)), w.Pending,
+		statusDot(dotForCount(w.Failed, theme.DotRed)), w.Failed)
+	crash := fmt.Sprintf("%s %d CrashLoopBackOff", statusDot(dotForCount(w.CrashLoop, theme.DotRed)), w.CrashLoop)
+	kinds := fmt.Sprintf("Deploy %d/%d   STS %d/%d   DS %d/%d",
+		w.Deployments.Ready, w.Deployments.Desired,
+		w.StatefulSets.Ready, w.StatefulSets.Desired,
+		w.DaemonSets.Ready, w.DaemonSets.Desired)
+	return strings.Join([]string{subLabelStyle.Render("Workload"), phases, crash, kinds}, "\n")
+}
+
+func nodeHealthSection(h core.NodeHealthSummary) string {
+	if h.Err != nil {
+		return subLabelStyle.Render("Node health") + "\n" + errStyle.Render(fmt.Sprintf("unavailable: %v", h.Err))
+	}
+	lines := []string{subLabelStyle.Render("Node health")}
+	if len(h.Pressured) == 0 {
+		lines = append(lines, fmt.Sprintf("%s no pressure", statusDot(theme.DotGreen)))
+	} else {
+		for _, p := range h.Pressured {
+			lines = append(lines, fmt.Sprintf("%s %s %s", statusDot(theme.DotRed), p.Name, strings.Join(pressureFlags(p), " ")))
+		}
+	}
+	lines = append(lines, fmt.Sprintf("committed  %s CPU %d%%   %s Mem %d%%",
+		statusDot(gaugeColor(float64(h.CPUPercent())/100)), h.CPUPercent(),
+		statusDot(gaugeColor(float64(h.MemPercent())/100)), h.MemPercent()))
+	return strings.Join(lines, "\n")
+}
+
+func gitopsSection(f core.FluxSummary) string {
+	return strings.Join([]string{
+		subLabelStyle.Render("GitOps"),
+		fluxLine("Kustomizations", f.Kustomizations, f.KustomizationsErr),
+		fluxLine("HelmReleases", f.HelmReleases, f.HelmReleasesErr),
+	}, "\n")
+}
+
+func fluxLine(label string, k core.FluxKind, err error) string {
+	if err != nil {
+		return fmt.Sprintf("%s %s %s", statusDot(theme.DotYellow), label, warnStyle.Render("unavailable"))
+	}
+	color := theme.DotGreen
+	if k.Ready < k.Total {
+		color = theme.DotRed
+	}
+	return fmt.Sprintf("%s %s %d/%d", statusDot(color), label, k.Ready, k.Total)
+}
+
+func dotForCount(n int, alert lipgloss.AdaptiveColor) lipgloss.AdaptiveColor {
+	if n > 0 {
+		return alert
+	}
+	return theme.DotGreen
+}
+
+func pressureFlags(p core.NodePressure) []string {
+	var flags []string
+	if p.Disk {
+		flags = append(flags, "Disk")
+	}
+	if p.Memory {
+		flags = append(flags, "Memory")
+	}
+	if p.PID {
+		flags = append(flags, "PID")
+	}
+	return flags
+}
