@@ -342,16 +342,16 @@ func workloadSection(w core.WorkloadSummary) string {
 	if w.Err != nil {
 		return subLabelStyle.Render("Workload") + "\n" + errStyle.Render(fmt.Sprintf("unavailable: %v", w.Err))
 	}
-	phases := fmt.Sprintf("%s %d Running   %s %d Pending   %s %d Failed",
-		statusDot(theme.DotGreen), w.Running,
-		statusDot(dotForCount(w.Pending, theme.DotYellow)), w.Pending,
-		statusDot(dotForCount(w.Failed, theme.DotRed)), w.Failed)
-	crash := fmt.Sprintf("%s %d CrashLoopBackOff", statusDot(dotForCount(w.CrashLoop, theme.DotRed)), w.CrashLoop)
-	kinds := fmt.Sprintf("Deploy %d/%d   STS %d/%d   DS %d/%d",
-		w.Deployments.Ready, w.Deployments.Desired,
-		w.StatefulSets.Ready, w.StatefulSets.Desired,
-		w.DaemonSets.Ready, w.DaemonSets.Desired)
-	return strings.Join([]string{subLabelStyle.Render("Workload"), phases, crash, kinds}, "\n")
+	return strings.Join([]string{
+		subLabelStyle.Render("Workload"),
+		fmt.Sprintf("%s %d Running", statusDot(theme.DotGreen), w.Running),
+		fmt.Sprintf("%s %d Pending", statusDot(dotForCount(w.Pending, theme.DotYellow)), w.Pending),
+		fmt.Sprintf("%s %d Failed", statusDot(dotForCount(w.Failed, theme.DotRed)), w.Failed),
+		fmt.Sprintf("%s %d CrashLoopBackOff", statusDot(dotForCount(w.CrashLoop, theme.DotRed)), w.CrashLoop),
+		fmt.Sprintf("Deploy %d/%d", w.Deployments.Ready, w.Deployments.Desired),
+		fmt.Sprintf("STS %d/%d", w.StatefulSets.Ready, w.StatefulSets.Desired),
+		fmt.Sprintf("DS %d/%d", w.DaemonSets.Ready, w.DaemonSets.Desired),
+	}, "\n")
 }
 
 func nodeHealthSection(h core.NodeHealthSummary) string {
@@ -366,9 +366,10 @@ func nodeHealthSection(h core.NodeHealthSummary) string {
 			lines = append(lines, fmt.Sprintf("%s %s %s", statusDot(theme.DotRed), p.Name, strings.Join(pressureFlags(p), " ")))
 		}
 	}
-	lines = append(lines, fmt.Sprintf("committed  %s CPU %d%%   %s Mem %d%%",
-		statusDot(gaugeColor(float64(h.CPUPercent())/100)), h.CPUPercent(),
-		statusDot(gaugeColor(float64(h.MemPercent())/100)), h.MemPercent()))
+	lines = append(lines,
+		fmt.Sprintf("%s CPU %d%% committed", statusDot(gaugeColor(float64(h.CPUPercent())/100)), h.CPUPercent()),
+		fmt.Sprintf("%s Mem %d%% committed", statusDot(gaugeColor(float64(h.MemPercent())/100)), h.MemPercent()),
+	)
 	return strings.Join(lines, "\n")
 }
 
