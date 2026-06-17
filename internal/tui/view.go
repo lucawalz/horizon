@@ -147,8 +147,7 @@ func (m model) dashboardBand() string {
 }
 
 func (m model) wideDashboard() string {
-	colWidth := int(float64(m.width-columnGap) * twoColumnRatio)
-	rightWidth := m.width - columnGap - colWidth
+	colWidth, rightWidth := wideSplit(m.width-columnGap, rightColumnNaturalWidth(m.snap), panelStyle.GetHorizontalFrameSize())
 	left := nodesPanel(m.snap, colWidth, true)
 	right := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -160,6 +159,17 @@ func (m model) wideDashboard() string {
 	right = lipgloss.NewStyle().Width(rightWidth).Height(colHeight).Render(right)
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", columnGap), right)
 	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, m.width, true))
+}
+
+func wideSplit(avail, rightContent, frame int) (left, right int) {
+	right = rightContent + frame
+	if hi := avail * 2 / 5; right > hi {
+		right = hi
+	}
+	if right < minRightColWidth {
+		right = minRightColWidth
+	}
+	return avail - right, right
 }
 
 func (m model) mediumDashboard() string {

@@ -26,7 +26,7 @@ const (
 
 	gaugeSpacing = "   "
 
-	twoColumnRatio = 0.5
+	minRightColWidth = 28
 )
 
 type Theme struct {

@@ -58,6 +58,22 @@ func fitNameColumn(headers []string, rows [][]string, nameCol, inner int) {
 	}
 }
 
+func tableNaturalWidth(headers []string, rows [][]string) int {
+	total := 0
+	for col := range headers {
+		max := len([]rune(headers[col]))
+		for _, row := range rows {
+			if col < len(row) {
+				if w := len([]rune(row[col])); w > max {
+					max = w
+				}
+			}
+		}
+		total += max + cellPadding
+	}
+	return total
+}
+
 func renderLogTable(rows [][]string) string {
 	if len(rows) == 0 {
 		return ""

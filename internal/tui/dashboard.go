@@ -210,6 +210,34 @@ func poolsCompactBody(snap core.Snapshot, inner int) string {
 	return neutralTable(headers, rows, inner)
 }
 
+func rightColumnNaturalWidth(snap core.Snapshot) int {
+	w := lipgloss.Width("Cluster status")
+	for _, line := range []string{nudgeLine(snap.Nudge), autoscalerLine(snap.Autoscaler)} {
+		if x := lipgloss.Width(line); x > w {
+			w = x
+		}
+	}
+	if x := clustersNaturalWidth(snap); x > w {
+		w = x
+	}
+	return w
+}
+
+func clustersNaturalWidth(snap core.Snapshot) int {
+	if snap.ClustersErr != nil {
+		return lipgloss.Width(fmt.Sprintf("unavailable: %v", snap.ClustersErr))
+	}
+	if len(snap.Clusters) == 0 {
+		return lipgloss.Width("(no managed clusters)")
+	}
+	headers := []string{"NAME", "PHASE", "CP-INITIALIZED"}
+	rows := make([][]string, 0, len(snap.Clusters))
+	for _, c := range snap.Clusters {
+		rows = append(rows, []string{c.Name, c.Phase, c.ControlPlaneReady})
+	}
+	return tableNaturalWidth(headers, rows)
+}
+
 func clustersPanel(snap core.Snapshot, width int) string {
 	return titledPanel("Clusters", width, func(inner int) string { return clustersBody(snap, inner) })
 }

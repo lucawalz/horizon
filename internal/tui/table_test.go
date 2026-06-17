@@ -7,6 +7,68 @@ import (
 	"github.com/lucawalz/horizon/internal/core"
 )
 
+func TestTableNaturalWidth(t *testing.T) {
+	headers := []string{"NAME", "PHASE", "CP-INITIALIZED"}
+	rows := [][]string{{"burst", "Provisioned", "true"}}
+	want := (5 + cellPadding) + (11 + cellPadding) + (14 + cellPadding)
+	if got := tableNaturalWidth(headers, rows); got != want {
+		t.Errorf("tableNaturalWidth = %d, want %d", got, want)
+	}
+}
+
+func TestWideSplitShrinksRightGrowsLeft(t *testing.T) {
+	left, right := wideSplit(180, 38, 4)
+	if right != 42 {
+		t.Errorf("right = %d, want 42 (content-sized)", right)
+	}
+	if left != 138 {
+		t.Errorf("left = %d, want 138 (takes the rest)", left)
+	}
+	if left <= right {
+		t.Errorf("left %d should exceed right %d", left, right)
+	}
+	if _, narrowRight := wideSplit(100, 38, 4); narrowRight > 100*2/5 {
+		t.Errorf("right %d exceeds the 2/5 cap on a narrow wide terminal", narrowRight)
+	}
+	if _, tinyRight := wideSplit(200, 4, 2); tinyRight < minRightColWidth {
+		t.Errorf("right %d below floor %d", tinyRight, minRightColWidth)
+	}
+}
+
+func lineContainsBoth(s, a, b string) bool {
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.Contains(ln, a) && strings.Contains(ln, b) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestWideDashboardKeepsNodeRowsIntact(t *testing.T) {
+	m := testModel()
+	m.loaded = true
+	m.width = 200
+	m.snap = core.Snapshot{Nodes: []core.NodeRow{
+		{Name: "reserved-worker-kl8px", Role: "worker", PodCount: 6, Status: "Ready", IPv4: "100.110.21.71"},
+		{Name: "reserved-worker-m5znj", Role: "worker", PodCount: 6, Status: "Ready", IPv4: "100.71.115.99"},
+		{Name: "worker-2", Role: "worker", CPUPercent: 7, MemPercent: 36, MetricsPresent: true, PodCount: 42, Status: "Ready", IPv4: "10.20.0.12"},
+	}}
+	out := stripStyling(m.wideDashboard())
+	for _, ln := range strings.Split(out, "\n") {
+		if w := len([]rune(strings.TrimRight(ln, " "))); w > m.width {
+			t.Errorf("dashboard line width %d exceeds terminal %d:\n%q", w, m.width, ln)
+		}
+	}
+	for _, n := range [][2]string{
+		{"reserved-worker-kl8px", "100.110.21.71"},
+		{"reserved-worker-m5znj", "100.71.115.99"},
+	} {
+		if !lineContainsBoth(out, n[0], n[1]) {
+			t.Errorf("node %q and its IP %q are not on the same line (wrapped):\n%s", n[0], n[1], out)
+		}
+	}
+}
+
 func nonEmptyLines(s string) []string {
 	out := []string{}
 	for _, ln := range strings.Split(s, "\n") {
