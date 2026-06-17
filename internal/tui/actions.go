@@ -66,10 +66,10 @@ func newVeleroClient(app *core.App) (core.VeleroClient, error) {
 	return velero.NewClient(app.Config.Kubeconfig)
 }
 
-func (m model) runScaleUp(target core.PoolTarget, nudge bool) tea.Cmd {
+func (m model) runScaleUp(target core.PoolTarget) tea.Cmd {
 	app := m.app
 	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		err := core.ScaleUp(ctx, app.CapiClient, target, false, nudge, p)
+		err := core.ScaleUp(ctx, app.CapiClient, target, false, p)
 		return "", err
 	})
 }
@@ -79,18 +79,6 @@ func (m model) runScaleDown(target core.PoolTarget, del bool) tea.Cmd {
 	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
 		err := core.ScaleDown(ctx, app.CapiClient, target, false, del, p)
 		return "", err
-	})
-}
-
-func (m model) runNudge(target core.PoolTarget) tea.Cmd {
-	app := m.app
-	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		p.Debug("nudge control-plane-initialized " + target.Namespace + "/" + target.Cluster)
-		if err := app.CapiClient.NudgeControlPlaneInitialized(ctx, target.Namespace, target.Cluster); err != nil {
-			return "", err
-		}
-		p.Emit("Nudged control-plane-initialized for cluster " + target.Cluster + ".")
-		return "", nil
 	})
 }
 

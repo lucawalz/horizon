@@ -254,7 +254,7 @@ func nudgeLine(state core.NudgeState) string {
 	case core.NudgeError:
 		return fmt.Sprintf("control-plane %s %s", statusDot(theme.DotRed), errStyle.Render("status unavailable"))
 	case core.NudgeUninitialized:
-		return fmt.Sprintf("control-plane %s %s", statusDot(theme.DotYellow), warnStyle.Render("uninitialized (workers will not bootstrap until nudged)"))
+		return fmt.Sprintf("control-plane %s %s", statusDot(theme.DotYellow), warnStyle.Render("uninitialized (workers will not bootstrap)"))
 	case core.NudgeInitialized:
 		return fmt.Sprintf("control-plane %s initialized", statusDot(theme.DotGreen))
 	default:

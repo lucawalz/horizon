@@ -66,10 +66,9 @@ func TestDispatchNonDestructiveHaveNoConfirm(t *testing.T) {
 	m := testModel()
 	for _, input := range []string{
 		"up",
-		"up --type elastic --nudge 3",
+		"up --type elastic 3",
 		"up --type reserved --replicas 3",
 		"down",
-		"nudge",
 		"burst myns",
 		"cluster list",
 		"cluster create demo",

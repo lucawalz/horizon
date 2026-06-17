@@ -66,8 +66,6 @@ func (m model) dispatch(input string) commandResult {
 		return m.parseUp(args)
 	case "down":
 		return m.parseDown(args)
-	case "nudge":
-		return m.parseNudge(args)
 	case "burst":
 		return m.parseBurst(args)
 	case "cluster":
@@ -144,7 +142,6 @@ func (m model) parseUp(args []string) commandResult {
 	poolType := fs.String("type", "", "")
 	namespace := fs.String("namespace", "", "")
 	pool := fs.String("pool", "", "")
-	nudge := fs.Bool("nudge", false, "")
 	replicas := fs.Int("replicas", 0, "")
 	if err := parseFlags(fs, args); err != nil {
 		return errResult("up: %v", err)
@@ -157,7 +154,7 @@ func (m model) parseUp(args []string) commandResult {
 	if err != nil {
 		return errResult("up: %v", err)
 	}
-	return commandResult{cmd: m.runScaleUp(target, *nudge)}
+	return commandResult{cmd: m.runScaleUp(target)}
 }
 
 func resolveUpReplicas(flag int, positional []string) (int32, error) {
@@ -188,20 +185,6 @@ func (m model) parseDown(args []string) commandResult {
 		res.confirm = fmt.Sprintf("delete pool %s/%s?", target.Namespace, target.Name)
 	}
 	return res
-}
-
-func (m model) parseNudge(args []string) commandResult {
-	fs := newFlagSet("nudge")
-	namespace := fs.String("namespace", "", "")
-	cluster := fs.String("cluster", "", "")
-	if err := parseFlags(fs, args); err != nil {
-		return errResult("nudge: %v", err)
-	}
-	target := core.PoolTarget{
-		Namespace: orDefault(*namespace, m.app.Config.Pools.Namespace),
-		Cluster:   orDefault(*cluster, m.app.Cluster),
-	}
-	return commandResult{cmd: m.runNudge(target)}
 }
 
 func (m model) parseBurst(args []string) commandResult {
@@ -594,9 +577,8 @@ type helpEntry struct {
 
 func helpLines() []helpEntry {
 	return []helpEntry{
-		{"up [--type elastic|reserved] [--nudge] [--replicas N] [<replicas>]", "scale a pool up"},
+		{"up [--type elastic|reserved] [--replicas N] [<replicas>]", "scale a pool up"},
 		{"down [--type ...] [--delete]", "scale a pool to zero or delete it"},
-		{"nudge [--namespace ns] [--cluster name]", "latch control-plane-initialized"},
 		{"burst <namespace> [--type ...] [--replicas n]", "back up, scale, migrate a workload"},
 		{"cluster create <name> --class <cc> [--set k=v] · or --flavor <file>", "render, write, or apply a cluster"},
 		{"cluster delete <name> · cluster list", "manage CAPI-managed clusters"},
