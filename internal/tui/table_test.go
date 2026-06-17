@@ -35,6 +35,17 @@ func TestRenderLogTableAlignsColumns(t *testing.T) {
 	}
 }
 
+func TestFitNameColumnReservesHeaderWidth(t *testing.T) {
+	headers := []string{"NAME", "PODS", "IP"}
+	rows := [][]string{{"reserved-worker-mxz8j", "6", "100.118.194.110"}}
+	inner := 36
+	fitNameColumn(headers, rows, 0, inner)
+	nameBudget := inner - (len("PODS") + cellPadding) - (len("100.118.194.110") + cellPadding) - cellPadding
+	if got := len([]rune(rows[0][0])); got > nameBudget {
+		t.Errorf("name width %d exceeds header-aware budget %d; row overflows inner", got, nameBudget)
+	}
+}
+
 func stripStyling(s string) string {
 	var b strings.Builder
 	skip := false

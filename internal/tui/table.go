@@ -28,7 +28,7 @@ func middleEllipsis(s string, budget int) string {
 	return string(r[:head]) + ellipsis + string(r[len(r)-tail:])
 }
 
-func fitNameColumn(rows [][]string, nameCol, inner int) {
+func fitNameColumn(headers []string, rows [][]string, nameCol, inner int) {
 	if len(rows) == 0 {
 		return
 	}
@@ -40,6 +40,9 @@ func fitNameColumn(rows [][]string, nameCol, inner int) {
 			continue
 		}
 		max := 0
+		if col < len(headers) {
+			max = len([]rune(headers[col]))
+		}
 		for _, row := range rows {
 			if w := len([]rune(row[col])); w > max {
 				max = w
