@@ -67,6 +67,7 @@ func TestDispatchNonDestructiveHaveNoConfirm(t *testing.T) {
 	for _, input := range []string{
 		"up",
 		"up --type elastic --nudge 3",
+		"up --type reserved --replicas 3",
 		"down",
 		"nudge",
 		"burst myns",
@@ -203,6 +204,33 @@ func TestUpParsesTypeAndReplicas(t *testing.T) {
 	}
 	if res := m.dispatch("up notanumber"); len(res.lines) == 0 {
 		t.Error("expected error for non-numeric replicas")
+	}
+}
+
+func TestResolveUpReplicas(t *testing.T) {
+	cases := []struct {
+		name       string
+		flag       int
+		positional []string
+		want       int32
+	}{
+		{"flag set", 3, nil, 3},
+		{"positional only", 0, []string{"2"}, 2},
+		{"bare default", 0, nil, 1},
+		{"flag beats positional", 3, []string{"2"}, 3},
+	}
+	for _, tc := range cases {
+		got, err := resolveUpReplicas(tc.flag, tc.positional)
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", tc.name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: resolveUpReplicas(%d, %v) = %d, want %d", tc.name, tc.flag, tc.positional, got, tc.want)
+		}
+	}
+	if _, err := resolveUpReplicas(0, []string{"notanumber"}); err == nil {
+		t.Error("expected error for non-numeric positional replicas")
 	}
 }
 

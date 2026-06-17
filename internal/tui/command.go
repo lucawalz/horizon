@@ -145,22 +145,29 @@ func (m model) parseUp(args []string) commandResult {
 	namespace := fs.String("namespace", "", "")
 	pool := fs.String("pool", "", "")
 	nudge := fs.Bool("nudge", false, "")
+	replicas := fs.Int("replicas", 0, "")
 	if err := parseFlags(fs, args); err != nil {
 		return errResult("up: %v", err)
 	}
-	replicas := int32(1)
-	if rest := fs.Args(); len(rest) > 0 {
-		r, err := parseReplicas(rest[0], 1)
-		if err != nil {
-			return errResult("up: %v", err)
-		}
-		replicas = r
+	n, err := resolveUpReplicas(*replicas, fs.Args())
+	if err != nil {
+		return errResult("up: %v", err)
 	}
-	target, err := m.poolTargetFrom(*poolType, *namespace, *pool, replicas)
+	target, err := m.poolTargetFrom(*poolType, *namespace, *pool, n)
 	if err != nil {
 		return errResult("up: %v", err)
 	}
 	return commandResult{cmd: m.runScaleUp(target, *nudge)}
+}
+
+func resolveUpReplicas(flag int, positional []string) (int32, error) {
+	if flag > 0 {
+		return int32(flag), nil
+	}
+	if len(positional) > 0 {
+		return parseReplicas(positional[0], 1)
+	}
+	return 1, nil
 }
 
 func (m model) parseDown(args []string) commandResult {
@@ -587,7 +594,7 @@ type helpEntry struct {
 
 func helpLines() []helpEntry {
 	return []helpEntry{
-		{"up [--type elastic|reserved] [--nudge] [<replicas>]", "scale a pool up"},
+		{"up [--type elastic|reserved] [--nudge] [--replicas N] [<replicas>]", "scale a pool up"},
 		{"down [--type ...] [--delete]", "scale a pool to zero or delete it"},
 		{"nudge [--namespace ns] [--cluster name]", "latch control-plane-initialized"},
 		{"burst <namespace> [--type ...] [--replicas n]", "back up, scale, migrate a workload"},
