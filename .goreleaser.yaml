@@ -5,7 +5,8 @@ before:
     - go mod tidy
 
 builds:
-  - main: ./cmd/horizon
+  - id: horizon
+    main: ./cmd/horizon
     binary: horizon
     env:
       - CGO_ENABLED=0
@@ -18,8 +19,36 @@ builds:
     ldflags:
       - -s -w -X github.com/lucawalz/horizon/internal/version.version={{.Version}}
 
+  - id: horizon-controller
+    main: ./cmd/horizon-controller
+    binary: horizon-controller
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/lucawalz/horizon/internal/version.version={{.Version}}
+
 archives:
-  - formats: [tar.gz]
+  - ids: [horizon]
+    formats: [tar.gz]
+
+kos:
+  - id: horizon-controller
+    build: horizon-controller
+    base_image: cgr.dev/chainguard/static
+    repositories:
+      - ghcr.io/lucawalz/horizon-controller
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    tags:
+      - "{{ .Version }}"
+      - latest
+    bare: true
 
 brews:
   - name: horizon
