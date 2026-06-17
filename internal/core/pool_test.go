@@ -17,7 +17,7 @@ func TestScaleUpScalesPool(t *testing.T) {
 	)
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 2)
-	if err := core.ScaleUp(context.Background(), cc, target, false, false, core.Progress{}); err != nil {
+	if err := core.ScaleUp(context.Background(), cc, target, false, core.Progress{}); err != nil {
 		t.Fatalf("ScaleUp: %v", err)
 	}
 
@@ -38,12 +38,12 @@ func TestScaleUpRefusesWhenControlPlaneNotInitialized(t *testing.T) {
 	)
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	err := core.ScaleUp(context.Background(), cc, target, false, false, core.Progress{})
+	err := core.ScaleUp(context.Background(), cc, target, false, core.Progress{})
 	if err == nil {
 		t.Fatal("expected refusal when control plane not initialized")
 	}
-	if !strings.Contains(err.Error(), "--nudge") {
-		t.Errorf("error %q should mention --nudge", err.Error())
+	if !strings.Contains(err.Error(), "not initialized") {
+		t.Errorf("error %q should explain the control plane is not initialized", err.Error())
 	}
 
 	got, _ := cc.GetPool(context.Background(), "caph-system", "burst-workers")
@@ -52,36 +52,11 @@ func TestScaleUpRefusesWhenControlPlaneNotInitialized(t *testing.T) {
 	}
 }
 
-func TestScaleUpNudgeLatchesAndScales(t *testing.T) {
-	cc := capiClient(
-		t,
-		machineDeployment("caph-system", "burst-workers", "burst", 0),
-		initializedCluster("caph-system", "burst", false),
-	)
-
-	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	if err := core.ScaleUp(context.Background(), cc, target, false, true, core.Progress{}); err != nil {
-		t.Fatalf("ScaleUp with nudge: %v", err)
-	}
-
-	ok, err := cc.IsControlPlaneInitialized(context.Background(), "caph-system", "burst")
-	if err != nil {
-		t.Fatalf("IsControlPlaneInitialized: %v", err)
-	}
-	if !ok {
-		t.Error("nudge must latch control-plane-initialized")
-	}
-	got, _ := cc.GetPool(context.Background(), "caph-system", "burst-workers")
-	if got.Spec.Replicas == nil || *got.Spec.Replicas != 1 {
-		t.Errorf("replicas = %v, want 1", got.Spec.Replicas)
-	}
-}
-
 func TestScaleUpFailsFastWhenPoolMissing(t *testing.T) {
 	cc := capiClient(t, initializedCluster("caph-system", "burst", true))
 
 	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	err := core.ScaleUp(context.Background(), cc, target, false, false, core.Progress{})
+	err := core.ScaleUp(context.Background(), cc, target, false, core.Progress{})
 	if err == nil {
 		t.Fatal("expected fail-fast when pool not found")
 	}
@@ -99,7 +74,7 @@ func TestScaleUpDryRunDoesNotMutate(t *testing.T) {
 
 	var msgs []string
 	target := poolTarget("caph-system", "burst-workers", "burst", 3)
-	if err := core.ScaleUp(context.Background(), cc, target, true, false, collectProgress(&msgs)); err != nil {
+	if err := core.ScaleUp(context.Background(), cc, target, true, collectProgress(&msgs)); err != nil {
 		t.Fatalf("ScaleUp dry-run: %v", err)
 	}
 	if !strings.Contains(strings.Join(msgs, "\n"), "0 -> 3") {
@@ -121,7 +96,7 @@ func TestScaleUpElasticEmitsAutoscalerNote(t *testing.T) {
 
 	var msgs []string
 	target := core.PoolTarget{Namespace: "caph-system", Name: "elastic-workers", PoolType: core.ElasticPoolType, Cluster: "burst", Replicas: 2}
-	if err := core.ScaleUp(context.Background(), cc, target, false, false, collectProgress(&msgs)); err != nil {
+	if err := core.ScaleUp(context.Background(), cc, target, false, collectProgress(&msgs)); err != nil {
 		t.Fatalf("ScaleUp: %v", err)
 	}
 	if !strings.Contains(strings.Join(msgs, "\n"), "cluster-autoscaler owns the elastic pool") {

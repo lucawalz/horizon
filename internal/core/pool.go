@@ -63,7 +63,7 @@ func getPool(ctx context.Context, cc *capi.Client, target PoolTarget) (*clusterv
 	return md, nil
 }
 
-func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, nudge bool, progress Progress) error {
+func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun bool, progress Progress) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -72,7 +72,7 @@ func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, nu
 		return scaleUpDryRun(ctx, cc, target, progress)
 	}
 
-	if err := ensureControlPlaneInitialized(ctx, cc, target, nudge, progress); err != nil {
+	if err := ensureControlPlaneInitialized(ctx, cc, target); err != nil {
 		return err
 	}
 
@@ -115,21 +115,14 @@ func scaleUpDryRun(ctx context.Context, cc *capi.Client, target PoolTarget, prog
 	return nil
 }
 
-func ensureControlPlaneInitialized(ctx context.Context, cc *capi.Client, target PoolTarget, nudge bool, progress Progress) error {
+func ensureControlPlaneInitialized(ctx context.Context, cc *capi.Client, target PoolTarget) error {
 	initialized, err := cc.IsControlPlaneInitialized(ctx, target.Namespace, target.Cluster)
 	if err != nil {
 		return fmt.Errorf("control-plane status: %w", err)
 	}
-	if initialized {
-		return nil
+	if !initialized {
+		return fmt.Errorf("control plane for cluster %q not initialized; workers will not bootstrap until the control plane reports ready", target.Cluster)
 	}
-	if !nudge {
-		return fmt.Errorf("control plane for cluster %q not initialized; rerun with --nudge to latch the externally-managed status", target.Cluster)
-	}
-	if err := cc.NudgeControlPlaneInitialized(ctx, target.Namespace, target.Cluster); err != nil {
-		return err
-	}
-	progress.Emit(fmt.Sprintf("Nudged control-plane-initialized for cluster %q.", target.Cluster))
 	return nil
 }
 
