@@ -3,7 +3,41 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/lucawalz/horizon/internal/core"
 )
+
+func nonEmptyLines(s string) []string {
+	out := []string{}
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.TrimSpace(ln) != "" {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
+func TestNodesBodyFitsWidthWithoutWrapping(t *testing.T) {
+	snap := core.Snapshot{Nodes: []core.NodeRow{
+		{Name: "master", Role: "master", CPUPercent: 22, MemPercent: 21, MetricsPresent: true, PodCount: 22, Status: "Ready", IPv4: "10.20.0.10"},
+		{Name: "reserved-worker-kl8px", Role: "worker", PodCount: 6, Status: "Ready", IPv4: "100.110.21.71"},
+		{Name: "reserved-worker-m5znj", Role: "worker", PodCount: 6, Status: "Ready", IPv4: "100.71.115.99"},
+		{Name: "reserved-worker-xrbjd", Role: "worker", PodCount: 6, Status: "Ready", IPv4: "100.100.28.1"},
+		{Name: "worker-1", Role: "worker", CPUPercent: 6, MemPercent: 7, MetricsPresent: true, PodCount: 24, Status: "Ready", IPv4: "10.20.0.11"},
+	}}
+	for _, inner := range []int{58, 65, 72, 90, 120} {
+		out := nodesBody(snap, inner, true)
+		lines := nonEmptyLines(stripStyling(out))
+		if len(lines) != 1+len(snap.Nodes) {
+			t.Errorf("inner=%d: got %d non-empty lines, want %d (a row wrapped):\n%s", inner, len(lines), 1+len(snap.Nodes), out)
+		}
+		for _, ln := range lines {
+			if w := len([]rune(strings.TrimRight(ln, " "))); w > inner {
+				t.Errorf("inner=%d: rendered line width %d exceeds inner %d:\n%q", inner, w, inner, ln)
+			}
+		}
+	}
+}
 
 func TestRenderLogTableEmpty(t *testing.T) {
 	if got := renderLogTable(nil); got != "" {
