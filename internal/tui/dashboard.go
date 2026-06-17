@@ -191,16 +191,7 @@ func poolsPanel(snap core.Snapshot, width int, full bool) string {
 	return titledPanel("Pools", width, func(inner int) string { return poolsBody(snap, inner, full) })
 }
 
-func poolsBody(snap core.Snapshot, inner int, full bool) string {
-	if snap.PoolsErr != nil {
-		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.PoolsErr))
-	}
-	if len(snap.Pools) == 0 {
-		return dimStyle.Render("(no pools)")
-	}
-	if !full {
-		return poolsCompactBody(snap, inner)
-	}
+func poolsTableData(snap core.Snapshot) ([]string, [][]string) {
 	headers := []string{"POOL", "TYPE", "DESIRED", "READY", "MACHINE", "PHASE", "NODE", "PROVIDER-ID"}
 	rows := make([][]string, 0)
 	for _, pool := range snap.Pools {
@@ -222,6 +213,34 @@ func poolsBody(snap core.Snapshot, inner int, full bool) string {
 				mc.Name, core.ValueOrDash(mc.Phase), core.ValueOrDash(mc.Node), core.ValueOrDash(mc.ProviderID),
 			})
 		}
+	}
+	return headers, rows
+}
+
+func poolsNaturalWidth(snap core.Snapshot) int {
+	w := lipgloss.Width("Pools")
+	if len(snap.Pools) > 0 {
+		headers, rows := poolsTableData(snap)
+		if x := lipgloss.Width(neutralTable(headers, rows, 0)); x > w {
+			w = x
+		}
+	}
+	return w
+}
+
+func poolsBody(snap core.Snapshot, inner int, full bool) string {
+	if snap.PoolsErr != nil {
+		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.PoolsErr))
+	}
+	if len(snap.Pools) == 0 {
+		return dimStyle.Render("(no pools)")
+	}
+	if !full {
+		return poolsCompactBody(snap, inner)
+	}
+	headers, rows := poolsTableData(snap)
+	if natural := neutralTable(headers, rows, 0); lipgloss.Width(natural) <= inner {
+		return natural
 	}
 	return neutralTable(headers, rows, inner)
 }

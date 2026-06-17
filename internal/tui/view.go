@@ -210,7 +210,11 @@ func (m model) wideDashboard() string {
 		spacer = columnGap
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", spacer), right)
-	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, m.width, true))
+	poolsWidth := poolsNaturalWidth(m.snap) + frame
+	if poolsWidth > m.width {
+		poolsWidth = m.width
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, poolsWidth, true))
 }
 
 func (m model) mediumDashboard() string {
