@@ -46,7 +46,7 @@ kos:
       - linux/amd64
       - linux/arm64
     tags:
-      - "{{ .Version }}"
+      - "{{ .Tag }}"
       - latest
     bare: true
 
