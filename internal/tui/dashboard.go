@@ -363,7 +363,6 @@ func metricsPanel(snap core.Snapshot, width, height int) string {
 func metricsBody(snap core.Snapshot) string {
 	return strings.Join([]string{
 		workloadSection(snap.Workload),
-		nodeHealthSection(snap.NodeHealth),
 		gitopsSection(snap.Flux),
 	}, "\n\n")
 }
@@ -398,25 +397,6 @@ func workloadSection(w core.WorkloadSummary) string {
 	}, "\n")
 }
 
-func nodeHealthSection(h core.NodeHealthSummary) string {
-	if h.Err != nil {
-		return subLabelStyle.Render("Node health") + "\n" + errStyle.Render(fmt.Sprintf("unavailable: %v", h.Err))
-	}
-	lines := []string{subLabelStyle.Render("Node health")}
-	if len(h.Pressured) == 0 {
-		lines = append(lines, fmt.Sprintf("%s no pressure", statusDot(theme.DotGreen)))
-	} else {
-		for _, p := range h.Pressured {
-			lines = append(lines, fmt.Sprintf("%s %s %s", statusDot(theme.DotRed), p.Name, strings.Join(pressureFlags(p), " ")))
-		}
-	}
-	lines = append(lines,
-		fmt.Sprintf("%s CPU %d%% committed", statusDot(gaugeColor(float64(h.CPUPercent())/100)), h.CPUPercent()),
-		fmt.Sprintf("%s Mem %d%% committed", statusDot(gaugeColor(float64(h.MemPercent())/100)), h.MemPercent()),
-	)
-	return strings.Join(lines, "\n")
-}
-
 func gitopsSection(f core.FluxSummary) string {
 	return strings.Join([]string{
 		subLabelStyle.Render("GitOps"),
@@ -443,16 +423,3 @@ func dotForCount(n int, alert lipgloss.AdaptiveColor) lipgloss.AdaptiveColor {
 	return theme.DotGreen
 }
 
-func pressureFlags(p core.NodePressure) []string {
-	var flags []string
-	if p.Disk {
-		flags = append(flags, "Disk")
-	}
-	if p.Memory {
-		flags = append(flags, "Memory")
-	}
-	if p.PID {
-		flags = append(flags, "PID")
-	}
-	return flags
-}

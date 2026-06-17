@@ -35,29 +35,33 @@ func newMetricsModel(width, height int) model {
 
 func TestMetricsAsideShownWideBesideLog(t *testing.T) {
 	m := newMetricsModel(230, 56)
-	if w := m.metricsAsideWidth(m.logHeight(m.headerBand(), m.layoutDashboard(m.headerBand(), m.inputBand()), m.inputBand())); w <= 0 {
-		t.Fatalf("expected metrics aside width > 0 in wide layout, got %d", w)
+	bandHeight := m.logHeight(m.headerBand(), m.layoutDashboard(m.headerBand(), m.inputBand()), m.inputBand())
+	if !m.showMetricsAside(bandHeight) {
+		t.Fatalf("expected metrics aside shown in wide layout")
 	}
 	out := m.View()
-	for _, want := range []string{"Metrics", "Workload", "Node health", "GitOps"} {
+	for _, want := range []string{"Metrics", "Workload", "GitOps"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("wide view missing %q", want)
 		}
+	}
+	if strings.Contains(out, "Node health") {
+		t.Error("metrics panel should no longer show Node health")
 	}
 }
 
 func TestMetricsAsideHiddenWhenNotLoaded(t *testing.T) {
 	m := newMetricsModel(230, 56)
 	m.loaded = false
-	if w := m.metricsAsideWidth(40); w != 0 {
-		t.Errorf("aside width = %d, want 0 when not loaded", w)
+	if m.showMetricsAside(40) {
+		t.Error("metrics aside should be hidden when not loaded")
 	}
 }
 
 func TestMetricsAsideHiddenBelowWideBreakpoint(t *testing.T) {
 	m := newMetricsModel(mediumBreakpoint+1, 56)
-	if w := m.metricsAsideWidth(40); w != 0 {
-		t.Errorf("aside width = %d, want 0 below wide breakpoint", w)
+	if m.showMetricsAside(40) {
+		t.Error("metrics aside should be hidden below wide breakpoint")
 	}
 }
 

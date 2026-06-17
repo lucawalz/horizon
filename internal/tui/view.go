@@ -26,42 +26,40 @@ func (m *model) relayout() {
 	dashboard := m.layoutDashboard(header, inputBox)
 	bandHeight := m.logHeight(header, dashboard, inputBox)
 	logW := m.logWidth()
-	if aside := m.metricsAsideWidth(bandHeight); aside > 0 {
-		if w := logW - aside - columnGap; w >= minLogWidth {
-			logW = w
-		}
+	if m.showMetricsAside(bandHeight) {
+		logW = m.leftColumnWidth()
 	}
 	m.log.resize(logW, bandHeight)
 }
 
-func (m model) rightRailWidth() int {
-	frame := panelStyle.GetHorizontalFrameSize()
-	floor := rightColumnNaturalWidth(m.snap) + frame
-	if mc := metricsContentWidth(m.snap) + frame; mc > floor {
-		floor = mc
+func (m model) leftColumnWidth() int {
+	w := nodesNaturalWidth(m.snap)
+	if pw := poolsNaturalWidth(m.snap); pw > w {
+		w = pw
 	}
-	w := m.width * rightRailTargetNum / rightRailTargetDen
-	if w < floor {
-		w = floor
-	}
-	if hi := m.width * rightRailMaxNum / rightRailMaxDen; w > hi {
-		w = hi
+	w += panelStyle.GetHorizontalFrameSize()
+	if w > m.width {
+		w = m.width
 	}
 	return w
 }
 
-func (m model) metricsAsideWidth(bandHeight int) int {
+func (m model) rightColumnWidth() int {
+	w := rightColumnNaturalWidth(m.snap)
+	if mc := metricsContentWidth(m.snap); mc > w {
+		w = mc
+	}
+	return w + panelStyle.GetHorizontalFrameSize()
+}
+
+func (m model) showMetricsAside(bandHeight int) bool {
 	if !m.loaded || m.width < wideBreakpoint {
-		return 0
+		return false
 	}
-	w := m.rightRailWidth()
-	if m.width-w-columnGap < minLogWidth {
-		return 0
+	if m.leftColumnWidth()+columnGap+m.rightColumnWidth() > m.width {
+		return false
 	}
-	if bandHeight < metricsContentHeight(m.snap)+panelStyle.GetVerticalFrameSize() {
-		return 0
-	}
-	return w
+	return bandHeight >= metricsContentHeight(m.snap)+panelStyle.GetVerticalFrameSize()
 }
 
 func (m model) layoutDashboard(header, inputBox string) string {
@@ -123,8 +121,8 @@ func (m model) View() string {
 	dashboard := m.layoutDashboard(header, inputBox)
 
 	band := m.log.render()
-	if aside := m.metricsAsideWidth(m.logHeight(header, dashboard, inputBox)); aside > 0 {
-		panel := metricsPanel(m.snap, aside, m.logHeight(header, dashboard, inputBox))
+	if bandHeight := m.logHeight(header, dashboard, inputBox); m.showMetricsAside(bandHeight) {
+		panel := metricsPanel(m.snap, m.rightColumnWidth(), bandHeight)
 		band = lipgloss.JoinHorizontal(lipgloss.Top, band, strings.Repeat(" ", columnGap), panel)
 	}
 
@@ -191,10 +189,11 @@ func (m model) dashboardBand() string {
 
 func (m model) wideDashboard() string {
 	frame := panelStyle.GetHorizontalFrameSize()
-	rightWidth := m.rightRailWidth()
+	leftCol := m.leftColumnWidth()
+	rightWidth := m.rightColumnWidth()
 	nodesWidth := nodesNaturalWidth(m.snap) + frame
-	if maxNodes := m.width - rightWidth - columnGap; nodesWidth > maxNodes {
-		nodesWidth = maxNodes
+	if nodesWidth > leftCol {
+		nodesWidth = leftCol
 	}
 	left := nodesPanel(m.snap, nodesWidth, true)
 	right := lipgloss.JoinVertical(
@@ -203,16 +202,12 @@ func (m model) wideDashboard() string {
 		clustersPanel(m.snap, rightWidth),
 	)
 	colHeight := max(lipgloss.Height(left), lipgloss.Height(right))
-	left = lipgloss.NewStyle().Width(nodesWidth).Height(colHeight).Render(left)
+	left = lipgloss.NewStyle().Width(leftCol).Height(colHeight).Render(left)
 	right = lipgloss.NewStyle().Width(rightWidth).Height(colHeight).Render(right)
-	spacer := m.width - nodesWidth - rightWidth
-	if spacer < columnGap {
-		spacer = columnGap
-	}
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", spacer), right)
+	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", columnGap), right)
 	poolsWidth := poolsNaturalWidth(m.snap) + frame
-	if poolsWidth > m.width {
-		poolsWidth = m.width
+	if poolsWidth > leftCol {
+		poolsWidth = leftCol
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, poolsWidth, true))
 }

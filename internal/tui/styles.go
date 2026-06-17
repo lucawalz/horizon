@@ -25,11 +25,6 @@ const (
 	logHeightShare = 0.35
 
 	gaugeSpacing = "   "
-
-	rightRailTargetNum = 3
-	rightRailTargetDen = 10
-	rightRailMaxNum    = 2
-	rightRailMaxDen    = 5
 )
 
 type Theme struct {
