@@ -371,3 +371,27 @@ bedrock_path: ""
 		t.Errorf("RepoPath not absolute: %q", cfg.RepoPath)
 	}
 }
+
+func TestExpandUserPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"~", home},
+		{"~/", home},
+		{"~/bedrock", filepath.Join(home, "bedrock")},
+		{"/abs/path", "/abs/path"},
+		{"relative/path", "relative/path"},
+		{"~bob/x", "~bob/x"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := config.ExpandUserPath(tc.in); got != tc.want {
+			t.Errorf("ExpandUserPath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

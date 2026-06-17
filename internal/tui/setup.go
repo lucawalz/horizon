@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -96,6 +98,95 @@ func buildSetupConfig(in setupInput) (*config.Config, error) {
 	return cfg, nil
 }
 
+func completeRepoPath(value string) (string, []string) {
+	if value == "" {
+		return value, nil
+	}
+	collapse := strings.HasPrefix(value, "~")
+	dir, base := filepath.Split(config.ExpandUserPath(value))
+	if dir == "" {
+		dir = "."
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return value, nil
+	}
+	var names []string
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(name, ".") && !strings.HasPrefix(base, ".") {
+			continue
+		}
+		if strings.HasPrefix(name, base) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return value, nil
+	}
+	var completed string
+	if len(names) == 1 {
+		completed = filepath.Join(dir, names[0]) + string(filepath.Separator)
+		names = nil
+	} else {
+		completed = filepath.Join(dir, longestCommonPrefix(names))
+	}
+	if collapse {
+		if home, err := os.UserHomeDir(); err == nil {
+			completed = recollapseHome(completed, home)
+		}
+	}
+	return completed, names
+}
+
+func recollapseHome(p, home string) string {
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+string(filepath.Separator)) {
+		return "~/" + p[len(home)+1:]
+	}
+	return p
+}
+
+func longestCommonPrefix(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	prefix := names[0]
+	for _, n := range names[1:] {
+		for !strings.HasPrefix(n, prefix) {
+			prefix = prefix[:len(prefix)-1]
+			if prefix == "" {
+				return ""
+			}
+		}
+	}
+	return prefix
+}
+
+func normalizeRepoPath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "~" || value == "~/" {
+		return "", nil
+	}
+	expanded := config.ExpandUserPath(value)
+	if home, err := os.UserHomeDir(); err == nil && expanded == home {
+		return "", nil
+	}
+	info, err := os.Stat(expanded)
+	if err != nil {
+		return "", fmt.Errorf("repo path %q: %w", value, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("repo path %q is not a directory", value)
+	}
+	return value, nil
+}
+
 type contextsLoadedMsg struct {
 	names   []string
 	current string
@@ -142,9 +233,10 @@ type setupModel struct {
 	detectErr  error
 	contextErr error
 
-	fields     [fieldCount]textinput.Model
-	fieldIndex int
-	fieldErr   string
+	fields         [fieldCount]textinput.Model
+	fieldIndex     int
+	fieldErr       string
+	repoCandidates []string
 
 	picker themePicker
 
@@ -323,9 +415,28 @@ func (m setupModel) onFieldsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "up":
 		return m.focusField(m.fieldIndex - 1)
-	case "down", "tab":
+	case "down":
+		return m.focusField(m.fieldIndex + 1)
+	case "tab":
+		if m.fieldIndex == fieldRepoPath {
+			completed, candidates := completeRepoPath(m.fields[fieldRepoPath].Value())
+			m.fields[fieldRepoPath].SetValue(completed)
+			m.fields[fieldRepoPath].CursorEnd()
+			m.repoCandidates = candidates
+			return m, nil
+		}
 		return m.focusField(m.fieldIndex + 1)
 	case "enter":
+		if m.fieldIndex == fieldRepoPath {
+			normalized, err := normalizeRepoPath(m.fields[fieldRepoPath].Value())
+			if err != nil {
+				m.fieldErr = err.Error()
+				return m, nil
+			}
+			m.fields[fieldRepoPath].SetValue(normalized)
+			m.fieldErr = ""
+			return m.focusField(m.fieldIndex + 1)
+		}
 		if m.fieldIndex < fieldCount-1 {
 			return m.focusField(m.fieldIndex + 1)
 		}
@@ -339,6 +450,7 @@ func (m setupModel) onFieldsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.picker = newThemePicker(config.ThemeAuto)
 		return m, nil
 	}
+	m.repoCandidates = nil
 	var cmd tea.Cmd
 	m.fields[m.fieldIndex], cmd = m.fields[m.fieldIndex].Update(msg)
 	return m, cmd
@@ -352,6 +464,7 @@ func (m setupModel) focusField(idx int) (tea.Model, tea.Cmd) {
 		idx = 0
 	}
 	m.blurFields()
+	m.repoCandidates = nil
 	m.fieldIndex = idx
 	return m, m.fields[idx].Focus()
 }
@@ -380,12 +493,18 @@ func (m setupModel) onThemeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m setupModel) save() (tea.Model, tea.Cmd) {
+	repoPath, err := normalizeRepoPath(m.fields[fieldRepoPath].Value())
+	if err != nil {
+		m.step = stepFields
+		m.fieldErr = err.Error()
+		return m.focusField(fieldRepoPath)
+	}
 	in := setupInput{
 		context:        m.chosenCtx,
 		cluster:        m.fields[fieldCluster].Value(),
 		poolsNamespace: m.fields[fieldPoolsNamespace].Value(),
 		poolTypesRaw:   m.fields[fieldPoolTypes].Value(),
-		repoPath:       m.fields[fieldRepoPath].Value(),
+		repoPath:       repoPath,
 		ccClass:        m.fields[fieldClass].Value(),
 		ccWorkerClass:  m.fields[fieldWorkerClass].Value(),
 		theme:          m.picker.selected().pref,
@@ -425,7 +544,8 @@ func (m *setupModel) prefillFields() {
 	m.fields[fieldCluster].SetValue(cluster)
 	m.fields[fieldPoolsNamespace].SetValue(ns)
 	m.fields[fieldPoolTypes].SetValue(formatPoolTypes(types))
-	m.fields[fieldRepoPath].SetValue("")
+	m.fields[fieldRepoPath].SetValue("~/")
+	m.fields[fieldRepoPath].CursorEnd()
 	m.fields[fieldClass].SetValue(def.ClusterCreate.Class)
 	m.fields[fieldWorkerClass].SetValue(def.ClusterCreate.WorkerClass)
 }
@@ -541,10 +661,17 @@ func (m setupModel) fieldsView() string {
 		rows = append(rows, pickerCursorIndent+m.fields[i].View())
 	}
 	parts := []string{strings.Join(rows, "\n")}
+	if m.fieldIndex == fieldRepoPath && len(m.repoCandidates) > 0 {
+		parts = append(parts, dimStyle.Render(strings.Join(m.repoCandidates, "  ")))
+	}
 	if m.fieldErr != "" {
 		parts = append(parts, errStyle.Render(m.fieldErr))
 	}
-	parts = append(parts, "", dimStyle.Render("↑↓/tab move · enter next · esc back"))
+	hint := "↑↓/tab move · enter next · esc back"
+	if m.fieldIndex == fieldRepoPath {
+		hint = "↑↓ move · tab complete · enter next · esc back"
+	}
+	parts = append(parts, "", dimStyle.Render(hint))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 

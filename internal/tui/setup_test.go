@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -123,5 +125,92 @@ func TestParsePoolTypes(t *testing.T) {
 				t.Errorf("parsePoolTypes(%q) = %v, want %v", tt.raw, got, tt.want)
 			}
 		})
+	}
+}
+
+func makeRepoTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, d := range []string{"bedrock", "bedfellow", "other", ".hidden"} {
+		if err := os.Mkdir(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "bedrock-file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestCompleteRepoPath(t *testing.T) {
+	root := makeRepoTree(t)
+	sep := string(filepath.Separator)
+
+	if got, cands := completeRepoPath(filepath.Join(root, "o")); got != filepath.Join(root, "other")+sep || cands != nil {
+		t.Errorf("single match = (%q, %v), want %q with no candidates", got, cands, filepath.Join(root, "other")+sep)
+	}
+
+	got, cands := completeRepoPath(filepath.Join(root, "bed"))
+	if got != filepath.Join(root, "bed") {
+		t.Errorf("multi match completed = %q, want %q", got, filepath.Join(root, "bed"))
+	}
+	if !reflect.DeepEqual(cands, []string{"bedfellow", "bedrock"}) {
+		t.Errorf("multi match candidates = %v, want [bedfellow bedrock] (files and dotdirs excluded)", cands)
+	}
+
+	if _, cands := completeRepoPath(root + sep); contains(cands, ".hidden") {
+		t.Errorf("dotdir leaked without a dot base: %v", cands)
+	}
+	if got, _ := completeRepoPath(root + sep + "."); got != filepath.Join(root, ".hidden")+sep {
+		t.Errorf("dot base completion = %q, want %q", got, filepath.Join(root, ".hidden")+sep)
+	}
+
+	if got, cands := completeRepoPath(""); got != "" || cands != nil {
+		t.Errorf("empty input = (%q, %v), want empty", got, cands)
+	}
+	if got, cands := completeRepoPath(filepath.Join(root, "zzz")); got != filepath.Join(root, "zzz") || cands != nil {
+		t.Errorf("no match = (%q, %v), want input unchanged", got, cands)
+	}
+
+	t.Setenv("HOME", root)
+	if got, cands := completeRepoPath("~/bed"); got != "~/bed" || !reflect.DeepEqual(cands, []string{"bedfellow", "bedrock"}) {
+		t.Errorf("tilde round-trip = (%q, %v), want (~/bed, [bedfellow bedrock])", got, cands)
+	}
+	if got, _ := completeRepoPath("~/o"); got != "~/other"+sep {
+		t.Errorf("tilde single match = %q, want ~/other%s", got, sep)
+	}
+}
+
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNormalizeRepoPath(t *testing.T) {
+	root := makeRepoTree(t)
+	t.Setenv("HOME", root)
+
+	for _, in := range []string{"", "   ", "~", "~/", root} {
+		if got, err := normalizeRepoPath(in); err != nil || got != "" {
+			t.Errorf("normalizeRepoPath(%q) = (%q, %v), want empty skip", in, got, err)
+		}
+	}
+
+	dir := filepath.Join(root, "bedrock")
+	if got, err := normalizeRepoPath(dir); err != nil || got != dir {
+		t.Errorf("existing dir = (%q, %v), want passthrough", got, err)
+	}
+	if got, err := normalizeRepoPath("~/bedrock"); err != nil || got != "~/bedrock" {
+		t.Errorf("tilde dir = (%q, %v), want ~/bedrock preserved", got, err)
+	}
+	if _, err := normalizeRepoPath(filepath.Join(root, "nope")); err == nil {
+		t.Error("nonexistent path should error")
+	}
+	if _, err := normalizeRepoPath(filepath.Join(root, "bedrock-file")); err == nil {
+		t.Error("regular file should error (not a directory)")
 	}
 }

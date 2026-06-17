@@ -86,6 +86,20 @@ func DefaultConfigPath() string {
 	return filepath.Join(dir, "config.yaml")
 }
 
+func ExpandUserPath(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return p
+	}
+	if p == "~" {
+		return home
+	}
+	return filepath.Join(home, p[2:])
+}
+
 func Load() (*Config, error) {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -106,7 +120,7 @@ func Load() (*Config, error) {
 	}
 	cfg.path = v.ConfigFileUsed()
 
-	cfg.RepoPath = os.ExpandEnv(cfg.RepoPath)
+	cfg.RepoPath = ExpandUserPath(os.ExpandEnv(cfg.RepoPath))
 	if cfg.RepoPath != "" {
 		abs, err := filepath.Abs(cfg.RepoPath)
 		if err != nil {
