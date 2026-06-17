@@ -24,12 +24,7 @@ func (m *model) relayout() {
 	header := m.headerBand()
 	inputBox := m.inputBand()
 	dashboard := m.layoutDashboard(header, inputBox)
-	bandHeight := m.logHeight(header, dashboard, inputBox)
-	logW := m.logWidth()
-	if m.showMetricsAside(bandHeight) {
-		logW = m.leftColumnWidth()
-	}
-	m.log.resize(logW, bandHeight)
+	m.log.resize(m.logWidth(), m.logHeight(header, dashboard, inputBox))
 }
 
 func (m model) leftColumnWidth() int {
@@ -50,16 +45,6 @@ func (m model) rightColumnWidth() int {
 		w = mc
 	}
 	return w + panelStyle.GetHorizontalFrameSize()
-}
-
-func (m model) showMetricsAside(bandHeight int) bool {
-	if !m.loaded || m.width < wideBreakpoint {
-		return false
-	}
-	if m.leftColumnWidth()+columnGap+m.rightColumnWidth() > m.width {
-		return false
-	}
-	return bandHeight >= metricsContentHeight(m.snap)+panelStyle.GetVerticalFrameSize()
 }
 
 func (m model) layoutDashboard(header, inputBox string) string {
@@ -120,13 +105,7 @@ func (m model) View() string {
 	inputBox := m.inputBand()
 	dashboard := m.layoutDashboard(header, inputBox)
 
-	band := m.log.render()
-	if bandHeight := m.logHeight(header, dashboard, inputBox); m.showMetricsAside(bandHeight) {
-		panel := metricsPanel(m.snap, m.rightColumnWidth())
-		band = lipgloss.JoinHorizontal(lipgloss.Top, band, strings.Repeat(" ", columnGap), panel)
-	}
-
-	out := lipgloss.JoinVertical(lipgloss.Left, header, dashboard, band, inputBox)
+	out := lipgloss.JoinVertical(lipgloss.Left, header, dashboard, m.log.render(), inputBox)
 	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(out)
 }
 
@@ -190,17 +169,18 @@ func (m model) dashboardBand() string {
 func (m model) wideDashboard() string {
 	leftCol := m.leftColumnWidth()
 	rightWidth := m.rightColumnWidth()
-	left := nodesPanel(m.snap, leftCol, true)
-	right := lipgloss.JoinVertical(
+	if leftCol+columnGap+rightWidth > m.width {
+		return m.mediumDashboard()
+	}
+	gap := strings.Repeat(" ", columnGap)
+	clusters := lipgloss.JoinVertical(
 		lipgloss.Left,
 		clusterStatusPanel(m.snap, rightWidth, false),
 		clustersPanel(m.snap, rightWidth),
 	)
-	colHeight := max(lipgloss.Height(left), lipgloss.Height(right))
-	left = lipgloss.NewStyle().Width(leftCol).Height(colHeight).Render(left)
-	right = lipgloss.NewStyle().Width(rightWidth).Height(colHeight).Render(right)
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", columnGap), right)
-	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, leftCol, true))
+	nodesRow := lipgloss.JoinHorizontal(lipgloss.Top, nodesPanel(m.snap, leftCol, true), gap, clusters)
+	poolsRow := lipgloss.JoinHorizontal(lipgloss.Top, poolsPanel(m.snap, leftCol, true), gap, metricsPanel(m.snap, rightWidth))
+	return lipgloss.JoinVertical(lipgloss.Left, nodesRow, poolsRow)
 }
 
 func (m model) mediumDashboard() string {

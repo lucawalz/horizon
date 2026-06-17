@@ -363,10 +363,6 @@ func metricsBody(snap core.Snapshot) string {
 	}, "\n\n")
 }
 
-func metricsContentHeight(snap core.Snapshot) int {
-	return 1 + lipgloss.Height(metricsBody(snap))
-}
-
 func metricsContentWidth(snap core.Snapshot) int {
 	w := lipgloss.Width(panelTitleStyle.Render("Metrics"))
 	for _, line := range strings.Split(metricsBody(snap), "\n") {

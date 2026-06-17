@@ -33,16 +33,12 @@ func newMetricsModel(width, height int) model {
 	return m
 }
 
-func TestMetricsAsideShownWideBesideLog(t *testing.T) {
+func TestMetricsShownInWideDashboard(t *testing.T) {
 	m := newMetricsModel(230, 56)
-	bandHeight := m.logHeight(m.headerBand(), m.layoutDashboard(m.headerBand(), m.inputBand()), m.inputBand())
-	if !m.showMetricsAside(bandHeight) {
-		t.Fatalf("expected metrics aside shown in wide layout")
-	}
-	out := m.View()
+	out := stripStyling(m.wideDashboard())
 	for _, want := range []string{"Metrics", "Workload", "GitOps"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("wide view missing %q", want)
+			t.Errorf("wide dashboard missing %q", want)
 		}
 	}
 	if strings.Contains(out, "Node health") {
@@ -50,18 +46,11 @@ func TestMetricsAsideShownWideBesideLog(t *testing.T) {
 	}
 }
 
-func TestMetricsAsideHiddenWhenNotLoaded(t *testing.T) {
+func TestDashboardHiddenWhenNotLoaded(t *testing.T) {
 	m := newMetricsModel(230, 56)
 	m.loaded = false
-	if m.showMetricsAside(40) {
-		t.Error("metrics aside should be hidden when not loaded")
-	}
-}
-
-func TestMetricsAsideHiddenBelowWideBreakpoint(t *testing.T) {
-	m := newMetricsModel(mediumBreakpoint+1, 56)
-	if m.showMetricsAside(40) {
-		t.Error("metrics aside should be hidden below wide breakpoint")
+	if strings.Contains(stripStyling(m.dashboardBand()), "Metrics") {
+		t.Error("dashboard should not render Metrics before the snapshot loads")
 	}
 }
 
