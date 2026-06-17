@@ -24,7 +24,31 @@ func (m *model) relayout() {
 	header := m.headerBand()
 	inputBox := m.inputBand()
 	dashboard := m.layoutDashboard(header, inputBox)
-	m.log.resize(m.logWidth(), m.logHeight(header, dashboard, inputBox))
+	bandHeight := m.logHeight(header, dashboard, inputBox)
+	logW := m.logWidth()
+	if aside := m.metricsAsideWidth(bandHeight); aside > 0 {
+		if w := logW - aside - columnGap; w >= minLogWidth {
+			logW = w
+		}
+	}
+	m.log.resize(logW, bandHeight)
+}
+
+func (m model) metricsAsideWidth(bandHeight int) int {
+	if !m.loaded || m.width < wideBreakpoint {
+		return 0
+	}
+	w := metricsContentWidth(m.snap) + panelStyle.GetHorizontalFrameSize()
+	if hi := m.width * metricsAsideCapNum / metricsAsideCapDen; w > hi {
+		w = hi
+	}
+	if m.width-w-columnGap < minLogWidth {
+		return 0
+	}
+	if bandHeight < metricsContentHeight(m.snap)+panelStyle.GetVerticalFrameSize() {
+		return 0
+	}
+	return w
 }
 
 func (m model) layoutDashboard(header, inputBox string) string {
@@ -85,7 +109,13 @@ func (m model) View() string {
 	inputBox := m.inputBand()
 	dashboard := m.layoutDashboard(header, inputBox)
 
-	out := lipgloss.JoinVertical(lipgloss.Left, header, dashboard, m.log.render(), inputBox)
+	band := m.log.render()
+	if aside := m.metricsAsideWidth(m.logHeight(header, dashboard, inputBox)); aside > 0 {
+		panel := metricsPanel(m.snap, aside, m.logHeight(header, dashboard, inputBox))
+		band = lipgloss.JoinHorizontal(lipgloss.Top, band, strings.Repeat(" ", columnGap), panel)
+	}
+
+	out := lipgloss.JoinVertical(lipgloss.Left, header, dashboard, band, inputBox)
 	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(out)
 }
 
@@ -179,6 +209,7 @@ func (m model) mediumDashboard() string {
 		poolsPanel(m.snap, m.width, true),
 		clusterStatusPanel(m.snap, m.width, false),
 		clustersPanel(m.snap, m.width),
+		metricsPanel(m.snap, m.width, 0),
 	)
 }
 
@@ -188,6 +219,7 @@ func (m model) narrowDashboard() string {
 		nodesPanel(m.snap, m.width, false),
 		poolsPanel(m.snap, m.width, false),
 		clusterStatusPanel(m.snap, m.width, true),
+		metricsPanel(m.snap, m.width, 0),
 	)
 }
 
