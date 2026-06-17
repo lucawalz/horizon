@@ -96,17 +96,18 @@ func titledPanel(title string, width int, body func(inner int) string) string {
 	}
 	title = lipgloss.NewStyle().MaxWidth(inner).Render(panelTitleStyle.Render(title))
 	content := title + "\n" + body(inner)
-	return style.Width(inner).Render(content)
+	return style.Width(width - panelBorderWidth(style)).Render(content)
+}
+
+func panelBorderWidth(style lipgloss.Style) int {
+	return style.GetHorizontalFrameSize() - style.GetHorizontalPadding()
 }
 
 func nodesPanel(snap core.Snapshot, width int, full bool) string {
 	return titledPanel("Nodes", width, func(inner int) string { return nodesBody(snap, inner, full) })
 }
 
-func nodesBody(snap core.Snapshot, inner int, full bool) string {
-	if snap.NodesErr != nil {
-		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.NodesErr))
-	}
+func nodeTableData(snap core.Snapshot, full bool) ([]string, [][]string) {
 	headers := []string{"NAME", "ROLE", "CPU%", "MEM%", "PODS", "STATUS", "IP"}
 	if !full {
 		headers = []string{"NAME", "CPU%", "MEM%", "STATUS"}
@@ -121,11 +122,11 @@ func nodesBody(snap core.Snapshot, inner int, full bool) string {
 			rows = append(rows, []string{r.Name, cpu, mem, r.Status})
 		}
 	}
-	if full {
-		fitNameColumn(headers, rows, 0, inner)
-	}
-	statusCol := len(headers) - 1
-	t := newPanelTable(headers, inner, func(row, col int) lipgloss.Style {
+	return headers, rows
+}
+
+func nodesStyleFunc(rows [][]string, statusCol int) table.StyleFunc {
+	return func(row, col int) lipgloss.Style {
 		if row == table.HeaderRow {
 			return tableHeaderStyle.Padding(0, 1).PaddingLeft(0)
 		}
@@ -134,8 +135,32 @@ func nodesBody(snap core.Snapshot, inner int, full bool) string {
 			return statusCellStyle(base, rows[row][col])
 		}
 		return dimNeutralCell(base, rows[row][col])
-	}).Rows(rows...)
-	return t.Render()
+	}
+}
+
+func nodesNaturalWidth(snap core.Snapshot) int {
+	headers, rows := nodeTableData(snap, true)
+	w := lipgloss.Width(newPanelTable(headers, 0, nodesStyleFunc(rows, len(headers)-1)).Rows(rows...).Render())
+	if title := lipgloss.Width("Nodes"); title > w {
+		w = title
+	}
+	return w
+}
+
+func nodesBody(snap core.Snapshot, inner int, full bool) string {
+	if snap.NodesErr != nil {
+		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.NodesErr))
+	}
+	headers, rows := nodeTableData(snap, full)
+	statusCol := len(headers) - 1
+	if full {
+		natural := newPanelTable(headers, 0, nodesStyleFunc(rows, statusCol)).Rows(rows...).Render()
+		if lipgloss.Width(natural) <= inner {
+			return natural
+		}
+		fitNameColumn(headers, rows, 0, inner)
+	}
+	return newPanelTable(headers, inner, nodesStyleFunc(rows, statusCol)).Rows(rows...).Render()
 }
 
 func statusCellStyle(base lipgloss.Style, value string) lipgloss.Style {
@@ -309,7 +334,7 @@ func metricsPanel(snap core.Snapshot, width, height int) string {
 	}
 	title := lipgloss.NewStyle().MaxWidth(inner).Render(panelTitleStyle.Render("Metrics"))
 	content := title + "\n" + metricsBody(snap)
-	style = style.Width(inner)
+	style = style.Width(width - panelBorderWidth(style))
 	if h := height - style.GetVerticalFrameSize(); h > 0 {
 		style = style.Height(h)
 	}

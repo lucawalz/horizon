@@ -177,17 +177,26 @@ func (m model) dashboardBand() string {
 }
 
 func (m model) wideDashboard() string {
-	colWidth, rightWidth := wideSplit(m.width-columnGap, rightColumnNaturalWidth(m.snap), panelStyle.GetHorizontalFrameSize())
-	left := nodesPanel(m.snap, colWidth, true)
+	frame := panelStyle.GetHorizontalFrameSize()
+	_, rightWidth := wideSplit(m.width-columnGap, rightColumnNaturalWidth(m.snap), frame)
+	nodesWidth := nodesNaturalWidth(m.snap) + frame
+	if maxNodes := m.width - rightWidth - columnGap; nodesWidth > maxNodes {
+		nodesWidth = maxNodes
+	}
+	left := nodesPanel(m.snap, nodesWidth, true)
 	right := lipgloss.JoinVertical(
 		lipgloss.Left,
 		clusterStatusPanel(m.snap, rightWidth, false),
 		clustersPanel(m.snap, rightWidth),
 	)
 	colHeight := max(lipgloss.Height(left), lipgloss.Height(right))
-	left = lipgloss.NewStyle().Width(colWidth).Height(colHeight).Render(left)
+	left = lipgloss.NewStyle().Width(nodesWidth).Height(colHeight).Render(left)
 	right = lipgloss.NewStyle().Width(rightWidth).Height(colHeight).Render(right)
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", columnGap), right)
+	spacer := m.width - nodesWidth - rightWidth
+	if spacer < columnGap {
+		spacer = columnGap
+	}
+	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", spacer), right)
 	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, m.width, true))
 }
 
