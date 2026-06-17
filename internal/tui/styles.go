@@ -25,6 +25,8 @@ const (
 	logHeightShare = 0.35
 
 	gaugeSpacing = "   "
+
+	minLeftColWidth = 44
 )
 
 type Theme struct {

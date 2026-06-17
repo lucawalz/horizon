@@ -167,9 +167,12 @@ func (m model) dashboardBand() string {
 }
 
 func (m model) wideDashboard() string {
-	leftCol := m.leftColumnWidth()
 	rightWidth := m.rightColumnWidth()
-	if leftCol+columnGap+rightWidth > m.width {
+	leftCol := m.leftColumnWidth()
+	if maxLeft := m.width - columnGap - rightWidth; leftCol > maxLeft {
+		leftCol = maxLeft
+	}
+	if leftCol < minLeftColWidth {
 		return m.mediumDashboard()
 	}
 	gap := strings.Repeat(" ", columnGap)
