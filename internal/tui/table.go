@@ -6,9 +6,10 @@ import (
 )
 
 const (
-	minNameWidth = 8
-	cellPadding  = 1
-	ellipsis     = "…"
+	minNameWidth    = 8
+	minPoolColWidth = 6
+	cellPadding     = 1
+	ellipsis        = "…"
 )
 
 func middleEllipsis(s string, budget int) string {
@@ -28,14 +29,18 @@ func middleEllipsis(s string, budget int) string {
 	return string(r[:head]) + ellipsis + string(r[len(r)-tail:])
 }
 
-func fitNameColumn(headers []string, rows [][]string, nameCol, inner int) {
-	if len(rows) == 0 {
+func fitFlexColumns(headers []string, rows [][]string, flexCols []int, inner, minCol int) {
+	if len(rows) == 0 || len(flexCols) == 0 {
 		return
+	}
+	isFlex := make(map[int]bool, len(flexCols))
+	for _, c := range flexCols {
+		isFlex[c] = true
 	}
 	cols := len(rows[0])
 	budget := inner
 	for col := 0; col < cols; col++ {
-		if col == nameCol {
+		if isFlex[col] {
 			budget -= cellPadding
 			continue
 		}
@@ -50,12 +55,25 @@ func fitNameColumn(headers []string, rows [][]string, nameCol, inner int) {
 		}
 		budget -= max + cellPadding
 	}
-	if budget < minNameWidth {
-		budget = minNameWidth
+	n := len(flexCols)
+	per := budget / n
+	extra := budget % n
+	for i, col := range flexCols {
+		width := per
+		if i < extra {
+			width++
+		}
+		if width < minCol {
+			width = minCol
+		}
+		for _, row := range rows {
+			row[col] = middleEllipsis(row[col], width)
+		}
 	}
-	for _, row := range rows {
-		row[nameCol] = middleEllipsis(row[nameCol], budget)
-	}
+}
+
+func fitNameColumn(headers []string, rows [][]string, nameCol, inner int) {
+	fitFlexColumns(headers, rows, []int{nameCol}, inner, minNameWidth)
 }
 
 func tableNaturalWidth(headers []string, rows [][]string) int {

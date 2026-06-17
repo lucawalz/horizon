@@ -191,6 +191,21 @@ func poolsPanel(snap core.Snapshot, width int, full bool) string {
 	return titledPanel("Pools", width, func(inner int) string { return poolsBody(snap, inner, full) })
 }
 
+const (
+	poolColPool = iota
+	poolColType
+	poolColDesired
+	poolColReady
+	poolColMachine
+	poolColPhase
+	poolColNode
+	poolColProviderID
+)
+
+// drop order is descending so earlier drops never shift later indices
+var poolDropOrder = []int{poolColProviderID, poolColNode}
+var poolFlexCols = []int{poolColPool, poolColMachine, poolColNode}
+
 func poolsTableData(snap core.Snapshot) ([]string, [][]string) {
 	headers := []string{"POOL", "TYPE", "DESIRED", "READY", "MACHINE", "PHASE", "NODE", "PROVIDER-ID"}
 	rows := make([][]string, 0)
@@ -228,6 +243,35 @@ func poolsNaturalWidth(snap core.Snapshot) int {
 	return w
 }
 
+func dropColumn(headers []string, rows [][]string, col int) ([]string, [][]string) {
+	newHeaders := make([]string, 0, len(headers)-1)
+	newHeaders = append(newHeaders, headers[:col]...)
+	newHeaders = append(newHeaders, headers[col+1:]...)
+	newRows := make([][]string, len(rows))
+	for i, row := range rows {
+		nr := make([]string, 0, len(row)-1)
+		nr = append(nr, row[:col]...)
+		nr = append(nr, row[col+1:]...)
+		newRows[i] = nr
+	}
+	return newHeaders, newRows
+}
+
+func flexAfterDrop(flex []int, col int) []int {
+	out := make([]int, 0, len(flex))
+	for _, c := range flex {
+		switch {
+		case c == col:
+			continue
+		case c > col:
+			out = append(out, c-1)
+		default:
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func poolsBody(snap core.Snapshot, inner int, full bool) string {
 	if snap.PoolsErr != nil {
 		return errStyle.Render(fmt.Sprintf("unavailable: %v", snap.PoolsErr))
@@ -239,8 +283,16 @@ func poolsBody(snap core.Snapshot, inner int, full bool) string {
 		return poolsCompactBody(snap, inner)
 	}
 	headers, rows := poolsTableData(snap)
-	if natural := neutralTable(headers, rows, 0); lipgloss.Width(natural) <= inner {
-		return natural
+	flex := poolFlexCols
+	for _, col := range poolDropOrder {
+		if lipgloss.Width(neutralTable(headers, rows, 0)) <= inner {
+			break
+		}
+		headers, rows = dropColumn(headers, rows, col)
+		flex = flexAfterDrop(flex, col)
+	}
+	if lipgloss.Width(neutralTable(headers, rows, 0)) > inner {
+		fitFlexColumns(headers, rows, flex, inner, minPoolColWidth)
 	}
 	return neutralTable(headers, rows, inner)
 }

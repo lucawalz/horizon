@@ -82,6 +82,101 @@ func TestNodesBodyFitsWidthWithoutWrapping(t *testing.T) {
 	}
 }
 
+func poolsTestSnapshot() core.Snapshot {
+	return core.Snapshot{Pools: []core.PoolRow{
+		{Name: "elastic-workers", Type: "elastic", Desired: "3", Ready: "3", Machines: []core.MachineRow{
+			{Name: "elastic-workers-abc12", Phase: "Running", Node: "elastic-workers-abc12", ProviderID: "hcloud://nbg1-dc3/10123456789"},
+			{Name: "elastic-workers-def34", Phase: "Running", Node: "elastic-workers-def34", ProviderID: "hcloud://nbg1-dc3/10123456790"},
+		}},
+		{Name: "reserved-workers", Type: "reserved", Desired: "2", Ready: "2", Machines: []core.MachineRow{
+			{Name: "reserved-workers-gh567", Phase: "Provisioning", Node: "reserved-workers-gh567", ProviderID: "hcloud://nbg1-dc3/10123456791"},
+		}},
+	}}
+}
+
+func poolsMachineRowCount(snap core.Snapshot) int {
+	n := 0
+	for _, p := range snap.Pools {
+		n += len(p.Machines)
+	}
+	return n
+}
+
+func TestPoolsBodyFull(t *testing.T) {
+	snap := poolsTestSnapshot()
+	inner := 140
+	out := stripStyling(poolsBody(snap, inner, true))
+	if !strings.Contains(out, "PROVIDER-ID") {
+		t.Errorf("expected PROVIDER-ID column at inner=%d:\n%s", inner, out)
+	}
+	if !strings.Contains(out, "NODE") {
+		t.Errorf("expected NODE column at inner=%d:\n%s", inner, out)
+	}
+	for _, ln := range nonEmptyLines(out) {
+		if w := len([]rune(strings.TrimRight(ln, " "))); w > inner {
+			t.Errorf("line width %d exceeds inner %d:\n%q", w, inner, ln)
+		}
+	}
+}
+
+func TestPoolsBodyDropsProviderID(t *testing.T) {
+	snap := poolsTestSnapshot()
+	inner := 110
+	out := stripStyling(poolsBody(snap, inner, true))
+	if strings.Contains(out, "PROVIDER-ID") {
+		t.Errorf("expected PROVIDER-ID dropped at inner=%d:\n%s", inner, out)
+	}
+	if !strings.Contains(out, "NODE") {
+		t.Errorf("expected NODE retained at inner=%d:\n%s", inner, out)
+	}
+}
+
+func TestPoolsBodyDropsNode(t *testing.T) {
+	snap := poolsTestSnapshot()
+	inner := 85
+	out := stripStyling(poolsBody(snap, inner, true))
+	if strings.Contains(out, "PROVIDER-ID") {
+		t.Errorf("expected PROVIDER-ID dropped at inner=%d:\n%s", inner, out)
+	}
+	if strings.Contains(out, "NODE") {
+		t.Errorf("expected NODE dropped at inner=%d:\n%s", inner, out)
+	}
+	if !strings.Contains(out, "MACHINE") {
+		t.Errorf("expected MACHINE retained at inner=%d:\n%s", inner, out)
+	}
+	if !strings.Contains(out, "PHASE") {
+		t.Errorf("expected PHASE retained at inner=%d:\n%s", inner, out)
+	}
+}
+
+func TestPoolsBodyFitsWidthWithoutWrapping(t *testing.T) {
+	snap := poolsTestSnapshot()
+	want := 1 + poolsMachineRowCount(snap)
+	for _, inner := range []int{48, 60, 85, 110, 140} {
+		out := poolsBody(snap, inner, true)
+		lines := nonEmptyLines(stripStyling(out))
+		if len(lines) != want {
+			t.Errorf("inner=%d: got %d non-empty lines, want %d (a row wrapped):\n%s", inner, len(lines), want, out)
+		}
+		for _, ln := range lines {
+			if w := len([]rune(strings.TrimRight(ln, " "))); w > inner {
+				t.Errorf("inner=%d: rendered line width %d exceeds inner %d:\n%q", inner, w, inner, ln)
+			}
+		}
+	}
+}
+
+func TestPoolsBodyFlexShrinksWideColumns(t *testing.T) {
+	snap := poolsTestSnapshot()
+	out := poolsBody(snap, 70, true)
+	if !strings.Contains(out, ellipsis) {
+		t.Errorf("expected wide columns to be ellipsised:\n%s", out)
+	}
+	if !strings.Contains(stripStyling(out), "Running") {
+		t.Errorf("expected narrow PHASE value kept intact:\n%s", out)
+	}
+}
+
 func TestRenderLogTableEmpty(t *testing.T) {
 	if got := renderLogTable(nil); got != "" {
 		t.Errorf("empty table = %q, want empty", got)
