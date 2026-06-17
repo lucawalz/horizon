@@ -32,6 +32,9 @@ func (m model) leftColumnWidth() int {
 	if pw := poolsNaturalWidth(m.snap); pw > w {
 		w = pw
 	}
+	if cw := clustersNaturalWidth(m.snap); cw > w {
+		w = cw
+	}
 	w += panelStyle.GetHorizontalFrameSize()
 	if w > m.width {
 		w = m.width
@@ -176,23 +179,25 @@ func (m model) wideDashboard() string {
 		return m.mediumDashboard()
 	}
 	gap := strings.Repeat(" ", columnGap)
-	clusters := lipgloss.JoinVertical(
-		lipgloss.Left,
-		clusterStatusPanel(m.snap, rightWidth, false),
-		clustersPanel(m.snap, rightWidth),
+	left := lipgloss.JoinVertical(lipgloss.Left,
+		nodesPanel(m.snap, leftCol, true),
+		clustersPanel(m.snap, leftCol),
+		poolsPanel(m.snap, leftCol, true),
 	)
-	nodesRow := lipgloss.JoinHorizontal(lipgloss.Top, nodesPanel(m.snap, leftCol, true), gap, clusters)
-	poolsRow := lipgloss.JoinHorizontal(lipgloss.Top, poolsPanel(m.snap, leftCol, true), gap, metricsPanel(m.snap, rightWidth))
-	return lipgloss.JoinVertical(lipgloss.Left, nodesRow, poolsRow)
+	right := lipgloss.JoinVertical(lipgloss.Left,
+		clusterStatusPanel(m.snap, rightWidth, false),
+		metricsPanel(m.snap, rightWidth),
+	)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, gap, right)
 }
 
 func (m model) mediumDashboard() string {
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
 		nodesPanel(m.snap, m.width, false),
+		clustersPanel(m.snap, m.width),
 		poolsPanel(m.snap, m.width, true),
 		clusterStatusPanel(m.snap, m.width, false),
-		clustersPanel(m.snap, m.width),
 		metricsPanel(m.snap, m.width),
 	)
 }

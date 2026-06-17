@@ -313,9 +313,6 @@ func rightColumnNaturalWidth(snap core.Snapshot) int {
 			w = x
 		}
 	}
-	if x := clustersNaturalWidth(snap); x > w {
-		w = x
-	}
 	return w
 }
 
