@@ -22,7 +22,7 @@ const (
 	minLogWidth  = 24
 	columnGap    = 2
 
-	logHeightShare = 0.35
+	logHeightShare = 0.20
 
 	gaugeSpacing = "   "
 
