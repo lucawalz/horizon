@@ -414,4 +414,3 @@ func dotForCount(n int, alert lipgloss.AdaptiveColor) lipgloss.AdaptiveColor {
 	}
 	return theme.DotGreen
 }
-
