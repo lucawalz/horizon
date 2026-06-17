@@ -50,16 +50,29 @@ kos:
       - latest
     bare: true
 
-brews:
-  - name: horizon
-    repository:
-      owner: lucawalz
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    homepage: https://github.com/lucawalz/horizon
-    install: |
-      bin.install "horizon"
-    test: |
-      system "#{bin}/horizon", "version"
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^chore"
+      - "^docs"
+      - "^test"
+      - "^ci"
+      - "^build"
+      - "^style"
+      - "^refactor"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Bug fixes
+      regexp: '^fix'
+      order: 1
+    - title: Performance
+      regexp: '^perf'
+      order: 2
+    - title: Others
+      order: 999
