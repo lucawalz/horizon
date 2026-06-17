@@ -102,6 +102,9 @@ type Snapshot struct {
 	Clusters    []ClusterRow
 	Nudge       NudgeState
 	Autoscaler  AutoscalerState
+	Workload    WorkloadSummary
+	NodeHealth  NodeHealthSummary
+	Flux        FluxSummary
 }
 
 func BuildSnapshot(ctx context.Context, app *App) Snapshot {
@@ -127,6 +130,22 @@ func BuildSnapshot(ctx context.Context, app *App) Snapshot {
 	if usageErr != nil {
 		snap.Pressure.MetricsUnavailable = usageErr
 	}
+
+	if podsErr != nil {
+		snap.Workload = WorkloadSummary{Err: podsErr}
+	} else {
+		deps, sts, ds, wErr := workloadKindsFromAPI(ctx, app)
+		snap.Workload = workloadFromLists(pods, deps, sts, ds)
+		if wErr != nil {
+			snap.Workload.Err = wErr
+		}
+	}
+	if nodesErr != nil {
+		snap.NodeHealth = NodeHealthSummary{Err: nodesErr}
+	} else {
+		snap.NodeHealth = nodeHealthFromLists(nodes.Items, pods)
+	}
+	snap.Flux = fluxSummary(ctx, app)
 
 	snap.Pools, snap.PoolsErr = PoolRows(ctx, app, nodeReady)
 	snap.Clusters, snap.ClustersErr = ClusterRows(ctx, app)
