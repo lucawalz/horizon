@@ -139,7 +139,7 @@ func buildRestoreSpecFromValues(fromBackup string, v map[string]string) (velerov
 	return spec, nil
 }
 
-const workerNameSuffix = "-workers"
+const workerPoolName = "workers"
 
 func (m model) clusterSpecFrom(in clusterCreateInput) (capi.ClusterSpec, error) {
 	name := strings.TrimSpace(in.name)
@@ -163,7 +163,7 @@ func (m model) clusterSpecFrom(in clusterCreateInput) (capi.ClusterSpec, error) 
 		Namespace:            orDefault(strings.TrimSpace(in.namespace), m.app.Config.Pools.Namespace),
 		Class:                class,
 		WorkerClass:          orDefault(strings.TrimSpace(in.workerClass), m.app.Config.ClusterCreate.WorkerClass),
-		WorkerName:           name + workerNameSuffix,
+		WorkerName:           workerPoolName,
 		Version:              version,
 		ControlPlaneReplicas: in.controlPlaneReplicas,
 		WorkerReplicas:       in.replicas,
