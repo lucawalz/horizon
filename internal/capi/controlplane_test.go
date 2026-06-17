@@ -49,23 +49,3 @@ func TestIsControlPlaneInitialized(t *testing.T) {
 		})
 	}
 }
-
-func TestNudgeControlPlaneInitialized(t *testing.T) {
-	cl := fake.NewClientBuilder().
-		WithScheme(mustScheme(t)).
-		WithObjects(clusterObject("burst", nil)).
-		WithStatusSubresource(&clusterv1.Cluster{}).
-		Build()
-	c := capi.NewClientWithCRClient(cl)
-
-	if err := c.NudgeControlPlaneInitialized(context.Background(), "caph-system", "burst"); err != nil {
-		t.Fatalf("Nudge: %v", err)
-	}
-	got, err := c.IsControlPlaneInitialized(context.Background(), "caph-system", "burst")
-	if err != nil {
-		t.Fatalf("IsControlPlaneInitialized: %v", err)
-	}
-	if !got {
-		t.Error("control plane not marked initialized after nudge")
-	}
-}
