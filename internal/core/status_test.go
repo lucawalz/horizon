@@ -144,6 +144,21 @@ func TestAutoscalerStateActivityFromConfigMap(t *testing.T) {
 	}
 }
 
+func TestAutoscalerStateActivityFromStatusField(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-autoscaler-status", Namespace: "kube-system"},
+		Data:       map[string]string{"status": "time: 2026-06-17\nautoscalerStatus: Running\nclusterName: burst"},
+	}
+
+	app := newTestApp()
+	app.KubeClient = fake.NewSimpleClientset(cm)
+
+	state := core.AutoscalerStateFor(context.Background(), app)
+	if state.Activity != "running" {
+		t.Errorf("activity = %q, want running", state.Activity)
+	}
+}
+
 func TestAutoscalerStateNotFoundDegrades(t *testing.T) {
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset()

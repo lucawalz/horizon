@@ -396,6 +396,9 @@ func autoscalerActivity(data map[string]string) string {
 	}
 	for _, line := range strings.Split(raw, "\n") {
 		trimmed := strings.TrimSpace(line)
+		if v, ok := strings.CutPrefix(trimmed, "autoscalerStatus:"); ok {
+			return strings.ToLower(strings.TrimSpace(v))
+		}
 		if strings.HasPrefix(trimmed, "Cluster-wide:") || strings.HasPrefix(trimmed, "Health:") {
 			return trimmed
 		}
