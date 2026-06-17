@@ -10,7 +10,7 @@ import (
 var (
 	GroupVersion = schema.GroupVersion{Group: "controlplane.horizon.dev", Version: "v1alpha1"}
 
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion} //nolint:staticcheck // SA1019: standard controller-runtime api registration pattern
 
 	AddToScheme = SchemeBuilder.AddToScheme
 )

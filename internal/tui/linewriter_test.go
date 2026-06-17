@@ -9,15 +9,15 @@ func TestLineWriterSplitsPartialWrites(t *testing.T) {
 	var got []string
 	w := &lineWriter{sink: func(s string) { got = append(got, s) }}
 
-	w.Write([]byte("GET https://"))
+	_, _ = w.Write([]byte("GET https://"))
 	if len(got) != 0 {
 		t.Fatalf("partial line should not flush yet, got %v", got)
 	}
-	w.Write([]byte("api 200\nPATCH /x"))
+	_, _ = w.Write([]byte("api 200\nPATCH /x"))
 	if len(got) != 1 || got[0] != "GET https://api 200" {
 		t.Fatalf("first complete line = %v", got)
 	}
-	w.Write([]byte(" 202\n"))
+	_, _ = w.Write([]byte(" 202\n"))
 	if len(got) != 2 || got[1] != "PATCH /x 202" {
 		t.Fatalf("second complete line = %v", got)
 	}
@@ -31,7 +31,7 @@ func TestLineWriterSplitsPartialWrites(t *testing.T) {
 func TestLineWriterSkipsBlankLines(t *testing.T) {
 	var got []string
 	w := &lineWriter{sink: func(s string) { got = append(got, s) }}
-	w.Write([]byte("\n\nreal\n"))
+	_, _ = w.Write([]byte("\n\nreal\n"))
 	if len(got) != 1 || got[0] != "real" {
 		t.Errorf("blank lines should be skipped, got %v", got)
 	}
