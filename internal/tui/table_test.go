@@ -16,25 +16,6 @@ func TestTableNaturalWidth(t *testing.T) {
 	}
 }
 
-func TestWideSplitShrinksRightGrowsLeft(t *testing.T) {
-	left, right := wideSplit(180, 38, 4)
-	if right != 42 {
-		t.Errorf("right = %d, want 42 (content-sized)", right)
-	}
-	if left != 138 {
-		t.Errorf("left = %d, want 138 (takes the rest)", left)
-	}
-	if left <= right {
-		t.Errorf("left %d should exceed right %d", left, right)
-	}
-	if _, narrowRight := wideSplit(100, 38, 4); narrowRight > 100*2/5 {
-		t.Errorf("right %d exceeds the 2/5 cap on a narrow wide terminal", narrowRight)
-	}
-	if _, tinyRight := wideSplit(200, 4, 2); tinyRight < minRightColWidth {
-		t.Errorf("right %d below floor %d", tinyRight, minRightColWidth)
-	}
-}
-
 func lineContainsBoth(s, a, b string) bool {
 	for _, ln := range strings.Split(s, "\n") {
 		if strings.Contains(ln, a) && strings.Contains(ln, b) {

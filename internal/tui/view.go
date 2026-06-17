@@ -34,14 +34,27 @@ func (m *model) relayout() {
 	m.log.resize(logW, bandHeight)
 }
 
+func (m model) rightRailWidth() int {
+	frame := panelStyle.GetHorizontalFrameSize()
+	floor := rightColumnNaturalWidth(m.snap) + frame
+	if mc := metricsContentWidth(m.snap) + frame; mc > floor {
+		floor = mc
+	}
+	w := m.width * rightRailTargetNum / rightRailTargetDen
+	if w < floor {
+		w = floor
+	}
+	if hi := m.width * rightRailMaxNum / rightRailMaxDen; w > hi {
+		w = hi
+	}
+	return w
+}
+
 func (m model) metricsAsideWidth(bandHeight int) int {
 	if !m.loaded || m.width < wideBreakpoint {
 		return 0
 	}
-	w := metricsContentWidth(m.snap) + panelStyle.GetHorizontalFrameSize()
-	if hi := m.width * metricsAsideCapNum / metricsAsideCapDen; w > hi {
-		w = hi
-	}
+	w := m.rightRailWidth()
 	if m.width-w-columnGap < minLogWidth {
 		return 0
 	}
@@ -178,7 +191,7 @@ func (m model) dashboardBand() string {
 
 func (m model) wideDashboard() string {
 	frame := panelStyle.GetHorizontalFrameSize()
-	_, rightWidth := wideSplit(m.width-columnGap, rightColumnNaturalWidth(m.snap), frame)
+	rightWidth := m.rightRailWidth()
 	nodesWidth := nodesNaturalWidth(m.snap) + frame
 	if maxNodes := m.width - rightWidth - columnGap; nodesWidth > maxNodes {
 		nodesWidth = maxNodes
@@ -198,17 +211,6 @@ func (m model) wideDashboard() string {
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", spacer), right)
 	return lipgloss.JoinVertical(lipgloss.Left, top, poolsPanel(m.snap, m.width, true))
-}
-
-func wideSplit(avail, rightContent, frame int) (left, right int) {
-	right = rightContent + frame
-	if hi := avail * 2 / 5; right > hi {
-		right = hi
-	}
-	if right < minRightColWidth {
-		right = minRightColWidth
-	}
-	return avail - right, right
 }
 
 func (m model) mediumDashboard() string {

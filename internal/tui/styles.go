@@ -26,10 +26,10 @@ const (
 
 	gaugeSpacing = "   "
 
-	minRightColWidth = 28
-
-	metricsAsideCapNum = 1
-	metricsAsideCapDen = 3
+	rightRailTargetNum = 3
+	rightRailTargetDen = 10
+	rightRailMaxNum    = 2
+	rightRailMaxDen    = 5
 )
 
 type Theme struct {
