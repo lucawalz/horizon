@@ -144,8 +144,7 @@ The dashboard is driven by a command line. Pressing `:` focuses a prompt at the 
 
 The available commands are:
 
-- `up [--type elastic|reserved] [--nudge] [<replicas>]` and `down [--type ...] [--delete]` scale a pool up or to zero, or delete it.
-- `nudge [--namespace ns] [--cluster name]` latches the externally managed control plane as initialized.
+- `up [--type elastic|reserved] [<replicas>]` and `down [--type ...] [--delete]` scale a pool up or to zero, or delete it.
 - `burst <namespace> [--type ...] [--replicas n]` backs up a workload, scales the pool, and migrates the workload onto the new nodes.
 - `cluster create <name> --class <cc> [--set k=v ...] [--preview|--write|--apply]` renders, writes, or applies a cluster from a ClusterClass topology. The `--flavor <file>` fallback renders the same actions from a clusterctl flavor template instead; `--class` and `--flavor` are mutually exclusive. `--preview` is the default, `--apply` creates the cluster live, and `--write` renders the manifests into the bedrock tree for Flux to reconcile.
 - `cluster delete <name>` and `cluster list` manage CAPI-managed clusters.
