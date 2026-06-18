@@ -129,6 +129,19 @@ func nodeRowCells(nodes []core.NodeRow, full bool) ([]string, [][]string) {
 	return headers, rows
 }
 
+func clusterNodeCells(nodes []core.NodeRow) ([]string, [][]string) {
+	headers := []string{"NAME", "ROLE", "CPU%", "MEM%", "STATUS"}
+	rows := make([][]string, 0, len(nodes))
+	for _, r := range nodes {
+		role := r.Role
+		if role == "" {
+			role = emptyCell
+		}
+		rows = append(rows, []string{r.Name, role, percentCell(r.CPUPercent, r.MetricsPresent), percentCell(r.MemPercent, r.MetricsPresent), r.Status})
+	}
+	return headers, rows
+}
+
 func nodesStyleFunc(rows [][]string, statusCol int) table.StyleFunc {
 	return func(row, col int) lipgloss.Style {
 		if row == table.HeaderRow {
@@ -337,7 +350,7 @@ func clustersNaturalWidth(snap core.Snapshot) int {
 		if x := tableNaturalWidth(headers, rows); x > w {
 			w = x
 		}
-		nh, nr := nodeRowCells(c.Nodes, false)
+		nh, nr := clusterNodeCells(c.Nodes)
 		if x := tableNaturalWidth(nh, nr) + len(nestIndent); x > w {
 			w = x
 		}
@@ -379,7 +392,7 @@ func clusterBlock(c *core.ClusterRow, inner int) string {
 	case len(c.Nodes) == 0:
 		nested = indentLines(dimStyle.Render("nodes: none"), nestIndent)
 	default:
-		nh, nr := nodeRowCells(c.Nodes, false)
+		nh, nr := clusterNodeCells(c.Nodes)
 		statusCol := len(nh) - 1
 		nested = indentLines(newPanelTable(nh, nestInner, nodesStyleFunc(nr, statusCol)).Rows(nr...).Render(), nestIndent)
 	}
