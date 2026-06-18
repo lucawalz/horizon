@@ -46,7 +46,7 @@ flowchart LR
 
 ## Requirements
 
-horizon is provider-agnostic. It reads and writes Cluster API objects through a kubeconfig and holds no cloud credentials, so the same binary runs over any infrastructure provider that Cluster API supports. The homelab substrate in [bedrock](https://github.com/lucawalz/bedrock) is one concrete instance, not a hard dependency.
+horizon is provider-agnostic at the operations layer. It reads and writes Cluster API objects through a kubeconfig and holds no cloud credentials, so the same binary scales pools and creates clusters over any infrastructure provider that Cluster API supports. The provider-specific definition stays in the ClusterClass and its variables in bedrock, so a second cloud is a substrate change rather than a horizon change. The homelab substrate in [bedrock](https://github.com/lucawalz/bedrock) is one concrete instance, not a hard dependency.
 
 ### Running horizon on any cluster
 
