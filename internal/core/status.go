@@ -2,8 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/lucawalz/horizon/internal/capi"
 	corev1 "k8s.io/api/core/v1"
@@ -19,7 +22,13 @@ const (
 	autoscalerStatusKey       = "status"
 
 	emptyCell = "-"
+
+	remoteNodeTimeout      = 3 * time.Second
+	kubeconfigSecretSuffix = "-kubeconfig"
+	kubeconfigSecretKey    = "value"
 )
+
+var errNoRemotePods = errors.New("pods not fetched")
 
 type NodeUsage = map[string]*metricsv1beta1.NodeMetrics
 
@@ -79,6 +88,8 @@ type ClusterRow struct {
 	Name              string
 	Phase             string
 	ControlPlaneReady string
+	Nodes             []NodeRow
+	NodesErr          error
 }
 
 type NudgeState struct {
@@ -333,16 +344,45 @@ func ClusterRows(ctx context.Context, app *App) ([]ClusterRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows := make([]ClusterRow, 0, len(clusters))
+	rows := make([]ClusterRow, len(clusters))
+	var wg sync.WaitGroup
 	for i := range clusters {
 		c := &clusters[i]
-		rows = append(rows, ClusterRow{
+		rows[i] = ClusterRow{
 			Name:              c.Name,
 			Phase:             ValueOrDash(c.Status.Phase),
 			ControlPlaneReady: BoolOrDash(c.Status.Initialization.ControlPlaneInitialized),
-		})
+		}
+		wg.Add(1)
+		go func(idx int, namespace, name string) {
+			defer wg.Done()
+			rows[idx].Nodes, rows[idx].NodesErr = NodesForCluster(ctx, app, namespace, name)
+		}(i, c.Namespace, c.Name)
 	}
+	wg.Wait()
 	return rows, nil
+}
+
+func NodesForCluster(ctx context.Context, app *App, namespace, cluster string) ([]NodeRow, error) {
+	secret, err := app.KubeClient.CoreV1().Secrets(namespace).Get(ctx, cluster+kubeconfigSecretSuffix, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	raw := secret.Data[kubeconfigSecretKey]
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("kubeconfig secret %s/%s%s missing %q", namespace, cluster, kubeconfigSecretSuffix, kubeconfigSecretKey)
+	}
+	client, err := app.RemoteNodes.ClientForKubeconfig(namespace+"/"+cluster, secret.ResourceVersion, raw)
+	if err != nil {
+		return nil, err
+	}
+	listCtx, cancel := context.WithTimeout(ctx, remoteNodeTimeout)
+	defer cancel()
+	list, err := client.CoreV1().Nodes().List(listCtx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return nodeRowsFromLists(list.Items, nil, errNoRemotePods, nil), nil
 }
 
 func NudgeStateFor(ctx context.Context, app *App) NudgeState {

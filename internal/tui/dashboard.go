@@ -108,12 +108,16 @@ func nodesPanel(snap core.Snapshot, width int, full bool) string {
 }
 
 func nodeTableData(snap core.Snapshot, full bool) ([]string, [][]string) {
+	return nodeRowCells(snap.Nodes, full)
+}
+
+func nodeRowCells(nodes []core.NodeRow, full bool) ([]string, [][]string) {
 	headers := []string{"NAME", "ROLE", "CPU%", "MEM%", "PODS", "STATUS", "IP"}
 	if !full {
 		headers = []string{"NAME", "CPU%", "MEM%", "STATUS"}
 	}
-	rows := make([][]string, 0, len(snap.Nodes))
-	for _, r := range snap.Nodes {
+	rows := make([][]string, 0, len(nodes))
+	for _, r := range nodes {
 		cpu := percentCell(r.CPUPercent, r.MetricsPresent)
 		mem := percentCell(r.MemPercent, r.MetricsPresent)
 		if full {
@@ -316,6 +320,8 @@ func rightColumnNaturalWidth(snap core.Snapshot) int {
 	return w
 }
 
+const nestIndent = "  "
+
 func clustersNaturalWidth(snap core.Snapshot) int {
 	if snap.ClustersErr != nil {
 		return lipgloss.Width(fmt.Sprintf("unavailable: %v", snap.ClustersErr))
@@ -323,12 +329,20 @@ func clustersNaturalWidth(snap core.Snapshot) int {
 	if len(snap.Clusters) == 0 {
 		return lipgloss.Width("(no managed clusters)")
 	}
-	headers := []string{"NAME", "PHASE", "CP-INITIALIZED"}
-	rows := make([][]string, 0, len(snap.Clusters))
-	for _, c := range snap.Clusters {
-		rows = append(rows, []string{c.Name, c.Phase, c.ControlPlaneReady})
+	w := 0
+	for i := range snap.Clusters {
+		c := &snap.Clusters[i]
+		headers := []string{"NAME", "PHASE", "CP-INITIALIZED"}
+		rows := [][]string{{c.Name, c.Phase, c.ControlPlaneReady}}
+		if x := tableNaturalWidth(headers, rows); x > w {
+			w = x
+		}
+		nh, nr := nodeRowCells(c.Nodes, false)
+		if x := tableNaturalWidth(nh, nr) + len(nestIndent); x > w {
+			w = x
+		}
 	}
-	return tableNaturalWidth(headers, rows)
+	return w
 }
 
 func clustersPanel(snap core.Snapshot, width int) string {
@@ -342,12 +356,42 @@ func clustersBody(snap core.Snapshot, inner int) string {
 	if len(snap.Clusters) == 0 {
 		return dimStyle.Render("(no managed clusters)")
 	}
-	headers := []string{"NAME", "PHASE", "CP-INITIALIZED"}
-	rows := make([][]string, 0, len(snap.Clusters))
-	for _, c := range snap.Clusters {
-		rows = append(rows, []string{c.Name, c.Phase, c.ControlPlaneReady})
+	blocks := make([]string, 0, len(snap.Clusters))
+	for i := range snap.Clusters {
+		blocks = append(blocks, clusterBlock(&snap.Clusters[i], inner))
 	}
-	return neutralTable(headers, rows, inner)
+	return strings.Join(blocks, "\n")
+}
+
+func clusterBlock(c *core.ClusterRow, inner int) string {
+	headers := []string{"NAME", "PHASE", "CP-INITIALIZED"}
+	rows := [][]string{{c.Name, c.Phase, c.ControlPlaneReady}}
+	header := neutralTable(headers, rows, inner)
+
+	nestInner := inner - len(nestIndent)
+	if nestInner < 1 {
+		nestInner = 1
+	}
+	var nested string
+	switch {
+	case c.NodesErr != nil:
+		nested = indentLines(dimStyle.Render("nodes: unavailable"), nestIndent)
+	case len(c.Nodes) == 0:
+		nested = indentLines(dimStyle.Render("nodes: none"), nestIndent)
+	default:
+		nh, nr := nodeRowCells(c.Nodes, false)
+		statusCol := len(nh) - 1
+		nested = indentLines(newPanelTable(nh, nestInner, nodesStyleFunc(nr, statusCol)).Rows(nr...).Render(), nestIndent)
+	}
+	return header + "\n" + nested
+}
+
+func indentLines(s, prefix string) string {
+	lines := splitLines(s)
+	for i := range lines {
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func clusterStatusPanel(snap core.Snapshot, width int, foldClusters bool) string {
