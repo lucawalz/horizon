@@ -32,9 +32,9 @@ Format: `<type>/<description>`
 
 | Type | Alias | Use case | Example |
 |------|-------|----------|---------|
-| `feat/` | `feature/` | New features | `feat/watch-daemon-hysteresis` |
-| `fix/` | `bugfix/` | Bug fixes | `fix/wireguard-peer-revocation` |
-| `hotfix/` | - | Urgent fixes | `hotfix/terraform-state-leak` |
+| `feat/` | `feature/` | New features | `feat/cluster-create-flavors` |
+| `fix/` | `bugfix/` | Bug fixes | `fix/cluster-create-naming` |
+| `hotfix/` | - | Urgent fixes | `hotfix/burst-rollback-failure` |
 | `release/` | - | Release preparation | `release/v0.2.0` |
 | `chore/` | - | Non-code tasks (deps, docs) | `chore/update-dependencies` |
 
@@ -47,7 +47,7 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 **Format**: `<type>[optional scope]: <description>`
 
 - Description: brief, imperative, lowercase, 7–12 words
-- Scope: component name (`cli`, `provider`, `runner`, `k8s`, `wireguard`, …)
+- Scope: component name (`tui`, `core`, `capi`, `k8s`, `config`, …)
 - No period at end of subject line
 - Subject line only, no body, no bullet points
 
@@ -56,8 +56,8 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 **Examples**:
 
 ```
-feat(provider): add hetzner vm provisioning via terraform-exec
-fix(runner): log rollback errors to stderr instead of discarding
+feat(capi): apply machinedeployment for reserved pool
+fix(core): log rollback errors to stderr instead of discarding
 chore: bump k8s client-go to v0.35
 ```
 

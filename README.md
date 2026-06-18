@@ -18,9 +18,9 @@ horizon distinguishes three capacity categories, each with a different owner.
 
 - Elastic pools (`horizon.dev/pool-type=elastic`): autoscaled by the in-cluster cluster-autoscaler, which scales them to zero and back as pending pods demand. horizon can scale an elastic pool by hand, but the autoscaler owns the pool and may override that scale.
 - Reserved pools (`horizon.dev/pool-type=reserved`): operator-pinned and kept off the autoscaler's min and max annotations. horizon owns these through its scale, drain-down, and burst actions; this is the default pool type. Reserved pools carry a Flux create-once annotation, so a manual scale sticks.
-- Clusters: separate CAPI-managed clusters with their own KThreesControlPlane that auto-import to Rancher. No nudge applies.
+- Clusters: separate CAPI-managed clusters with their own KThreesControlPlane that auto-import to Rancher. No control-plane latch is needed.
 
-The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). Each type maps to a MachineDeployment name through the `pools.types` config. Pool machines join the existing home cluster, whose control plane is externally managed, so Cluster API never marks it initialized on its own; a one-time nudge latches that status so workers bootstrap.
+The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). Each type maps to a MachineDeployment name through the `pools.types` config. Pool machines join the existing home cluster, whose control plane is externally managed, so Cluster API never marks it initialized on its own; an in-cluster ExternalControlPlane controller latches that status so workers bootstrap.
 
 ### Background
 
@@ -136,7 +136,7 @@ horizon --context homelab --cluster burst
 
 The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory with fixed usage bands and the count of pending pods, and panels on the left list the nodes, the pools with their type and replica state, and any separate CAPI-managed clusters. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
 
-The pool panel shows the type read from each MachineDeployment's `horizon.dev/pool-type` label, alongside its desired and ready replicas and machine state. The pressure header warns when the externally managed control plane is not yet marked initialized, so the nudge is not silently forgotten.
+The pool panel shows the type read from each MachineDeployment's `horizon.dev/pool-type` label, alongside its desired and ready replicas and machine state. The pressure header warns when the externally managed control plane is not yet marked initialized, so an uninitialized control plane is not silently missed.
 
 ### Actions
 
@@ -192,7 +192,7 @@ The tap requires a one-time operator setup that cannot be automated from this re
 
 - Routine scale-out is the cluster-autoscaler's job. The autoscaler owns elastic pools and scales them to zero on its own. horizon owns reserved pools, scaling them directly, and deliberately leaves the autoscaler min and max annotations off them so the two scaling paths do not fight.
 - A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the pool to its prior replica count.
-- The control-plane nudge is a status-subresource write, the one deliberate exception to GitOps durability. It cannot live in git and resets if the Cluster is recreated, so the dashboard warns when it is unset.
+- The control-plane status is latched by an in-cluster ExternalControlPlane controller, not by horizon. horizon only reads it, and the dashboard warns when it is unset.
 - Workload placement is a contract: bedrock's KThreesConfigTemplate labels nodes `horizon.dev/pool=<type>` at join, and horizon rewrites workload affinity to match the targeted pool type.
 
 ## Repository layout
@@ -202,7 +202,8 @@ cmd/horizon/        main entry point
 internal/tui/       Bubble Tea command centre and panels
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
-internal/capi/      Cluster API client, pool and cluster operations, manifest rendering, git writes, nudge
+internal/capi/      Cluster API client, pool and cluster operations, manifest rendering, git writes
+internal/controller/  ExternalControlPlane controller that latches externally-managed control-plane status
 internal/k8s/       cluster client, drain, workload migration
 internal/prometheus/  pressure queries over a port-forward
 internal/velero/    backups and restores

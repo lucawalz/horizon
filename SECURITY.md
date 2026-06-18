@@ -1,6 +1,6 @@
 # Security policy
 
-horizon handles cloud and cluster credentials (Hetzner Cloud, the WireGuard hub, and the K3s join token). The Hetzner token and K3s join values are read from environment variables or a local `config.yaml` that is gitignored and never committed. WireGuard burst keypairs are generated in memory per node and the private key is passed to the VM through Terraform; only the public key is registered on the hub. No secret is stored in the repository.
+horizon holds no cloud credentials and never calls a cloud API. It reads and writes Cluster API objects through a kubeconfig; the kubeconfig path and context live in a local `config.yaml` that is gitignored and never committed. The infrastructure provider, managed by Cluster API, owns all cloud and node credentials. No secret is stored in the repository.
 
 ## Reporting a vulnerability
 
