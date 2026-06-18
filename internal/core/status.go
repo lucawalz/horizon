@@ -192,11 +192,15 @@ func FetchNodeUsage(ctx context.Context, app *App) (map[string]*metricsv1beta1.N
 	if err != nil {
 		return nil, err
 	}
+	return nodeUsageFromList(list), nil
+}
+
+func nodeUsageFromList(list *metricsv1beta1.NodeMetricsList) map[string]*metricsv1beta1.NodeMetrics {
 	usage := make(map[string]*metricsv1beta1.NodeMetrics, len(list.Items))
 	for i := range list.Items {
 		usage[list.Items[i].Name] = &list.Items[i]
 	}
-	return usage, nil
+	return usage
 }
 
 func PressureFor(ctx context.Context, app *App, usage map[string]*metricsv1beta1.NodeMetrics) PressureSummary {
@@ -372,7 +376,7 @@ func NodesForCluster(ctx context.Context, app *App, namespace, cluster string) (
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("kubeconfig secret %s/%s%s missing %q", namespace, cluster, kubeconfigSecretSuffix, kubeconfigSecretKey)
 	}
-	client, err := app.RemoteNodes.ClientForKubeconfig(namespace+"/"+cluster, secret.ResourceVersion, raw)
+	client, metricsClient, err := app.RemoteNodes.ClientsForKubeconfig(namespace+"/"+cluster, secret.ResourceVersion, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +386,13 @@ func NodesForCluster(ctx context.Context, app *App, namespace, cluster string) (
 	if err != nil {
 		return nil, err
 	}
-	return nodeRowsFromLists(list.Items, nil, errNoRemotePods, nil), nil
+	var usage map[string]*metricsv1beta1.NodeMetrics
+	mctx, mcancel := context.WithTimeout(ctx, remoteNodeTimeout)
+	defer mcancel()
+	if ml, mErr := metricsClient.MetricsV1beta1().NodeMetricses().List(mctx, metav1.ListOptions{}); mErr == nil {
+		usage = nodeUsageFromList(ml)
+	}
+	return nodeRowsFromLists(list.Items, nil, errNoRemotePods, usage), nil
 }
 
 func NudgeStateFor(ctx context.Context, app *App) NudgeState {
