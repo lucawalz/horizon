@@ -259,7 +259,7 @@ func (m model) parseClusterCreate(args []string) commandResult {
 	flavor := fs.String("flavor", "", "")
 	version := fs.String("version", "", "")
 	replicas := fs.Int("replicas", 1, "")
-	controlPlaneReplicas := fs.Int("control-plane-replicas", 1, "")
+	controlPlaneReplicas := fs.Int("cp-replicas", 1, "")
 	var sets stringSlice
 	fs.Var(&sets, "set", "")
 	fs.Bool("preview", false, "")
