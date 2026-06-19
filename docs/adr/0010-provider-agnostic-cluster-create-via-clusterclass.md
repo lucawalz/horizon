@@ -1,9 +1,11 @@
 ---
-status: accepted
+status: superseded
 date: 2026-06-16
 ---
 
 # 0010. Make cluster create provider-agnostic through a ClusterClass topology
+
+Superseded by [0014](0014-narrow-horizon-to-on-demand-pool-scaler.md).
 
 ## Context
 
