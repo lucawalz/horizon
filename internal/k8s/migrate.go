@@ -14,11 +14,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const PoolLabelKey = "horizon.dev/pool"
+const (
+	PoolLabelKey     = "horizon.dev/pool"
+	BurstTaintKey    = "horizon.dev/burst"
+	burstTaintEffect = corev1.TaintEffectNoSchedule
+)
 
 type savedSpec struct {
-	name             string
-	originalAffinity []byte
+	name               string
+	originalAffinity   []byte
+	originalToleration []byte
 }
 
 type SavedState struct {
@@ -39,20 +44,30 @@ func ValidateNamespace(ns string) error {
 	return nil
 }
 
-type affinityPatch struct {
+type podSpecPatch struct {
 	Spec struct {
 		Template struct {
 			Spec struct {
-				Affinity *corev1.Affinity `json:"affinity"`
+				Affinity    *corev1.Affinity    `json:"affinity"`
+				Tolerations []corev1.Toleration `json:"tolerations"`
 			} `json:"spec"`
 		} `json:"template"`
 	} `json:"spec"`
 }
 
-func buildAffinityPatch(a *corev1.Affinity) ([]byte, error) {
-	p := affinityPatch{}
+func buildPodSpecPatch(a *corev1.Affinity, tolerations []corev1.Toleration) ([]byte, error) {
+	p := podSpecPatch{}
 	p.Spec.Template.Spec.Affinity = a
+	p.Spec.Template.Spec.Tolerations = tolerations
 	return json.Marshal(p)
+}
+
+func burstToleration() corev1.Toleration {
+	return corev1.Toleration{
+		Key:      BurstTaintKey,
+		Operator: corev1.TolerationOpExists,
+		Effect:   burstTaintEffect,
+	}
 }
 
 func poolNodeAffinity(poolLabelValue string) *corev1.Affinity {
@@ -87,16 +102,13 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelV
 		return nil, fmt.Errorf("migrate: no node carries label %s=%s", PoolLabelKey, poolLabelValue)
 	}
 
-	patchData, err := buildAffinityPatch(poolNodeAffinity(poolLabelValue))
-	if err != nil {
-		return nil, fmt.Errorf("migrate: marshal affinity patch: %w", err)
-	}
+	targetAffinity := poolNodeAffinity(poolLabelValue)
 
 	state := &SavedState{namespace: namespace}
-	if err := migrateDeployments(ctx, kc, namespace, patchData, state); err != nil {
+	if err := migrateDeployments(ctx, kc, namespace, targetAffinity, state); err != nil {
 		return state, err
 	}
-	if err := migrateStatefulSets(ctx, kc, namespace, patchData, state); err != nil {
+	if err := migrateStatefulSets(ctx, kc, namespace, targetAffinity, state); err != nil {
 		return state, err
 	}
 	if err := evictNonDaemonSetPods(ctx, kc, namespace, "migrate"); err != nil {
@@ -105,18 +117,18 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelV
 	return state, nil
 }
 
-func migrateDeployments(ctx context.Context, kc kubernetes.Interface, namespace string, patchData []byte, state *SavedState) error {
+func migrateDeployments(ctx context.Context, kc kubernetes.Interface, namespace string, affinity *corev1.Affinity, state *SavedState) error {
 	deps, err := kc.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("migrate: list deployments in %q: %w", namespace, err)
 	}
 	for i := range deps.Items {
 		d := deps.Items[i]
-		orig, err := marshalAffinity(d.Spec.Template.Spec.Affinity, d.Name)
+		saved, patchData, err := buildMigratePatch(d.Name, &d.Spec.Template.Spec, affinity)
 		if err != nil {
 			return err
 		}
-		state.deployments = append(state.deployments, savedSpec{name: d.Name, originalAffinity: orig})
+		state.deployments = append(state.deployments, saved)
 		if _, err := kc.AppsV1().Deployments(namespace).Patch(ctx, d.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
 			return fmt.Errorf("migrate: patch deployment %q: %w", d.Name, err)
 		}
@@ -124,23 +136,48 @@ func migrateDeployments(ctx context.Context, kc kubernetes.Interface, namespace 
 	return nil
 }
 
-func migrateStatefulSets(ctx context.Context, kc kubernetes.Interface, namespace string, patchData []byte, state *SavedState) error {
+func migrateStatefulSets(ctx context.Context, kc kubernetes.Interface, namespace string, affinity *corev1.Affinity, state *SavedState) error {
 	stss, err := kc.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("migrate: list statefulsets in %q: %w", namespace, err)
 	}
 	for i := range stss.Items {
 		s := stss.Items[i]
-		orig, err := marshalAffinity(s.Spec.Template.Spec.Affinity, s.Name)
+		saved, patchData, err := buildMigratePatch(s.Name, &s.Spec.Template.Spec, affinity)
 		if err != nil {
 			return err
 		}
-		state.statefulSets = append(state.statefulSets, savedSpec{name: s.Name, originalAffinity: orig})
+		state.statefulSets = append(state.statefulSets, saved)
 		if _, err := kc.AppsV1().StatefulSets(namespace).Patch(ctx, s.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
 			return fmt.Errorf("migrate: patch statefulset %q: %w", s.Name, err)
 		}
 	}
 	return nil
+}
+
+func buildMigratePatch(name string, podSpec *corev1.PodSpec, affinity *corev1.Affinity) (savedSpec, []byte, error) {
+	origAffinity, err := marshalAffinity(podSpec.Affinity, name)
+	if err != nil {
+		return savedSpec{}, nil, err
+	}
+	origTolerations, err := marshalTolerations(podSpec.Tolerations, name)
+	if err != nil {
+		return savedSpec{}, nil, err
+	}
+	patchData, err := buildPodSpecPatch(affinity, withBurstToleration(podSpec.Tolerations))
+	if err != nil {
+		return savedSpec{}, nil, fmt.Errorf("migrate: marshal patch for %q: %w", name, err)
+	}
+	return savedSpec{name: name, originalAffinity: origAffinity, originalToleration: origTolerations}, patchData, nil
+}
+
+func withBurstToleration(existing []corev1.Toleration) []corev1.Toleration {
+	for _, t := range existing {
+		if t.Key == BurstTaintKey && t.Effect == burstTaintEffect && t.Operator == corev1.TolerationOpExists {
+			return existing
+		}
+	}
+	return append(append([]corev1.Toleration{}, existing...), burstToleration())
 }
 
 func marshalAffinity(a *corev1.Affinity, name string) ([]byte, error) {
@@ -150,6 +187,17 @@ func marshalAffinity(a *corev1.Affinity, name string) ([]byte, error) {
 	orig, err := json.Marshal(a)
 	if err != nil {
 		return nil, fmt.Errorf("migrate: marshal affinity for %q: %w", name, err)
+	}
+	return orig, nil
+}
+
+func marshalTolerations(t []corev1.Toleration, name string) ([]byte, error) {
+	if t == nil {
+		return nil, nil
+	}
+	orig, err := json.Marshal(t)
+	if err != nil {
+		return nil, fmt.Errorf("migrate: marshal tolerations for %q: %w", name, err)
 	}
 	return orig, nil
 }
@@ -172,17 +220,23 @@ func evictNonDaemonSetPods(ctx context.Context, kc kubernetes.Interface, namespa
 	return nil
 }
 
-func restoreAffinityPatch(ss savedSpec, kind string) ([]byte, error) {
-	var restored *corev1.Affinity
+func restoreSpecPatch(ss savedSpec, kind string) ([]byte, error) {
+	var affinity *corev1.Affinity
 	if ss.originalAffinity != nil {
-		restored = &corev1.Affinity{}
-		if err := json.Unmarshal(ss.originalAffinity, restored); err != nil {
+		affinity = &corev1.Affinity{}
+		if err := json.Unmarshal(ss.originalAffinity, affinity); err != nil {
 			return nil, fmt.Errorf("rollback-migrate: unmarshal affinity for %s %q: %w", kind, ss.name, err)
 		}
 	}
-	patchData, err := buildAffinityPatch(restored)
+	var tolerations []corev1.Toleration
+	if ss.originalToleration != nil {
+		if err := json.Unmarshal(ss.originalToleration, &tolerations); err != nil {
+			return nil, fmt.Errorf("rollback-migrate: unmarshal tolerations for %s %q: %w", kind, ss.name, err)
+		}
+	}
+	patchData, err := buildPodSpecPatch(affinity, tolerations)
 	if err != nil {
-		return nil, fmt.Errorf("rollback-migrate: marshal affinity patch for %s %q: %w", kind, ss.name, err)
+		return nil, fmt.Errorf("rollback-migrate: marshal patch for %s %q: %w", kind, ss.name, err)
 	}
 	return patchData, nil
 }
@@ -201,7 +255,7 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 	var firstErr error
 
 	for _, ss := range state.deployments {
-		patchData, err := restoreAffinityPatch(ss, "deployment")
+		patchData, err := restoreSpecPatch(ss, "deployment")
 		if err != nil {
 			recordFirst(&firstErr, err)
 			continue
@@ -212,7 +266,7 @@ func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedS
 	}
 
 	for _, ss := range state.statefulSets {
-		patchData, err := restoreAffinityPatch(ss, "statefulset")
+		patchData, err := restoreSpecPatch(ss, "statefulset")
 		if err != nil {
 			recordFirst(&firstErr, err)
 			continue

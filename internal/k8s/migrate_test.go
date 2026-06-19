@@ -148,6 +148,9 @@ func TestMigrateAffinityPatch(t *testing.T) {
 		if !strings.Contains(body, poolValue) {
 			t.Errorf("deployment patch missing pool value: %s", body)
 		}
+		if !strings.Contains(body, k8s.BurstTaintKey) {
+			t.Errorf("deployment patch missing burst toleration key: %s", body)
+		}
 	}
 
 	if len(stsPatches) != 1 {
@@ -163,6 +166,9 @@ func TestMigrateAffinityPatch(t *testing.T) {
 		}
 		if !strings.Contains(body, poolValue) {
 			t.Errorf("statefulset patch missing pool value: %s", body)
+		}
+		if !strings.Contains(body, k8s.BurstTaintKey) {
+			t.Errorf("statefulset patch missing burst toleration key: %s", body)
 		}
 	}
 }
@@ -243,11 +249,13 @@ func TestRollbackMigrate_RestoresAffinityAndLeavesNode(t *testing.T) {
 		},
 	}
 
+	existingToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+
 	dep1 := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: "sentio-systems"},
 		Spec: appsv1.DeploymentSpec{
 			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{Affinity: existingAffinity},
+				Spec: corev1.PodSpec{Affinity: existingAffinity, Tolerations: []corev1.Toleration{existingToleration}},
 			},
 		},
 	}
@@ -260,11 +268,30 @@ func TestRollbackMigrate_RestoresAffinityAndLeavesNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
+
+	var migrateDepBody string
+	for _, a := range kc.Actions() {
+		if a.GetVerb() != "patch" || a.GetResource().Resource != "deployments" {
+			continue
+		}
+		pa := a.(k8stesting.PatchAction)
+		if pa.GetName() == "dep1" {
+			migrateDepBody = string(pa.GetPatch())
+		}
+	}
+	if !strings.Contains(migrateDepBody, k8s.BurstTaintKey) {
+		t.Errorf("migrate dep1 patch missing burst toleration: %s", migrateDepBody)
+	}
+	if !strings.Contains(migrateDepBody, "workload") {
+		t.Errorf("migrate dep1 patch dropped the original toleration: %s", migrateDepBody)
+	}
+
 	if err := k8s.RollbackMigrate(context.Background(), kc, state); err != nil {
 		t.Fatalf("RollbackMigrate: %v", err)
 	}
 
 	var depPatches int
+	var rollbackDepBody string
 	for _, a := range kc.Actions() {
 		if a.GetVerb() != "patch" {
 			continue
@@ -274,11 +301,18 @@ func TestRollbackMigrate_RestoresAffinityAndLeavesNode(t *testing.T) {
 		}
 		if a.GetResource().Resource == "deployments" {
 			depPatches++
+			rollbackDepBody = string(a.(k8stesting.PatchAction).GetPatch())
 		}
 	}
 
 	if depPatches < 2 {
 		t.Errorf("deployment patch count = %d, want >= 2", depPatches)
+	}
+	if strings.Contains(rollbackDepBody, k8s.BurstTaintKey) {
+		t.Errorf("rollback dep1 patch must not retain burst toleration: %s", rollbackDepBody)
+	}
+	if !strings.Contains(rollbackDepBody, "workload") {
+		t.Errorf("rollback dep1 patch must restore original toleration: %s", rollbackDepBody)
 	}
 
 	n, err := kc.CoreV1().Nodes().Get(context.Background(), "burst-1", metav1.GetOptions{})
