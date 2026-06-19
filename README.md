@@ -4,21 +4,20 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 
-A Cluster-API operator CLI: it adds on-demand capacity to a homelab cluster by scaling node pools and standing up clusters.
+An on-demand homelab node scaler: a Cluster-API operator CLI that adds capacity to an existing cluster by scaling node pools.
 
 ## Description
 
-horizon is a thin command-line operator over Cluster API. It gives a small Kubernetes cluster elastic headroom without owning any cloud provisioning itself. When a workload needs more room than the local nodes provide, horizon scales an existing worker pool so new nodes join the cluster, and it can migrate a workload onto those nodes and tear the pool back down afterward. It can also stand up a separate, fully managed cluster on demand.
+horizon is a thin command-line operator over Cluster API. It gives a small Kubernetes cluster elastic headroom without owning any cloud provisioning itself. When a workload needs more room than the local nodes provide, horizon scales an existing worker pool so new nodes join the cluster, and it can migrate a workload onto those nodes and tear the pool back down afterward.
 
 The substrate horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for infrastructure and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity and an in-cluster cluster-autoscaler for scale-on-demand. horizon reads and writes Cluster API objects through a kubeconfig context and leaves the definition of infrastructure to bedrock.
 
 ### Pool categories
 
-horizon distinguishes three capacity categories, each with a different owner.
+horizon distinguishes two capacity categories, each with a different owner.
 
 - Elastic pools (`horizon.dev/pool-type=elastic`): autoscaled by the in-cluster cluster-autoscaler, which scales them to zero and back as pending pods demand. horizon can scale an elastic pool by hand, but the autoscaler owns the pool and may override that scale.
 - Reserved pools (`horizon.dev/pool-type=reserved`): operator-pinned and kept off the autoscaler's min and max annotations. horizon owns these through its scale, drain-down, and burst actions; this is the default pool type. Reserved pools carry a Flux create-once annotation, so a manual scale sticks.
-- Clusters: separate CAPI-managed clusters with their own KThreesControlPlane that auto-import to Rancher. No control-plane latch is needed.
 
 The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). Each type maps to a MachineDeployment name through the `pools.types` config. Pool machines join the existing home cluster, whose control plane is externally managed, so Cluster API never marks it initialized on its own; an in-cluster ExternalControlPlane controller latches that status so workers bootstrap.
 
@@ -28,25 +27,23 @@ horizon exists so a three-node home cluster can absorb occasional heavy jobs wit
 
 ## Architecture
 
-The in-cluster cluster-autoscaler watches for pending pods and scales the autoscaler-managed pools on its own, so routine scale-out needs no laptop. horizon adds explicit control on top through its dashboard: it scales a worker pool up or down, runs a guided burst, and manages on-demand clusters. A burst takes a Velero backup of the target namespace, scales the worker pool up, waits for the new machines to become ready, rewrites workload node affinity onto the pool, and waits for the workload to land on the new nodes.
+The in-cluster cluster-autoscaler watches for pending pods and scales the autoscaler-managed pools on its own, so routine scale-out needs no laptop. horizon adds explicit control on top through its dashboard: it scales a worker pool up or down and runs a guided burst. A burst takes a Velero backup of the target namespace, scales the worker pool up, waits for the new machines to become ready, rewrites workload node affinity onto the pool, and waits for the workload to land on the new nodes.
 
-Nodes are labeled `horizon.dev/pool=<value>` at join time by bedrock's KThreesConfigTemplate. horizon never labels nodes itself; it rewrites workload affinity to target that label. Durable pools and clusters can be rendered into the bedrock git tree for Flux to reconcile. horizon writes the tree but never commits or pushes it.
+Nodes are labeled `horizon.dev/pool=<value>` at join time by bedrock's KThreesConfigTemplate. horizon never labels nodes itself; it rewrites workload affinity to target that label. Durable pools can be rendered into the bedrock git tree for Flux to reconcile. horizon writes the tree but never commits or pushes it.
 
 ```mermaid
 flowchart LR
   pods[(Pending pods)] --> autoscaler[cluster-autoscaler]
   autoscaler --> md[Worker MachineDeployment]
   horizon[horizon CLI] -->|up / down / burst| md
-  horizon -->|cluster create| capi[CAPI-managed cluster]
   md --> caph[CAPH on Hetzner]
-  capi --> caph
   caph -. Tailscale + k3s agent .-> cluster[(Home cluster)]
   horizon -->|migrate workload| cluster
 ```
 
 ## Requirements
 
-horizon is provider-agnostic at the operations layer. It reads and writes Cluster API objects through a kubeconfig and holds no cloud credentials, so the same binary scales pools and creates clusters over any infrastructure provider that Cluster API supports. The provider-specific definition stays in the ClusterClass and its variables in bedrock, so a second cloud is a substrate change rather than a horizon change. The homelab substrate in [bedrock](https://github.com/lucawalz/bedrock) is one concrete instance, not a hard dependency.
+horizon is provider-agnostic at the operations layer. It reads and writes Cluster API objects through a kubeconfig and holds no cloud credentials, so the same binary scales pools over any infrastructure provider that Cluster API supports. The provider-specific definition stays with the substrate in bedrock, so a second cloud is a substrate change rather than a horizon change. The homelab substrate in [bedrock](https://github.com/lucawalz/bedrock) is one concrete instance, not a hard dependency.
 
 ### Running horizon on any cluster
 
@@ -59,11 +56,6 @@ Hard requirements:
 - At least one infrastructure provider installed and configured. Cloud credentials and machine templates live in the provider's namespace, managed by Cluster API, never by horizon.
 - MachineDeployments labeled `horizon.dev/pool-type=<type>` so horizon recognizes them as pools, with `pools.types` mapping each type to its MachineDeployment name and `pools.namespace` pointing at the namespace where those MachineDeployments live.
 
-For managed `cluster create`, additionally:
-
-- A control-plane provider and a bootstrap provider, for example cluster-api-k3s or kubeadm.
-- Either a ClusterClass and the `CLUSTER_TOPOLOGY` feature gate enabled for the `--class` path, or a clusterctl flavor template for the `--flavor` path.
-
 Optional, each gating one feature:
 
 - metrics-server for the dashboard CPU and memory header.
@@ -74,7 +66,7 @@ horizon never calls a cloud API and stores no cloud credentials. The infrastruct
 
 ### Minimal configuration
 
-A minimal `config.yaml` names the kubeconfig, the target cluster, and the pool layout. Theme and `cluster_create` defaults are optional.
+A minimal `config.yaml` names the kubeconfig, the target cluster, and the pool layout. The theme is optional.
 
 ```yaml
 kubeconfig: ""
@@ -85,12 +77,7 @@ pools:
   namespace: caph-system
   default_type: reserved
   types:
-    elastic: elastic-workers
     reserved: reserved-workers
-
-cluster_create:
-  class: ""
-  worker_class: ""
 ```
 
 Set `pools.namespace` to the namespace where the chosen provider's MachineDeployments live. The full template is in [`config.example.yaml`](config.example.yaml).
@@ -134,20 +121,18 @@ horizon --context homelab --cluster burst
 
 ### The dashboard
 
-The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory with fixed usage bands and the count of pending pods, and panels on the left list the nodes, the pools with their type and replica state, and any separate CAPI-managed clusters. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
+The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory with fixed usage bands and the count of pending pods, and panels on the left list the nodes and the pools with their type and replica state. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
 
 The pool panel shows the type read from each MachineDeployment's `horizon.dev/pool-type` label, alongside its desired and ready replicas and machine state. The pressure header warns when the externally managed control plane is not yet marked initialized, so an uninitialized control plane is not silently missed.
 
 ### Actions
 
-The dashboard is driven by a command line. Pressing `:` focuses a prompt at the bottom and the output streams into the command log on the right. The dashboard refreshes when a command changes cluster state. Destructive commands ask for confirmation first, and long operations such as a burst or a cluster create stream their progress.
+The dashboard is driven by a command line. Pressing `:` focuses a prompt at the bottom and the output streams into the command log on the right. The dashboard refreshes when a command changes cluster state. Destructive commands ask for confirmation first, and long operations such as a burst stream their progress.
 
 The available commands are:
 
 - `up [--type elastic|reserved] [<replicas>]` and `down [--type ...] [--delete]` scale a pool up or to zero, or delete it.
 - `burst <namespace> [--type ...] [--replicas n]` backs up a workload, scales the pool, and migrates the workload onto the new nodes.
-- `cluster create <name> --class <cc> [--set k=v ...] [--preview|--write|--apply]` renders, writes, or applies a cluster from a ClusterClass topology. The `--flavor <file>` fallback renders the same actions from a clusterctl flavor template instead; `--class` and `--flavor` are mutually exclusive. `--preview` is the default, `--apply` creates the cluster live, and `--write` renders the manifests into the bedrock tree for Flux to reconcile.
-- `cluster delete <name>` and `cluster list` manage CAPI-managed clusters.
 - `backup create [--include-namespaces ...] [--wait]`, `backup list`, `backup describe <name>`, and `backup delete <name>` drive Velero backups.
 - `restore create --from-backup <name> [--wait]`, `restore list`, and `restore describe <name>` drive Velero restores.
 - `schedule create <name> --schedule "<cron>" [--include-namespaces ...]`, `schedule list`, `schedule describe <name>`, and `schedule delete <name>` manage recurring backup schedules.
@@ -174,8 +159,7 @@ Key fields:
 - `cluster`: default CAPI cluster name; falls back to the pool cluster when unset.
 - `repo_path`: path to the GitOps git work tree, required only for the GitOps write action. It is resolved to an absolute path and must exist.
 - `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `:theme` picker writes this field. Defaults to `auto`.
-- `cluster_create`: optional defaults for `cluster create`, with `class` and `worker_class` used when the corresponding flags are omitted.
-- `pools`: the default `namespace` and `cluster` (`burst`), the `default_type` (`reserved`), the Kubernetes `version` used by `cluster create` when `--version` is omitted, and a `types` map from pool type to MachineDeployment name (`elastic` to `elastic-workers`, `reserved` to `reserved-workers`). Set `namespace` to the namespace where the chosen provider's MachineDeployments live; it defaults to `caph-system` for the bedrock setup.
+- `pools`: the default `namespace` and `cluster` (`burst`), the `default_type` (`reserved`), the Kubernetes `version` applied to rendered pools, and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`). Set `namespace` to the namespace where the chosen provider's MachineDeployments live; it defaults to `caph-system` for the bedrock setup.
 
 The retired `infra_path` and `bedrock_path` fields are both rejected at load time; set `repo_path` instead.
 
@@ -202,7 +186,7 @@ cmd/horizon/        main entry point
 internal/tui/       Bubble Tea command centre and panels
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
-internal/capi/      Cluster API client, pool and cluster operations, manifest rendering, git writes
+internal/capi/      Cluster API client, pool operations, manifest rendering, git writes
 internal/controller/  ExternalControlPlane controller that latches externally-managed control-plane status
 internal/k8s/       cluster client, drain, workload migration
 internal/prometheus/  pressure queries over a port-forward
