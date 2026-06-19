@@ -37,19 +37,13 @@ func (p PoolDefaults) Resolve(typeName string) (string, error) {
 	return "", fmt.Errorf("unknown pool type %q (known: %s)", typeName, strings.Join(known, ", "))
 }
 
-type ClusterDefaults struct {
-	Class       string `mapstructure:"class" yaml:"class"`
-	WorkerClass string `mapstructure:"worker_class" yaml:"worker_class"`
-}
-
 type Config struct {
-	RepoPath      string          `mapstructure:"repo_path" yaml:"repo_path"`
-	Cluster       string          `mapstructure:"cluster" yaml:"cluster"`
-	Kubeconfig    string          `mapstructure:"kubeconfig" yaml:"kubeconfig"`
-	Context       string          `mapstructure:"context" yaml:"context"`
-	Theme         string          `mapstructure:"theme" yaml:"theme"`
-	Pools         PoolDefaults    `mapstructure:"pools" yaml:"pools"`
-	ClusterCreate ClusterDefaults `mapstructure:"cluster_create" yaml:"cluster_create"`
+	RepoPath   string       `mapstructure:"repo_path" yaml:"repo_path"`
+	Cluster    string       `mapstructure:"cluster" yaml:"cluster"`
+	Kubeconfig string       `mapstructure:"kubeconfig" yaml:"kubeconfig"`
+	Context    string       `mapstructure:"context" yaml:"context"`
+	Theme      string       `mapstructure:"theme" yaml:"theme"`
+	Pools      PoolDefaults `mapstructure:"pools" yaml:"pools"`
 
 	path string
 }
@@ -62,9 +56,7 @@ const (
 	defaultPoolCluster   = "burst"
 	defaultPoolType      = "reserved"
 	defaultPoolVersion   = "v1.35.2+k3s1"
-	elasticPoolType      = "elastic"
 	reservedPoolType     = "reserved"
-	elasticPoolName      = "elastic-workers"
 	reservedPoolName     = "reserved-workers"
 
 	ThemeAuto  = "auto"
@@ -163,7 +155,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if len(cfg.Pools.Types) == 0 {
 		cfg.Pools.Types = map[string]string{
-			elasticPoolType:  elasticPoolName,
 			reservedPoolType: reservedPoolName,
 		}
 	}

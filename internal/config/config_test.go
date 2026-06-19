@@ -84,11 +84,11 @@ repo_path: ` + dir + `
 	if cfg.Pools.DefaultType != "reserved" {
 		t.Errorf("Pools.DefaultType: got %q, want reserved", cfg.Pools.DefaultType)
 	}
-	if got := cfg.Pools.Types["elastic"]; got != "elastic-workers" {
-		t.Errorf("Pools.Types[elastic]: got %q, want elastic-workers", got)
-	}
 	if got := cfg.Pools.Types["reserved"]; got != "reserved-workers" {
 		t.Errorf("Pools.Types[reserved]: got %q, want reserved-workers", got)
+	}
+	if _, ok := cfg.Pools.Types["elastic"]; ok {
+		t.Errorf("Pools.Types should not default an elastic entry, got %v", cfg.Pools.Types)
 	}
 	if cfg.Cluster != "burst" {
 		t.Errorf("Cluster: got %q, want burst", cfg.Cluster)
@@ -112,9 +112,6 @@ repo_path: ` + dir + `
 
 	if md, err := cfg.Pools.Resolve(""); err != nil || md != "reserved-workers" {
 		t.Errorf("Resolve(\"\") = %q, %v; want reserved-workers, nil", md, err)
-	}
-	if md, err := cfg.Pools.Resolve("elastic"); err != nil || md != "elastic-workers" {
-		t.Errorf("Resolve(elastic) = %q, %v; want elastic-workers, nil", md, err)
 	}
 	if _, err := cfg.Pools.Resolve("bogus"); err == nil {
 		t.Fatal("expected error for unknown pool type")
