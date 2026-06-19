@@ -37,6 +37,20 @@ func (p PoolDefaults) Resolve(typeName string) (string, error) {
 	return "", fmt.Errorf("unknown pool type %q (known: %s)", typeName, strings.Join(known, ", "))
 }
 
+type SecretRef struct {
+	Namespace string `mapstructure:"namespace" yaml:"namespace"`
+	Name      string `mapstructure:"name" yaml:"name"`
+	Key       string `mapstructure:"key" yaml:"key"`
+}
+
+type Reserved struct {
+	Token      SecretRef `mapstructure:"token" yaml:"token"`
+	JoinConfig SecretRef `mapstructure:"join_config" yaml:"join_config"`
+	Location   string    `mapstructure:"location" yaml:"location"`
+	ServerType string    `mapstructure:"server_type" yaml:"server_type"`
+	SSHKeys    []string  `mapstructure:"ssh_keys" yaml:"ssh_keys"`
+}
+
 type Config struct {
 	RepoPath   string       `mapstructure:"repo_path" yaml:"repo_path"`
 	Cluster    string       `mapstructure:"cluster" yaml:"cluster"`
@@ -44,6 +58,7 @@ type Config struct {
 	Context    string       `mapstructure:"context" yaml:"context"`
 	Theme      string       `mapstructure:"theme" yaml:"theme"`
 	Pools      PoolDefaults `mapstructure:"pools" yaml:"pools"`
+	Reserved   Reserved     `mapstructure:"reserved" yaml:"reserved"`
 
 	path string
 }
@@ -51,13 +66,21 @@ type Config struct {
 func (c *Config) Path() string { return c.path }
 
 const (
-	// namespace where the CAPI infra provider's MachineDeployments live; override via pools.namespace per provider
 	defaultPoolNamespace = "caph-system"
 	defaultPoolCluster   = "burst"
 	defaultPoolType      = "reserved"
 	defaultPoolVersion   = "v1.35.2+k3s1"
 	reservedPoolType     = "reserved"
 	reservedPoolName     = "reserved-workers"
+
+	defaultSecretNamespace  = "kube-system"
+	defaultTokenSecret      = "hcloud"
+	defaultTokenKey         = "hcloud-token"
+	defaultJoinConfigSecret = "cluster-autoscaler-hcloud-config"
+	defaultJoinConfigKey    = "HCLOUD_CLUSTER_CONFIG"
+	defaultReservedLocation = "hel1"
+	defaultReservedType     = "cpx22"
+	defaultReservedSSHKey   = "bedrock-capi"
 
 	ThemeAuto  = "auto"
 	ThemeLight = "light"
@@ -163,6 +186,33 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Theme == "" {
 		cfg.Theme = ThemeAuto
+	}
+	applyReservedDefaults(&cfg.Reserved)
+}
+
+func applyReservedDefaults(r *Reserved) {
+	applySecretDefaults(&r.Token, defaultTokenSecret, defaultTokenKey)
+	applySecretDefaults(&r.JoinConfig, defaultJoinConfigSecret, defaultJoinConfigKey)
+	if r.Location == "" {
+		r.Location = defaultReservedLocation
+	}
+	if r.ServerType == "" {
+		r.ServerType = defaultReservedType
+	}
+	if len(r.SSHKeys) == 0 {
+		r.SSHKeys = []string{defaultReservedSSHKey}
+	}
+}
+
+func applySecretDefaults(ref *SecretRef, name, key string) {
+	if ref.Namespace == "" {
+		ref.Namespace = defaultSecretNamespace
+	}
+	if ref.Name == "" {
+		ref.Name = name
+	}
+	if ref.Key == "" {
+		ref.Key = key
 	}
 }
 

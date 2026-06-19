@@ -369,6 +369,73 @@ bedrock_path: ""
 	}
 }
 
+func TestReservedDefaults(t *testing.T) {
+	dir := t.TempDir()
+	content := "repo_path: " + dir + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	r := cfg.Reserved
+	if r.Token.Namespace != "kube-system" || r.Token.Name != "hcloud" || r.Token.Key != "hcloud-token" {
+		t.Errorf("Token ref = %+v, want kube-system/hcloud[hcloud-token]", r.Token)
+	}
+	if r.JoinConfig.Name != "cluster-autoscaler-hcloud-config" || r.JoinConfig.Key != "HCLOUD_CLUSTER_CONFIG" {
+		t.Errorf("JoinConfig ref = %+v", r.JoinConfig)
+	}
+	if r.Location != "hel1" || r.ServerType != "cpx22" {
+		t.Errorf("location/type = %q/%q, want hel1/cpx22", r.Location, r.ServerType)
+	}
+	if len(r.SSHKeys) != 1 || r.SSHKeys[0] != "bedrock-capi" {
+		t.Errorf("ssh keys = %v, want [bedrock-capi]", r.SSHKeys)
+	}
+}
+
+func TestReservedOverrides(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+repo_path: ` + dir + `
+reserved:
+  token:
+    name: my-hcloud
+    key: token
+  join_config:
+    namespace: capi
+  location: nbg1
+  server_type: cpx31
+  ssh_keys:
+    - alpha
+    - beta
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HORIZON_CONFIG_DIR", dir)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	r := cfg.Reserved
+	if r.Token.Name != "my-hcloud" || r.Token.Key != "token" || r.Token.Namespace != "kube-system" {
+		t.Errorf("token override = %+v", r.Token)
+	}
+	if r.JoinConfig.Namespace != "capi" || r.JoinConfig.Name != "cluster-autoscaler-hcloud-config" {
+		t.Errorf("join config override = %+v", r.JoinConfig)
+	}
+	if r.Location != "nbg1" || r.ServerType != "cpx31" {
+		t.Errorf("location/type = %q/%q", r.Location, r.ServerType)
+	}
+	if len(r.SSHKeys) != 2 || r.SSHKeys[0] != "alpha" {
+		t.Errorf("ssh keys = %v", r.SSHKeys)
+	}
+}
+
 func TestExpandUserPath(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
