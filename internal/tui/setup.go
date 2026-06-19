@@ -37,8 +37,6 @@ type setupInput struct {
 	poolsNamespace string
 	poolTypesRaw   string
 	repoPath       string
-	ccClass        string
-	ccWorkerClass  string
 	theme          string
 }
 
@@ -90,8 +88,6 @@ func buildSetupConfig(in setupInput) (*config.Config, error) {
 	cfg.Pools.Namespace = in.poolsNamespace
 	cfg.Pools.Types = types
 	cfg.RepoPath = in.repoPath
-	cfg.ClusterCreate.Class = in.ccClass
-	cfg.ClusterCreate.WorkerClass = in.ccWorkerClass
 	if err := cfg.SetTheme(in.theme); err != nil {
 		return nil, err
 	}
@@ -203,8 +199,6 @@ const (
 	fieldPoolsNamespace
 	fieldPoolTypes
 	fieldRepoPath
-	fieldClass
-	fieldWorkerClass
 	fieldCount
 )
 
@@ -213,8 +207,6 @@ var fieldLabels = [fieldCount]string{
 	"pools namespace",
 	"pool types (type=mdname,…)",
 	"repo path (optional)",
-	"cluster_create class (optional)",
-	"cluster_create worker_class (optional)",
 }
 
 type setupModel struct {
@@ -434,10 +426,9 @@ func (m setupModel) onFieldsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.fields[fieldRepoPath].SetValue(normalized)
-			m.fieldErr = ""
-			return m.focusField(m.fieldIndex + 1)
 		}
 		if m.fieldIndex < fieldCount-1 {
+			m.fieldErr = ""
 			return m.focusField(m.fieldIndex + 1)
 		}
 		if _, err := parsePoolTypes(m.fields[fieldPoolTypes].Value()); err != nil {
@@ -505,8 +496,6 @@ func (m setupModel) save() (tea.Model, tea.Cmd) {
 		poolsNamespace: m.fields[fieldPoolsNamespace].Value(),
 		poolTypesRaw:   m.fields[fieldPoolTypes].Value(),
 		repoPath:       repoPath,
-		ccClass:        m.fields[fieldClass].Value(),
-		ccWorkerClass:  m.fields[fieldWorkerClass].Value(),
 		theme:          m.picker.selected().pref,
 	}
 	cfg, err := buildSetupConfig(in)
@@ -546,8 +535,6 @@ func (m *setupModel) prefillFields() {
 	m.fields[fieldPoolTypes].SetValue(formatPoolTypes(types))
 	m.fields[fieldRepoPath].SetValue("~/")
 	m.fields[fieldRepoPath].CursorEnd()
-	m.fields[fieldClass].SetValue(def.ClusterCreate.Class)
-	m.fields[fieldWorkerClass].SetValue(def.ClusterCreate.WorkerClass)
 }
 
 func (m setupModel) View() string {

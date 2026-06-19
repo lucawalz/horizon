@@ -16,8 +16,6 @@ func TestBuildSetupConfigValid(t *testing.T) {
 		poolsNamespace: "caph-system",
 		poolTypesRaw:   "elastic=elastic-workers,reserved=reserved-workers",
 		repoPath:       "/tmp/repo",
-		ccClass:        "hetzner",
-		ccWorkerClass:  "hetzner-worker",
 		theme:          config.ThemeDark,
 	}
 	cfg, err := buildSetupConfig(in)
@@ -39,12 +37,6 @@ func TestBuildSetupConfigValid(t *testing.T) {
 	}
 	if cfg.RepoPath != "/tmp/repo" {
 		t.Errorf("RepoPath = %q, want /tmp/repo", cfg.RepoPath)
-	}
-	if cfg.ClusterCreate.Class != "hetzner" {
-		t.Errorf("Class = %q, want hetzner", cfg.ClusterCreate.Class)
-	}
-	if cfg.ClusterCreate.WorkerClass != "hetzner-worker" {
-		t.Errorf("WorkerClass = %q, want hetzner-worker", cfg.ClusterCreate.WorkerClass)
 	}
 	if cfg.Theme != config.ThemeDark {
 		t.Errorf("Theme = %q, want %q", cfg.Theme, config.ThemeDark)

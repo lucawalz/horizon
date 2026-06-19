@@ -111,14 +111,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailMsg:
 		m.log.append(msg.body)
 		return m, nil
-	case manifestRenderedMsg:
-		return m.onManifestRendered(msg)
 	case backupsLoadedMsg:
 		return m.onBackupsLoaded(msg)
 	case restoresLoadedMsg:
 		return m.onRestoresLoaded(msg)
-	case clustersLoadedMsg:
-		return m.onClustersLoaded(msg)
 	case schedulesLoadedMsg:
 		return m.onSchedulesLoaded(msg)
 	case storageLocationsLoadedMsg:
@@ -314,18 +310,6 @@ func (m model) onStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 	return m, waitForStream(m.stream)
 }
 
-func (m model) onManifestRendered(msg manifestRenderedMsg) (tea.Model, tea.Cmd) {
-	m.mode = modeNav
-	if msg.err != nil {
-		m.log.append(errStyle.Render("error: " + msg.err.Error()))
-		return m, nil
-	}
-	for _, line := range splitLines(string(msg.data)) {
-		m.log.append(line)
-	}
-	return m, nil
-}
-
 func (m model) onBackupsLoaded(msg backupsLoadedMsg) (tea.Model, tea.Cmd) {
 	m.mode = modeNav
 	if msg.err != nil {
@@ -361,20 +345,6 @@ func (m model) onRestoresLoaded(msg restoresLoadedMsg) (tea.Model, tea.Cmd) {
 			r.Name, r.Spec.BackupName, phaseOrDash(string(r.Status.Phase)),
 			itoa(r.Status.Warnings), itoa(r.Status.Errors),
 		})
-	}
-	m.log.append(renderLogTable(rows))
-	return m, nil
-}
-
-func (m model) onClustersLoaded(msg clustersLoadedMsg) (tea.Model, tea.Cmd) {
-	m.mode = modeNav
-	if msg.err != nil {
-		m.log.append(errStyle.Render("error: " + msg.err.Error()))
-		return m, nil
-	}
-	rows := [][]string{{"NAME", "PHASE"}}
-	for _, c := range msg.clusters {
-		rows = append(rows, []string{c.name, c.phase})
 	}
 	m.log.append(renderLogTable(rows))
 	return m, nil

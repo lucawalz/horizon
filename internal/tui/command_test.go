@@ -21,10 +21,6 @@ func testModel() model {
 					"elastic":  "elastic-workers",
 				},
 			},
-			ClusterCreate: config.ClusterDefaults{
-				Class:       "hetzner-k3s",
-				WorkerClass: "default-worker",
-			},
 		},
 	}}
 }
@@ -70,8 +66,6 @@ func TestDispatchNonDestructiveHaveNoConfirm(t *testing.T) {
 		"up --type reserved --replicas 3",
 		"down",
 		"burst myns",
-		"cluster list",
-		"cluster create demo",
 		"backup list",
 		"backup create --wait",
 		"backup describe foo",
@@ -104,7 +98,6 @@ func TestDispatchDestructiveRequireConfirm(t *testing.T) {
 		needle string
 	}{
 		{"down --delete", "delete pool"},
-		{"cluster delete demo", "delete cluster"},
 		{"backup delete b1", "delete backup"},
 		{"drain worker-1", "drain node"},
 		{"restore create --from-backup b1", "restore from backup"},
@@ -129,14 +122,11 @@ func TestDispatchMissingRequiredArgs(t *testing.T) {
 	m := testModel()
 	for _, input := range []string{
 		"burst",
-		"cluster create",
-		"cluster delete",
 		"backup describe",
 		"backup delete",
 		"restore create",
 		"restore describe",
 		"drain",
-		"cluster bogus",
 		"backup bogus",
 		"restore bogus",
 		"schedule",
@@ -230,76 +220,5 @@ func TestResolveUpReplicas(t *testing.T) {
 	}
 	if _, err := resolveUpReplicas(0, []string{"notanumber"}); err == nil {
 		t.Error("expected error for non-numeric positional replicas")
-	}
-}
-
-func TestClusterCreateRequiresClassOrFlavor(t *testing.T) {
-	m := testModel()
-	m.app.Config.ClusterCreate.Class = ""
-	res := m.dispatch("cluster create demo")
-	if len(res.lines) == 0 {
-		t.Error("expected error when neither --class nor --flavor is given and no default class exists")
-	}
-}
-
-func TestClusterCreateClassAndFlavorMutuallyExclusive(t *testing.T) {
-	m := testModel()
-	res := m.dispatch("cluster create demo --class hetzner-k3s --flavor /tmp/x.yaml")
-	if len(res.lines) == 0 {
-		t.Error("expected error when both --class and --flavor are given")
-	}
-}
-
-func TestClusterCreateBuildsTopologySpec(t *testing.T) {
-	m := testModel()
-	spec, err := m.clusterSpecFrom(clusterCreateInput{
-		name:                 "demo",
-		class:                "hetzner-k3s",
-		workerClass:          "default-worker",
-		replicas:             3,
-		controlPlaneReplicas: 1,
-		sets:                 []string{"machineType=cpx22", "diskSize=40"},
-	})
-	if err != nil {
-		t.Fatalf("clusterSpecFrom: %v", err)
-	}
-	if spec.Class != "hetzner-k3s" || spec.WorkerClass != "default-worker" {
-		t.Errorf("spec class fields = %+v", spec)
-	}
-	if spec.WorkerReplicas != 3 || spec.ControlPlaneReplicas != 1 {
-		t.Errorf("spec replicas = cp %d worker %d", spec.ControlPlaneReplicas, spec.WorkerReplicas)
-	}
-	if len(spec.Variables) != 2 || spec.Variables[0].Name != "machineType" || spec.Variables[0].Value != "cpx22" {
-		t.Errorf("spec variables = %+v", spec.Variables)
-	}
-}
-
-func TestParseSetVarsRejectsMalformed(t *testing.T) {
-	if _, err := parseSetVars([]string{"noequals"}); err == nil {
-		t.Error("expected error for --set without =")
-	}
-	if _, err := parseSetVars([]string{"=value"}); err == nil {
-		t.Error("expected error for --set with empty key")
-	}
-}
-
-func TestClusterCreateFlavorMissingFileErrors(t *testing.T) {
-	m := testModel()
-	res := m.dispatch("cluster create demo --flavor /no/such/flavor.yaml")
-	if len(res.lines) == 0 {
-		t.Error("expected error when flavor file cannot be read")
-	}
-}
-
-func TestClusterCreateWriteRequiresRepoPath(t *testing.T) {
-	m := testModel()
-	res := m.dispatch("cluster create demo --write")
-	if len(res.lines) == 0 {
-		t.Error("expected error when repo_path is unset and --write is used")
-	}
-	m.app.Config.RepoPath = "/tmp/repo"
-	res = m.dispatch("cluster create demo --write")
-	if len(res.lines) != 0 || res.cmd == nil {
-		t.Errorf("cluster create --write with repo_path should succeed, got %+v", res)
 	}
 }

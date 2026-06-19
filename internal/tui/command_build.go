@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/core"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -137,66 +136,6 @@ func buildRestoreSpecFromValues(fromBackup string, v map[string]string) (velerov
 		spec.NamespaceMapping = mapping
 	}
 	return spec, nil
-}
-
-const workerPoolName = "workers"
-
-func (m model) clusterSpecFrom(in clusterCreateInput) (capi.ClusterSpec, error) {
-	name := strings.TrimSpace(in.name)
-	if name == "" {
-		return capi.ClusterSpec{}, fmt.Errorf("name is required")
-	}
-	class := orDefault(strings.TrimSpace(in.class), m.app.Config.ClusterCreate.Class)
-	if class == "" {
-		return capi.ClusterSpec{}, fmt.Errorf("--class is required (or set cluster_create.class)")
-	}
-	version := orDefault(strings.TrimSpace(in.version), m.app.Config.Pools.Version)
-	if version == "" {
-		return capi.ClusterSpec{}, fmt.Errorf("version is required")
-	}
-	variables, err := parseSetVars(in.sets)
-	if err != nil {
-		return capi.ClusterSpec{}, err
-	}
-	return capi.ClusterSpec{
-		Name:                 name,
-		Namespace:            orDefault(strings.TrimSpace(in.namespace), m.app.Config.Pools.Namespace),
-		Class:                class,
-		WorkerClass:          orDefault(strings.TrimSpace(in.workerClass), m.app.Config.ClusterCreate.WorkerClass),
-		WorkerName:           workerPoolName,
-		Version:              version,
-		ControlPlaneReplicas: in.controlPlaneReplicas,
-		WorkerReplicas:       in.replicas,
-		Variables:            variables,
-	}, nil
-}
-
-func parseSetVars(sets []string) ([]capi.ClusterVariable, error) {
-	if len(sets) == 0 {
-		return nil, nil
-	}
-	out := make([]capi.ClusterVariable, 0, len(sets))
-	for _, s := range sets {
-		key, value, ok := strings.Cut(s, "=")
-		key = strings.TrimSpace(key)
-		if !ok || key == "" {
-			return nil, fmt.Errorf("invalid --set %q, want key=value", s)
-		}
-		out = append(out, capi.ClusterVariable{Name: key, Value: value})
-	}
-	return out, nil
-}
-
-func setVarMap(sets []string) (map[string]string, error) {
-	vars, err := parseSetVars(sets)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]string, len(vars))
-	for _, v := range vars {
-		out[v.Name] = v.Value
-	}
-	return out, nil
 }
 
 func orDefault(s, fallback string) string {

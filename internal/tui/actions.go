@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/velero"
@@ -39,27 +38,6 @@ type schedulesLoadedMsg struct {
 type storageLocationsLoadedMsg struct {
 	locations []velerov1.BackupStorageLocation
 	err       error
-}
-
-type clusterChoice struct {
-	name  string
-	phase string
-}
-
-type clustersLoadedMsg struct {
-	clusters []clusterChoice
-	err      error
-}
-
-type manifestRenderedMsg struct {
-	data []byte
-	err  error
-}
-
-type flavorRequest struct {
-	name     string
-	template []byte
-	vars     map[string]string
 }
 
 func newVeleroClient(app *core.App) (core.VeleroClient, error) {
@@ -192,72 +170,6 @@ func (m model) runBSLCreate(spec velerov1.BackupStorageLocationSpec, name string
 	})
 }
 
-func (m model) runClusterApply(spec capi.ClusterSpec) tea.Cmd {
-	app := m.app
-	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		if err := core.ApplyCluster(ctx, app, spec, p); err != nil {
-			return "", err
-		}
-		return "applied cluster " + spec.Namespace + "/" + spec.Name, nil
-	})
-}
-
-func (m model) runClusterWrite(spec capi.ClusterSpec) tea.Cmd {
-	app := m.app
-	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		path, err := core.WriteClusterManifests(app, spec, p)
-		if err != nil {
-			return "", err
-		}
-		return "wrote manifests to " + path, nil
-	})
-}
-
-func (m model) runClusterDelete(namespace, name string) tea.Cmd {
-	app := m.app
-	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		if err := core.DeleteCluster(ctx, app, namespace, name, p); err != nil {
-			return "", err
-		}
-		return "deleted cluster " + namespace + "/" + name, nil
-	})
-}
-
-func (m model) renderClusterPreview(spec capi.ClusterSpec) tea.Cmd {
-	return func() tea.Msg {
-		data, err := core.RenderCluster(spec)
-		return manifestRenderedMsg{data: data, err: err}
-	}
-}
-
-func (m model) runFlavorApply(req flavorRequest) tea.Cmd {
-	app := m.app
-	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		if err := core.ApplyFlavor(ctx, app, req.template, req.vars, p); err != nil {
-			return "", err
-		}
-		return "applied flavor cluster " + req.name, nil
-	})
-}
-
-func (m model) runFlavorWrite(req flavorRequest) tea.Cmd {
-	app := m.app
-	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		path, err := core.WriteFlavorManifests(app, req.name, req.template, req.vars, p)
-		if err != nil {
-			return "", err
-		}
-		return "wrote manifests to " + path, nil
-	})
-}
-
-func (m model) renderFlavorPreview(req flavorRequest) tea.Cmd {
-	return func() tea.Msg {
-		data, err := core.RenderFlavor(req.template, req.vars)
-		return manifestRenderedMsg{data: data, err: err}
-	}
-}
-
 func (m model) loadBackups() tea.Cmd {
 	app := m.app
 	return func() tea.Msg {
@@ -326,26 +238,6 @@ func (m model) loadStorageLocations() tea.Cmd {
 			return storageLocationsLoadedMsg{err: err}
 		}
 		return storageLocationsLoadedMsg{locations: locations}
-	}
-}
-
-func (m model) loadClusters() tea.Cmd {
-	app := m.app
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), snapshotTimeout)
-		defer cancel()
-		clusters, err := core.ListClusters(ctx, app, app.Config.Pools.Namespace)
-		if err != nil {
-			return clustersLoadedMsg{err: err}
-		}
-		rows := make([]clusterChoice, 0, len(clusters))
-		for i := range clusters {
-			rows = append(rows, clusterChoice{
-				name:  clusters[i].Name,
-				phase: core.ValueOrDash(clusters[i].Status.Phase),
-			})
-		}
-		return clustersLoadedMsg{clusters: rows}
 	}
 }
 
