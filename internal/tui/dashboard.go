@@ -129,19 +129,6 @@ func nodeRowCells(nodes []core.NodeRow, full bool) ([]string, [][]string) {
 	return headers, rows
 }
 
-func clusterNodeCells(nodes []core.NodeRow) ([]string, [][]string) {
-	headers := []string{"NAME", "ROLE", "CPU%", "MEM%", "STATUS"}
-	rows := make([][]string, 0, len(nodes))
-	for _, r := range nodes {
-		role := r.Role
-		if role == "" {
-			role = emptyCell
-		}
-		rows = append(rows, []string{r.Name, role, percentCell(r.CPUPercent, r.MetricsPresent), percentCell(r.MemPercent, r.MetricsPresent), r.Status})
-	}
-	return headers, rows
-}
-
 func nodesStyleFunc(rows [][]string, statusCol int) table.StyleFunc {
 	return func(row, col int) lipgloss.Style {
 		if row == table.HeaderRow {
