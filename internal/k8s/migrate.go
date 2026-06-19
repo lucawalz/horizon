@@ -292,6 +292,56 @@ func WaitWorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, name
 	}
 }
 
+func WaitReservedNodesReady(ctx context.Context, kc kubernetes.Interface, poolValue string, want int, poll, timeout time.Duration) error {
+	if poolValue == "" {
+		return fmt.Errorf("wait-nodes: pool label value must not be empty")
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		if ready, err := readyPoolNodeCount(pollCtx, kc, poolValue); err == nil && ready >= want {
+			return nil
+		}
+		select {
+		case <-pollCtx.Done():
+			if ctx.Err() != nil {
+				return fmt.Errorf("wait-nodes: %w", ctx.Err())
+			}
+			return fmt.Errorf("wait-nodes: timeout after %s waiting for %d ready %s=%s nodes", timeout, want, PoolLabelKey, poolValue)
+		case <-ticker.C:
+		}
+	}
+}
+
+func readyPoolNodeCount(ctx context.Context, kc kubernetes.Interface, poolValue string) (int, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, err
+	}
+	ready := 0
+	for i := range nodes.Items {
+		n := nodes.Items[i]
+		if n.Labels[PoolLabelKey] != poolValue {
+			continue
+		}
+		if nodeReady(&n) {
+			ready++
+		}
+	}
+	return ready, nil
+}
+
+func nodeReady(node *corev1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
 func poolNodes(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {

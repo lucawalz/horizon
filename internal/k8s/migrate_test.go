@@ -394,3 +394,38 @@ func TestWaitWorkloadOnBurstNodes_EmptyNamespace(t *testing.T) {
 		t.Fatal("expected error for empty namespace, got nil")
 	}
 }
+
+func reservedNode(name string, ready bool) *corev1.Node {
+	status := corev1.ConditionFalse
+	if ready {
+		status = corev1.ConditionTrue
+	}
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{k8s.PoolLabelKey: "reserved"}},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status}},
+		},
+	}
+}
+
+func TestWaitReservedNodesReady_Satisfied(t *testing.T) {
+	kc := fake.NewSimpleClientset(reservedNode("reserved-1", true), reservedNode("reserved-2", true))
+	if err := k8s.WaitReservedNodesReady(context.Background(), kc, "reserved", 2, 10*time.Millisecond, time.Second); err != nil {
+		t.Errorf("WaitReservedNodesReady = %v, want nil", err)
+	}
+}
+
+func TestWaitReservedNodesReady_TimesOutWhenNotReady(t *testing.T) {
+	kc := fake.NewSimpleClientset(reservedNode("reserved-1", false))
+	err := k8s.WaitReservedNodesReady(context.Background(), kc, "reserved", 1, 10*time.Millisecond, 80*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Errorf("expected timeout, got %v", err)
+	}
+}
+
+func TestWaitReservedNodesReady_EmptyPoolValue(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	if err := k8s.WaitReservedNodesReady(context.Background(), kc, "", 1, 10*time.Millisecond, 80*time.Millisecond); err == nil {
+		t.Fatal("expected error for empty pool value")
+	}
+}
