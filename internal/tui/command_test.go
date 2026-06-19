@@ -64,7 +64,6 @@ func TestDispatchNonDestructiveHaveNoConfirm(t *testing.T) {
 		"up",
 		"up --type elastic 3",
 		"up --type reserved --replicas 3",
-		"down",
 		"burst myns",
 		"backup list",
 		"backup create --wait",
@@ -97,7 +96,8 @@ func TestDispatchDestructiveRequireConfirm(t *testing.T) {
 		input  string
 		needle string
 	}{
-		{"down --delete", "delete pool"},
+		{"down", "delete all reserved servers"},
+		{"down --delete", "delete all reserved servers"},
 		{"backup delete b1", "delete backup"},
 		{"drain worker-1", "drain node"},
 		{"restore create --from-backup b1", "restore from backup"},

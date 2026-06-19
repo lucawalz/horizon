@@ -47,27 +47,46 @@ func newVeleroClient(app *core.App) (core.VeleroClient, error) {
 func (m model) runScaleUp(target core.PoolTarget) tea.Cmd {
 	app := m.app
 	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		err := core.ScaleUp(ctx, app.CapiClient, target, false, p)
-		return "", err
+		if target.PoolType == core.ElasticPoolType {
+			return "", core.ElasticAutoscalerErr()
+		}
+		hc, spec, err := app.ReservedClient(ctx)
+		if err != nil {
+			return "", err
+		}
+		return "", core.ScaleUp(ctx, hc, spec, target, false, p)
 	})
 }
 
-func (m model) runScaleDown(target core.PoolTarget, del bool) tea.Cmd {
+func (m model) runScaleDown(target core.PoolTarget) tea.Cmd {
 	app := m.app
 	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
-		err := core.ScaleDown(ctx, app.CapiClient, target, false, del, p)
-		return "", err
+		if target.PoolType == core.ElasticPoolType {
+			return "", core.ElasticAutoscalerErr()
+		}
+		hc, spec, err := app.ReservedClient(ctx)
+		if err != nil {
+			return "", err
+		}
+		return "", core.ScaleDown(ctx, hc, spec, target, false, p)
 	})
 }
 
 func (m model) runBurst(params core.BurstParams) tea.Cmd {
 	app := m.app
 	return streamCmd(m.debug, func(ctx context.Context, p core.Progress) (string, error) {
+		if params.Target.PoolType == core.ElasticPoolType {
+			return "", core.ElasticAutoscalerErr()
+		}
+		hc, spec, err := app.ReservedClient(ctx)
+		if err != nil {
+			return "", err
+		}
 		vc, err := newVeleroClient(app)
 		if err != nil {
 			return "", err
 		}
-		err = core.Burst(ctx, app.CapiClient, app.KubeClient, vc, params, p)
+		err = core.Burst(ctx, hc, spec, app.KubeClient, vc, params, p)
 		return "", err
 	})
 }

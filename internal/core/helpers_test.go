@@ -5,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/core"
+	"github.com/lucawalz/horizon/internal/hcloud"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -18,6 +20,81 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+type fakeHcloudAPI struct {
+	servers []*hcloudgo.Server
+	images  []*hcloudgo.Image
+	nextID  int64
+}
+
+func (f *fakeHcloudAPI) AllWithOpts(_ context.Context, opts hcloudgo.ServerListOpts) ([]*hcloudgo.Server, error) {
+	if opts.LabelSelector == "" {
+		return f.servers, nil
+	}
+	out := []*hcloudgo.Server{}
+	for _, s := range f.servers {
+		if s.Labels[hcloud.ManagedByLabelKey] == hcloud.ManagedByValue {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeHcloudAPI) Create(_ context.Context, opts hcloudgo.ServerCreateOpts) (hcloudgo.ServerCreateResult, *hcloudgo.Response, error) {
+	f.nextID++
+	srv := &hcloudgo.Server{ID: f.nextID, Name: opts.Name, Labels: opts.Labels}
+	f.servers = append(f.servers, srv)
+	return hcloudgo.ServerCreateResult{Server: srv}, nil, nil
+}
+
+func (f *fakeHcloudAPI) Delete(_ context.Context, server *hcloudgo.Server) (*hcloudgo.Response, error) {
+	kept := f.servers[:0]
+	for _, s := range f.servers {
+		if s.ID != server.ID {
+			kept = append(kept, s)
+		}
+	}
+	f.servers = kept
+	return nil, nil
+}
+
+func (f *fakeHcloudAPI) AllWithImageOpts(_ context.Context, _ hcloudgo.ImageListOpts) ([]*hcloudgo.Image, error) {
+	return f.images, nil
+}
+
+type fakeImageAPI struct{ f *fakeHcloudAPI }
+
+func (i fakeImageAPI) AllWithOpts(ctx context.Context, opts hcloudgo.ImageListOpts) ([]*hcloudgo.Image, error) {
+	return i.f.AllWithImageOpts(ctx, opts)
+}
+
+func reservedServer(id int64, name string) *hcloudgo.Server {
+	return &hcloudgo.Server{
+		ID:   id,
+		Name: name,
+		Labels: map[string]string{
+			hcloud.PoolLabelKey:      hcloud.ReservedPoolValue,
+			hcloud.ManagedByLabelKey: hcloud.ManagedByValue,
+		},
+	}
+}
+
+func newHcloudFake(servers ...*hcloudgo.Server) (*hcloud.Client, *fakeHcloudAPI) {
+	f := &fakeHcloudAPI{
+		servers: servers,
+		images:  []*hcloudgo.Image{{ID: 1, Name: "pool-node"}},
+	}
+	for _, s := range servers {
+		if s.ID > f.nextID {
+			f.nextID = s.ID
+		}
+	}
+	return hcloud.NewClientWithAPIs(f, fakeImageAPI{f}), f
+}
+
+func reservedSpec() hcloud.ServerSpec {
+	return hcloud.ServerSpec{Location: "hel1", ServerType: "cpx22", SSHKeys: []string{"k"}, UserData: "ud"}
+}
 
 func testPoolDefaults() config.PoolDefaults {
 	return config.PoolDefaults{
@@ -40,8 +117,8 @@ func newTestApp() *core.App {
 	}
 }
 
-func poolTarget(namespace, name, cluster string, replicas int32) core.PoolTarget {
-	return core.PoolTarget{Namespace: namespace, Name: name, Cluster: cluster, Replicas: replicas}
+func reservedTarget(replicas int32) core.PoolTarget {
+	return core.PoolTarget{PoolType: "reserved", Cluster: "burst", Replicas: replicas}
 }
 
 func nodeWithAllocatable(name, cpu, mem string) *corev1.Node {
@@ -105,10 +182,6 @@ func machineDeployment(namespace, name, cluster string, replicas int32) *cluster
 	}
 }
 
-func mdWithStatus(namespace, name, cluster string, desired, ready int32) *clusterv1.MachineDeployment {
-	return mdWithType(namespace, name, cluster, "", desired, ready)
-}
-
 func mdWithType(namespace, name, cluster, poolType string, desired, ready int32) *clusterv1.MachineDeployment {
 	md := machineDeployment(namespace, name, cluster, desired)
 	md.Labels = map[string]string{
@@ -120,34 +193,6 @@ func mdWithType(namespace, name, cluster, poolType string, desired, ready int32)
 	}
 	md.Status.ReadyReplicas = &ready
 	return md
-}
-
-func machineFor(namespace, pool, name, phase, node, providerID string) *clusterv1.Machine {
-	m := &clusterv1.Machine{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      name,
-			Labels:    map[string]string{clusterv1.MachineDeploymentNameLabel: pool},
-		},
-	}
-	m.Spec.ProviderID = providerID
-	m.Status.Phase = phase
-	m.Status.NodeRef.Name = node
-	return m
-}
-
-func initializedCluster(namespace, name string, initialized bool) *clusterv1.Cluster {
-	c := &clusterv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
-	}
-	c.Status.Initialization.ControlPlaneInitialized = &initialized
-	return c
-}
-
-func capiClient(t *testing.T, objs ...client.Object) *capi.Client {
-	t.Helper()
-	cl := capiScheme(t).WithObjects(objs...).WithStatusSubresource(&clusterv1.Cluster{}).Build()
-	return capi.NewClientWithCRClient(cl)
 }
 
 func burstCapiClient(t *testing.T, objs ...client.Object) *capi.Client {

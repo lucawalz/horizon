@@ -6,148 +6,101 @@ import (
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/core"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-func TestScaleUpScalesPool(t *testing.T) {
-	cc := capiClient(
-		t,
-		machineDeployment("caph-system", "burst-workers", "burst", 0),
-		initializedCluster("caph-system", "burst", true),
-	)
+func TestScaleUpCreatesReservedServers(t *testing.T) {
+	hc, f := newHcloudFake()
 
-	target := poolTarget("caph-system", "burst-workers", "burst", 2)
-	if err := core.ScaleUp(context.Background(), cc, target, false, core.Progress{}); err != nil {
+	target := reservedTarget(2)
+	if err := core.ScaleUp(context.Background(), hc, reservedSpec(), target, false, core.Progress{}); err != nil {
 		t.Fatalf("ScaleUp: %v", err)
 	}
 
-	got, err := cc.GetPool(context.Background(), "caph-system", "burst-workers")
+	got, err := hc.ListReservedServers(context.Background())
 	if err != nil {
-		t.Fatalf("GetPool: %v", err)
+		t.Fatalf("ListReservedServers: %v", err)
 	}
-	if got.Spec.Replicas == nil || *got.Spec.Replicas != 2 {
-		t.Errorf("replicas = %v, want 2", got.Spec.Replicas)
+	if len(got) != 2 {
+		t.Errorf("reserved servers = %d, want 2", len(got))
 	}
-}
-
-func TestScaleUpRefusesWhenControlPlaneNotInitialized(t *testing.T) {
-	cc := capiClient(
-		t,
-		machineDeployment("caph-system", "burst-workers", "burst", 0),
-		initializedCluster("caph-system", "burst", false),
-	)
-
-	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	err := core.ScaleUp(context.Background(), cc, target, false, core.Progress{})
-	if err == nil {
-		t.Fatal("expected refusal when control plane not initialized")
-	}
-	if !strings.Contains(err.Error(), "not initialized") {
-		t.Errorf("error %q should explain the control plane is not initialized", err.Error())
-	}
-
-	got, _ := cc.GetPool(context.Background(), "caph-system", "burst-workers")
-	if got.Spec.Replicas == nil || *got.Spec.Replicas != 0 {
-		t.Errorf("pool must not be scaled on refusal: %v", got.Spec.Replicas)
+	if len(f.servers) != 2 {
+		t.Errorf("created servers = %d, want 2", len(f.servers))
 	}
 }
 
-func TestScaleUpFailsFastWhenPoolMissing(t *testing.T) {
-	cc := capiClient(t, initializedCluster("caph-system", "burst", true))
+func TestScaleUpRefusesElastic(t *testing.T) {
+	hc, _ := newHcloudFake()
 
-	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	err := core.ScaleUp(context.Background(), cc, target, false, core.Progress{})
-	if err == nil {
-		t.Fatal("expected fail-fast when pool not found")
+	target := core.PoolTarget{PoolType: core.ElasticPoolType, Replicas: 2}
+	err := core.ScaleUp(context.Background(), hc, reservedSpec(), target, false, core.Progress{})
+	if err == nil || !strings.Contains(err.Error(), "elastic") {
+		t.Fatalf("expected elastic refusal, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "not found") || !strings.Contains(err.Error(), "bedrock") {
-		t.Errorf("error %q should explain the home pool is GitOps-managed in bedrock", err.Error())
+}
+
+func TestScaleUpNoOpWhenAlreadyAtTarget(t *testing.T) {
+	hc, _ := newHcloudFake(reservedServer(1, "reserved-a"), reservedServer(2, "reserved-b"))
+
+	var msgs []string
+	target := reservedTarget(2)
+	if err := core.ScaleUp(context.Background(), hc, reservedSpec(), target, false, collectProgress(&msgs)); err != nil {
+		t.Fatalf("ScaleUp: %v", err)
+	}
+	if !strings.Contains(strings.Join(msgs, "\n"), "nothing to do") {
+		t.Errorf("expected no-op message, got %v", msgs)
 	}
 }
 
 func TestScaleUpDryRunDoesNotMutate(t *testing.T) {
-	cc := capiClient(
-		t,
-		machineDeployment("caph-system", "burst-workers", "burst", 0),
-		initializedCluster("caph-system", "burst", false),
-	)
+	hc, f := newHcloudFake()
 
 	var msgs []string
-	target := poolTarget("caph-system", "burst-workers", "burst", 3)
-	if err := core.ScaleUp(context.Background(), cc, target, true, collectProgress(&msgs)); err != nil {
+	target := reservedTarget(3)
+	if err := core.ScaleUp(context.Background(), hc, reservedSpec(), target, true, collectProgress(&msgs)); err != nil {
 		t.Fatalf("ScaleUp dry-run: %v", err)
 	}
 	if !strings.Contains(strings.Join(msgs, "\n"), "0 -> 3") {
-		t.Errorf("dry-run progress missing replica delta: %v", msgs)
+		t.Errorf("dry-run progress missing delta: %v", msgs)
 	}
-
-	got, _ := cc.GetPool(context.Background(), "caph-system", "burst-workers")
-	if got.Spec.Replicas == nil || *got.Spec.Replicas != 0 {
-		t.Errorf("dry-run must not mutate replicas: %v", got.Spec.Replicas)
+	if len(f.servers) != 0 {
+		t.Errorf("dry-run must not create servers, got %d", len(f.servers))
 	}
 }
 
-func TestScaleUpElasticEmitsAutoscalerNote(t *testing.T) {
-	cc := capiClient(
-		t,
-		machineDeployment("caph-system", "elastic-workers", "burst", 0),
-		initializedCluster("caph-system", "burst", true),
-	)
+func TestScaleDownDeletesAllReservedServers(t *testing.T) {
+	hc, f := newHcloudFake(reservedServer(1, "reserved-a"), reservedServer(2, "reserved-b"))
 
-	var msgs []string
-	target := core.PoolTarget{Namespace: "caph-system", Name: "elastic-workers", PoolType: core.ElasticPoolType, Cluster: "burst", Replicas: 2}
-	if err := core.ScaleUp(context.Background(), cc, target, false, collectProgress(&msgs)); err != nil {
-		t.Fatalf("ScaleUp: %v", err)
-	}
-	if !strings.Contains(strings.Join(msgs, "\n"), "cluster-autoscaler owns the elastic pool") {
-		t.Errorf("expected autoscaler note for elastic pool: %v", msgs)
-	}
-}
-
-func TestScaleDownScalesToZero(t *testing.T) {
-	cc := capiClient(t, machineDeployment("caph-system", "burst-workers", "burst", 3))
-
-	target := poolTarget("caph-system", "burst-workers", "burst", 0)
-	if err := core.ScaleDown(context.Background(), cc, target, false, false, core.Progress{}); err != nil {
+	target := reservedTarget(0)
+	if err := core.ScaleDown(context.Background(), hc, reservedSpec(), target, false, core.Progress{}); err != nil {
 		t.Fatalf("ScaleDown: %v", err)
 	}
-
-	got, err := cc.GetPool(context.Background(), "caph-system", "burst-workers")
-	if err != nil {
-		t.Fatalf("GetPool: %v", err)
-	}
-	if got.Spec.Replicas == nil || *got.Spec.Replicas != 0 {
-		t.Errorf("replicas = %v, want 0", got.Spec.Replicas)
+	if len(f.servers) != 0 {
+		t.Errorf("servers after scale-down = %d, want 0", len(f.servers))
 	}
 }
 
-func TestScaleDownDeleteRemovesPool(t *testing.T) {
-	cc := capiClient(t, machineDeployment("caph-system", "burst-workers", "burst", 3))
+func TestScaleDownRefusesElastic(t *testing.T) {
+	hc, _ := newHcloudFake()
 
-	target := poolTarget("caph-system", "burst-workers", "burst", 0)
-	if err := core.ScaleDown(context.Background(), cc, target, false, true, core.Progress{}); err != nil {
-		t.Fatalf("ScaleDown delete: %v", err)
-	}
-
-	if _, err := cc.GetPool(context.Background(), "caph-system", "burst-workers"); !apierrors.IsNotFound(err) {
-		t.Errorf("GetPool after delete = %v, want IsNotFound", err)
+	target := core.PoolTarget{PoolType: core.ElasticPoolType}
+	err := core.ScaleDown(context.Background(), hc, reservedSpec(), target, false, core.Progress{})
+	if err == nil || !strings.Contains(err.Error(), "elastic") {
+		t.Fatalf("expected elastic refusal, got %v", err)
 	}
 }
 
 func TestScaleDownDryRunDoesNotMutate(t *testing.T) {
-	cc := capiClient(t, machineDeployment("caph-system", "burst-workers", "burst", 3))
+	hc, f := newHcloudFake(reservedServer(1, "reserved-a"))
 
 	var msgs []string
-	target := poolTarget("caph-system", "burst-workers", "burst", 0)
-	if err := core.ScaleDown(context.Background(), cc, target, true, false, collectProgress(&msgs)); err != nil {
+	target := reservedTarget(0)
+	if err := core.ScaleDown(context.Background(), hc, reservedSpec(), target, true, collectProgress(&msgs)); err != nil {
 		t.Fatalf("ScaleDown dry-run: %v", err)
 	}
-	if !strings.Contains(strings.Join(msgs, "\n"), "scale pool caph-system/burst-workers to 0") {
-		t.Errorf("dry-run progress missing scale intent: %v", msgs)
+	if !strings.Contains(strings.Join(msgs, "\n"), "1 -> 0") {
+		t.Errorf("dry-run progress missing intent: %v", msgs)
 	}
-
-	got, _ := cc.GetPool(context.Background(), "caph-system", "burst-workers")
-	if got.Spec.Replicas == nil || *got.Spec.Replicas != 3 {
-		t.Errorf("dry-run must not mutate replicas: %v", got.Spec.Replicas)
+	if len(f.servers) != 1 {
+		t.Errorf("dry-run must not delete servers, got %d", len(f.servers))
 	}
 }

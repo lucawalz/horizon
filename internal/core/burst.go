@@ -5,21 +5,20 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lucawalz/horizon/internal/capi"
+	"github.com/lucawalz/horizon/internal/hcloud"
 	"github.com/lucawalz/horizon/internal/k8s"
 	velerov1 "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 )
 
 const (
-	burstMachinePoll    = 5 * time.Second
-	burstMachineTimeout = 5 * time.Minute
-	burstWorkloadPoll   = 5 * time.Second
-	burstWorkloadWait   = 5 * time.Minute
-	burstBackupPoll     = 5 * time.Second
-	burstBackupTimeout  = 10 * time.Minute
-	rollbackTimeout     = 30 * time.Second
+	burstNodePoll      = 5 * time.Second
+	burstNodeTimeout   = 5 * time.Minute
+	burstWorkloadPoll  = 5 * time.Second
+	burstWorkloadWait  = 5 * time.Minute
+	burstBackupPoll    = 5 * time.Second
+	burstBackupTimeout = 10 * time.Minute
+	rollbackTimeout    = 30 * time.Second
 
 	DefaultStorageLocation = "default"
 )
@@ -48,27 +47,24 @@ type BurstParams struct {
 	PoolNode string
 }
 
-func Burst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc VeleroClient, p BurstParams, progress Progress) (err error) {
+func Burst(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, kc kubernetes.Interface, vc VeleroClient, p BurstParams, progress Progress) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if p.Target.PoolType == ElasticPoolType {
+		return ElasticAutoscalerErr()
+	}
 
-	md, err := cc.GetPool(ctx, p.Target.Namespace, p.Target.Name)
+	prior, err := hc.ListReservedServers(ctx)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return NotFoundPoolErr(p.Target.Namespace, p.Target.Name)
-		}
-		return fmt.Errorf("get pool: %w", err)
+		return fmt.Errorf("list reserved servers: %w", err)
 	}
-	priorReplicas := int32(0)
-	if md.Spec.Replicas != nil {
-		priorReplicas = *md.Spec.Replicas
-	}
+	priorCount := len(prior)
 
 	backupName := fmt.Sprintf("horizon-burst-%s-%d", p.Workload, time.Now().Unix())
-	spec := velerov1.BackupSpec{IncludedNamespaces: []string{p.Workload}, StorageLocation: DefaultStorageLocation}
+	backupSpec := velerov1.BackupSpec{IncludedNamespaces: []string{p.Workload}, StorageLocation: DefaultStorageLocation}
 	progress.Debug("phase backup: namespace " + p.Workload)
-	if err := vc.TriggerBackup(ctx, spec, backupName, burstBackupPoll, burstBackupTimeout); err != nil {
+	if err := vc.TriggerBackup(ctx, backupSpec, backupName, burstBackupPoll, burstBackupTimeout); err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
 
@@ -79,18 +75,19 @@ func Burst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc Vel
 		}
 		rbCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
 		defer cancel()
-		_ = cc.ScalePool(rbCtx, p.Target.Namespace, p.Target.Name, priorReplicas)
+		_, _ = hc.ScaleReservedTo(rbCtx, spec, priorCount)
 	}()
 
-	progress.Debug(fmt.Sprintf("phase scale: pool %s/%s -> %d", p.Target.Namespace, p.Target.Name, p.Target.Replicas))
-	if err := cc.ScalePool(ctx, p.Target.Namespace, p.Target.Name, p.Target.Replicas); err != nil {
-		return fmt.Errorf("scale pool: %w", err)
+	want := int(p.Target.Replicas)
+	progress.Debug(fmt.Sprintf("phase scale: reserved servers -> %d", want))
+	if _, err := hc.ScaleReservedTo(ctx, spec, want); err != nil {
+		return fmt.Errorf("scale reserved: %w", err)
 	}
 	scaled = true
 
-	progress.Debug("phase wait: machines ready")
-	if err := cc.WaitMachinesReady(ctx, p.Target.Namespace, p.Target.Name, p.Target.Replicas, burstMachinePoll, burstMachineTimeout); err != nil {
-		return fmt.Errorf("wait machines: %w", err)
+	progress.Debug("phase wait: reserved nodes ready")
+	if err := k8s.WaitReservedNodesReady(ctx, kc, hcloud.ReservedPoolValue, want, burstNodePoll, burstNodeTimeout); err != nil {
+		return fmt.Errorf("wait nodes: %w", err)
 	}
 
 	progress.Debug("phase migrate: workload " + p.Workload)
@@ -112,7 +109,6 @@ func Burst(ctx context.Context, cc *capi.Client, kc kubernetes.Interface, vc Vel
 		return fmt.Errorf("wait workload: %w", err)
 	}
 
-	progress.Emit(fmt.Sprintf("Burst complete: pool %s/%s scaled to %d, workload %q migrated",
-		p.Target.Namespace, p.Target.Name, p.Target.Replicas, p.Workload))
+	progress.Emit(fmt.Sprintf("Burst complete: reserved pool scaled to %d, workload %q migrated", want, p.Workload))
 	return nil
 }

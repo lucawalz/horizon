@@ -160,7 +160,7 @@ func (m model) parseDown(args []string) commandResult {
 	poolType := fs.String("type", "", "")
 	namespace := fs.String("namespace", "", "")
 	pool := fs.String("pool", "", "")
-	del := fs.Bool("delete", false, "")
+	fs.Bool("delete", false, "")
 	if err := parseFlags(fs, args); err != nil {
 		return errResult("down: %v", err)
 	}
@@ -168,11 +168,10 @@ func (m model) parseDown(args []string) commandResult {
 	if err != nil {
 		return errResult("down: %v", err)
 	}
-	res := commandResult{cmd: m.runScaleDown(target, *del)}
-	if *del {
-		res.confirm = fmt.Sprintf("delete pool %s/%s?", target.Namespace, target.Name)
+	return commandResult{
+		cmd:     m.runScaleDown(target),
+		confirm: fmt.Sprintf("delete all %s servers?", target.PoolType),
 	}
-	return res
 }
 
 func (m model) parseBurst(args []string) commandResult {

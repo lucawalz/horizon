@@ -219,7 +219,6 @@ func (m model) summaryLine() string {
 		pressureSummaryLine(m.snap),
 		fmt.Sprintf("%d nodes Ready", readyNodeCount(m.snap)),
 		fmt.Sprintf("pools %d", len(m.snap.Pools)),
-		controlPlaneGlyph(m.snap.Nudge),
 	}
 	return strings.Join(parts, " · ")
 }
@@ -274,7 +273,6 @@ func (m model) statusStrip(width int) string {
 		fmt.Sprintf("%s · ctx:%s", valueOr(m.app.Cluster, "default"), valueOr(m.context, "current")),
 		fmt.Sprintf("%d nodes Ready", readyNodeCount(m.snap)),
 		fmt.Sprintf("pools %d", len(m.snap.Pools)),
-		controlPlaneGlyph(m.snap.Nudge),
 		": command · ? help · q quit",
 	}, " · ")
 	return statusStripStyle.Render(lipgloss.NewStyle().Width(width).Render(left))
@@ -288,19 +286,6 @@ func readyNodeCount(snap core.Snapshot) int {
 		}
 	}
 	return n
-}
-
-func controlPlaneGlyph(state core.NudgeState) string {
-	switch state.Kind {
-	case core.NudgeInitialized:
-		return "cp ✓"
-	case core.NudgeUninitialized:
-		return "cp !"
-	case core.NudgeNotFound:
-		return "cp -"
-	default:
-		return "cp ?"
-	}
 }
 
 func splitLines(s string) []string {

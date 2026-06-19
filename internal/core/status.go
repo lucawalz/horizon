@@ -3,14 +3,15 @@ package core
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
-	"github.com/lucawalz/horizon/internal/capi"
+	"github.com/lucawalz/horizon/internal/hcloud"
+	"github.com/lucawalz/horizon/internal/k8s"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 const (
@@ -22,15 +23,6 @@ const (
 )
 
 type NodeUsage = map[string]*metricsv1beta1.NodeMetrics
-
-type NudgeKind int
-
-const (
-	NudgeNotFound NudgeKind = iota
-	NudgeInitialized
-	NudgeUninitialized
-	NudgeError
-)
 
 type NodeUtilization struct {
 	CPUPercent int
@@ -75,11 +67,6 @@ type PoolRow struct {
 	Machines []MachineRow
 }
 
-type NudgeState struct {
-	Kind NudgeKind
-	Err  error
-}
-
 type AutoscalerState struct {
 	NotFound    bool
 	Unavailable bool
@@ -87,16 +74,15 @@ type AutoscalerState struct {
 }
 
 type Snapshot struct {
-	Pressure    PressureSummary
-	NodesErr    error
-	Nodes       []NodeRow
-	PoolsErr    error
-	Pools       []PoolRow
-	Nudge       NudgeState
-	Autoscaler  AutoscalerState
-	Workload    WorkloadSummary
-	NodeHealth  NodeHealthSummary
-	Flux        FluxSummary
+	Pressure   PressureSummary
+	NodesErr   error
+	Nodes      []NodeRow
+	PoolsErr   error
+	Pools      []PoolRow
+	Autoscaler AutoscalerState
+	Workload   WorkloadSummary
+	NodeHealth NodeHealthSummary
+	Flux       FluxSummary
 }
 
 func BuildSnapshot(ctx context.Context, app *App) Snapshot {
@@ -106,18 +92,15 @@ func BuildSnapshot(ctx context.Context, app *App) Snapshot {
 	pods, podsErr := app.KubeClient.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 
 	snap := Snapshot{
-		Nudge:      NudgeStateFor(ctx, app),
 		Autoscaler: AutoscalerStateFor(ctx, app),
 	}
 
-	var nodeReady map[string]bool
 	if nodesErr != nil {
 		snap.Pressure = PressureSummary{Err: nodesErr}
 		snap.NodesErr = nodesErr
 	} else {
 		snap.Pressure = pressureFromLists(nodes.Items, pods, podsErr, usage)
 		snap.Nodes = nodeRowsFromLists(nodes.Items, pods, podsErr, usage)
-		nodeReady = nodeReadyMap(nodes.Items)
 	}
 	if usageErr != nil {
 		snap.Pressure.MetricsUnavailable = usageErr
@@ -139,7 +122,11 @@ func BuildSnapshot(ctx context.Context, app *App) Snapshot {
 	}
 	snap.Flux = fluxSummary(ctx, app)
 
-	snap.Pools, snap.PoolsErr = PoolRows(ctx, app, nodeReady)
+	if nodesErr != nil {
+		snap.PoolsErr = nodesErr
+	} else {
+		snap.Pools = PoolRows(ctx, app, nodes.Items)
+	}
 	return snap
 }
 
@@ -269,72 +256,93 @@ func nodeRowsFromLists(nodes []corev1.Node, pods *corev1.PodList, podsErr error,
 	return rows
 }
 
-func PoolRows(ctx context.Context, app *App, nodeReady map[string]bool) ([]PoolRow, error) {
-	pools, err := listPoolsForStatus(ctx, app)
-	if err != nil {
-		return nil, err
+func PoolRows(ctx context.Context, app *App, nodes []corev1.Node) []PoolRow {
+	byPool := groupNodesByPool(nodes)
+	servers := listReservedServers(ctx, app)
+	mergeReservedServers(byPool, servers)
+
+	names := make([]string, 0, len(byPool))
+	for name := range byPool {
+		names = append(names, name)
 	}
-	rows := make([]PoolRow, 0, len(pools))
-	for i := range pools {
-		pool := pools[i]
-		row := PoolRow{
-			Name:    pool.Name,
-			Type:    ValueOrDash(capi.PoolType(&pool)),
-			Desired: ReplicaCell(pool.Spec.Replicas),
-		}
-		machines, err := app.CapiClient.ListMachines(ctx, app.Config.Pools.Namespace, pool.Name)
-		if err != nil {
-			row.Ready = "0"
-			row.Machines = []MachineRow{{Err: err}}
-			rows = append(rows, row)
-			continue
-		}
+	sort.Strings(names)
+
+	rows := make([]PoolRow, 0, len(names))
+	for _, name := range names {
+		machines := byPool[name]
 		ready := 0
 		for _, m := range machines {
-			node := m.Status.NodeRef.Name
-			if node != "" && nodeReady[node] {
+			if m.Phase == "Running" {
 				ready++
 			}
-			row.Machines = append(row.Machines, MachineRow{
-				Name:       m.Name,
-				Phase:      m.Status.Phase,
-				Node:       node,
-				ProviderID: m.Spec.ProviderID,
-			})
 		}
-		row.Ready = fmt.Sprintf("%d", ready)
-		rows = append(rows, row)
+		rows = append(rows, PoolRow{
+			Name:     name,
+			Type:     name,
+			Desired:  fmt.Sprintf("%d", len(machines)),
+			Ready:    fmt.Sprintf("%d", ready),
+			Machines: machines,
+		})
 	}
-	return rows, nil
+	return rows
 }
 
-func nodeReadyMap(nodes []corev1.Node) map[string]bool {
-	ready := make(map[string]bool, len(nodes))
-	for _, node := range nodes {
-		ready[node.Name] = NodeStatus(node) == "Ready"
+func groupNodesByPool(nodes []corev1.Node) map[string][]MachineRow {
+	byPool := map[string][]MachineRow{}
+	for i := range nodes {
+		node := nodes[i]
+		pool, ok := node.Labels[k8s.PoolLabelKey]
+		if !ok {
+			continue
+		}
+		phase := "Running"
+		if NodeStatus(node) != "Ready" {
+			phase = "NotReady"
+		}
+		byPool[pool] = append(byPool[pool], MachineRow{
+			Name:  node.Name,
+			Phase: phase,
+			Node:  node.Name,
+		})
 	}
-	return ready
+	return byPool
 }
 
-func listPoolsForStatus(ctx context.Context, app *App) ([]clusterv1.MachineDeployment, error) {
-	if app.Cluster == "" {
-		return app.CapiClient.ListPools(ctx, app.Config.Pools.Namespace)
-	}
-	return app.CapiClient.ListPoolsForCluster(ctx, app.Config.Pools.Namespace, app.Cluster)
-}
-
-func NudgeStateFor(ctx context.Context, app *App) NudgeState {
-	initialized, err := app.CapiClient.IsControlPlaneInitialized(ctx, app.Config.Pools.Namespace, app.Cluster)
-	if apierrors.IsNotFound(err) {
-		return NudgeState{Kind: NudgeNotFound}
-	}
+func listReservedServers(ctx context.Context, app *App) []hcloud.Server {
+	hc, _, err := app.ReservedClient(ctx)
 	if err != nil {
-		return NudgeState{Kind: NudgeError, Err: err}
+		return nil
 	}
-	if !initialized {
-		return NudgeState{Kind: NudgeUninitialized}
+	servers, err := hc.ListReservedServers(ctx)
+	if err != nil {
+		return nil
 	}
-	return NudgeState{Kind: NudgeInitialized}
+	return servers
+}
+
+func mergeReservedServers(byPool map[string][]MachineRow, servers []hcloud.Server) {
+	if len(servers) == 0 {
+		return
+	}
+	joined := map[string]bool{}
+	for _, m := range byPool[hcloud.ReservedPoolValue] {
+		joined[m.Name] = true
+	}
+	for _, s := range servers {
+		if joined[s.Name] {
+			for i := range byPool[hcloud.ReservedPoolValue] {
+				if byPool[hcloud.ReservedPoolValue][i].Name == s.Name {
+					byPool[hcloud.ReservedPoolValue][i].ProviderID = fmt.Sprintf("hcloud://%d", s.ID)
+				}
+			}
+			continue
+		}
+		byPool[hcloud.ReservedPoolValue] = append(byPool[hcloud.ReservedPoolValue], MachineRow{
+			Name:       s.Name,
+			Phase:      "Provisioning",
+			ProviderID: fmt.Sprintf("hcloud://%d", s.ID),
+		})
+	}
 }
 
 func AutoscalerStateFor(ctx context.Context, app *App) AutoscalerState {
@@ -384,25 +392,11 @@ func autoscalerActivity(data map[string]string) string {
 	return strings.TrimSpace(strings.SplitN(raw, "\n", 2)[0])
 }
 
-func ReplicaCell(n *int32) string {
-	if n == nil {
-		return "0"
-	}
-	return fmt.Sprintf("%d", *n)
-}
-
 func ValueOrDash(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return emptyCell
 	}
 	return s
-}
-
-func BoolOrDash(b *bool) string {
-	if b == nil {
-		return emptyCell
-	}
-	return fmt.Sprintf("%t", *b)
 }
 
 func GetNodeIPv4(node corev1.Node) string {

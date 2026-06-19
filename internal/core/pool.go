@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lucawalz/horizon/internal/capi"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
+	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/hcloud"
+	"k8s.io/client-go/kubernetes"
 )
 
 const ElasticPoolType = "elastic"
@@ -40,129 +40,105 @@ type PoolTarget struct {
 	Replicas  int32
 }
 
-func NotFoundPoolErr(namespace, name string) error {
-	return fmt.Errorf("pool %s/%s not found; the home pool is provisioned via GitOps in bedrock, not by horizon",
-		namespace, name)
+func ElasticAutoscalerErr() error {
+	return fmt.Errorf("the cluster-autoscaler owns the elastic pool; horizon does not provision elastic nodes")
 }
 
-func currentReplicas(md *clusterv1.MachineDeployment) int32 {
-	if md.Spec.Replicas != nil {
-		return *md.Spec.Replicas
-	}
-	return 0
+func secretRef(r config.SecretRef) hcloud.SecretRef {
+	return hcloud.SecretRef{Namespace: r.Namespace, Name: r.Name, Key: r.Key}
 }
 
-func getPool(ctx context.Context, cc *capi.Client, target PoolTarget) (*clusterv1.MachineDeployment, error) {
-	md, err := cc.GetPool(ctx, target.Namespace, target.Name)
+func ReservedSpec(ctx context.Context, kc kubernetes.Interface, cfg config.Reserved) (*hcloud.Client, hcloud.ServerSpec, error) {
+	token, err := hcloud.ReadToken(ctx, kc, secretRef(cfg.Token))
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, NotFoundPoolErr(target.Namespace, target.Name)
-		}
-		return nil, fmt.Errorf("get pool: %w", err)
+		return nil, hcloud.ServerSpec{}, err
 	}
-	return md, nil
+	join, err := hcloud.ReadJoinMaterial(ctx, kc, secretRef(cfg.JoinConfig))
+	if err != nil {
+		return nil, hcloud.ServerSpec{}, err
+	}
+	userData, err := hcloud.BuildUserData(hcloud.UserDataInput{
+		ElasticCloudInit: join.ElasticCloudInit,
+		ElasticPoolValue: join.ElasticPoolValue,
+	})
+	if err != nil {
+		return nil, hcloud.ServerSpec{}, err
+	}
+	client, err := hcloud.NewClient(token)
+	if err != nil {
+		return nil, hcloud.ServerSpec{}, err
+	}
+	spec := hcloud.ServerSpec{
+		Location:   cfg.Location,
+		ServerType: cfg.ServerType,
+		SSHKeys:    cfg.SSHKeys,
+		UserData:   userData,
+	}
+	return client, spec, nil
 }
 
-func ScaleUp(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun bool, progress Progress) error {
+func ScaleUp(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, target PoolTarget, dryRun bool, progress Progress) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
-	if dryRun {
-		return scaleUpDryRun(ctx, cc, target, progress)
-	}
-
-	if err := ensureControlPlaneInitialized(ctx, cc, target); err != nil {
-		return err
-	}
-
-	progress.Debug(fmt.Sprintf("pool type %q resolves to MachineDeployment %s/%s", target.PoolType, target.Namespace, target.Name))
-	md, err := getPool(ctx, cc, target)
-	if err != nil {
-		return err
-	}
-
-	current := currentReplicas(md)
-	progress.Debug(fmt.Sprintf("current replicas %d", current))
-	if current >= target.Replicas {
-		progress.Emit(fmt.Sprintf("pool %s/%s already at %d replicas (>= %d); nothing to do",
-			target.Namespace, target.Name, current, target.Replicas))
-		return nil
-	}
-
-	progress.Debug(fmt.Sprintf("patching replicas %d -> %d", current, target.Replicas))
-	if err := cc.ScalePool(ctx, target.Namespace, target.Name, target.Replicas); err != nil {
-		return err
-	}
-	progress.Debug("patch accepted")
-	progress.Emit(fmt.Sprintf("Scaled pool %s/%s: %d -> %d replicas",
-		target.Namespace, target.Name, current, target.Replicas))
 	if target.PoolType == ElasticPoolType {
-		progress.Emit("Note: the cluster-autoscaler owns the elastic pool and may override this scale.")
+		return ElasticAutoscalerErr()
 	}
-	return nil
-}
 
-func scaleUpDryRun(ctx context.Context, cc *capi.Client, target PoolTarget, progress Progress) error {
-	md, err := getPool(ctx, cc, target)
+	current, err := hc.ListReservedServers(ctx)
 	if err != nil {
 		return err
 	}
-	current := currentReplicas(md)
-	progress.Emit(fmt.Sprintf("[dry-run] pool %s/%s (cluster %s): %d -> %d replicas",
-		target.Namespace, target.Name, target.Cluster, current, target.Replicas))
-	progress.Emit("[dry-run] No actions executed.")
-	return nil
-}
-
-func ensureControlPlaneInitialized(ctx context.Context, cc *capi.Client, target PoolTarget) error {
-	initialized, err := cc.IsControlPlaneInitialized(ctx, target.Namespace, target.Cluster)
-	if err != nil {
-		return fmt.Errorf("control-plane status: %w", err)
-	}
-	if !initialized {
-		return fmt.Errorf("control plane for cluster %q not initialized; workers will not bootstrap until the control plane reports ready", target.Cluster)
-	}
-	return nil
-}
-
-func ScaleDown(ctx context.Context, cc *capi.Client, target PoolTarget, dryRun, del bool, progress Progress) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	have := int32(len(current))
 
 	if dryRun {
-		if del {
-			progress.Emit(fmt.Sprintf("[dry-run] delete pool %s/%s", target.Namespace, target.Name))
-		} else {
-			progress.Emit(fmt.Sprintf("[dry-run] scale pool %s/%s to 0 replicas", target.Namespace, target.Name))
-		}
+		progress.Emit(fmt.Sprintf("[dry-run] reserved pool: %d -> %d servers", have, target.Replicas))
 		progress.Emit("[dry-run] No actions executed.")
 		return nil
 	}
 
-	progress.Debug(fmt.Sprintf("pool type %q resolves to MachineDeployment %s/%s", target.PoolType, target.Namespace, target.Name))
-	if del {
-		progress.Debug("deleting MachineDeployment")
-		if err := cc.DeletePool(ctx, target.Namespace, target.Name); err != nil {
-			if apierrors.IsNotFound(err) {
-				return NotFoundPoolErr(target.Namespace, target.Name)
-			}
-			return err
-		}
-		progress.Debug("delete accepted")
-		progress.Emit(fmt.Sprintf("Deleted pool %s/%s", target.Namespace, target.Name))
+	if have >= target.Replicas {
+		progress.Emit(fmt.Sprintf("reserved pool already at %d servers (>= %d); nothing to do", have, target.Replicas))
 		return nil
 	}
 
-	progress.Debug("patching replicas -> 0")
-	if err := cc.ScalePool(ctx, target.Namespace, target.Name, 0); err != nil {
-		if apierrors.IsNotFound(err) {
-			return NotFoundPoolErr(target.Namespace, target.Name)
-		}
+	progress.Debug(fmt.Sprintf("scaling reserved servers %d -> %d", have, target.Replicas))
+	if _, err := hc.ScaleReservedTo(ctx, spec, int(target.Replicas)); err != nil {
 		return err
 	}
-	progress.Debug("patch accepted")
-	progress.Emit(fmt.Sprintf("Scaled pool %s/%s to 0 replicas", target.Namespace, target.Name))
+	progress.Emit(fmt.Sprintf("Scaled reserved pool: %d -> %d servers", have, target.Replicas))
+	return nil
+}
+
+func ScaleDown(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, target PoolTarget, dryRun bool, progress Progress) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if target.PoolType == ElasticPoolType {
+		return ElasticAutoscalerErr()
+	}
+
+	current, err := hc.ListReservedServers(ctx)
+	if err != nil {
+		return err
+	}
+	have := int32(len(current))
+
+	if dryRun {
+		progress.Emit(fmt.Sprintf("[dry-run] reserved pool: %d -> 0 servers", have))
+		progress.Emit("[dry-run] No actions executed.")
+		return nil
+	}
+
+	if have == 0 {
+		progress.Emit("reserved pool already at 0 servers; nothing to do")
+		return nil
+	}
+
+	progress.Debug("scaling reserved servers -> 0")
+	if _, err := hc.ScaleReservedTo(ctx, spec, 0); err != nil {
+		return err
+	}
+	progress.Emit(fmt.Sprintf("Scaled reserved pool to 0 servers (was %d)", have))
 	return nil
 }

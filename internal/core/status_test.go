@@ -10,95 +10,52 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestPoolRowsCarryTypeAndMachines(t *testing.T) {
-	reserved := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 3, 0)
-	elastic := mdWithType("caph-system", "elastic-workers", "burst", "elastic", 0, 0)
-	running := machineFor("caph-system", "reserved-workers", "m-running", "Running", "node-a", "hcloud://123")
-	notReady := machineFor("caph-system", "reserved-workers", "m-notready", "Running", "node-b", "hcloud://124")
-	provisioning := machineFor("caph-system", "reserved-workers", "m-provisioning", "Provisioning", "", "")
+func labelledNode(name, pool string, ready bool) *corev1.Node {
+	status := corev1.ConditionTrue
+	if !ready {
+		status = corev1.ConditionFalse
+	}
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"horizon.dev/pool": pool}},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status}},
+		},
+	}
+}
 
+func TestPoolRowsGroupNodesByPoolLabel(t *testing.T) {
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = capiClient(t, reserved, elastic, running, notReady, provisioning,
-		initializedCluster("caph-system", "burst", true))
 
-	nodeReady := map[string]bool{"node-a": true, "node-b": false}
-	rows, err := core.PoolRows(context.Background(), app, nodeReady)
-	if err != nil {
-		t.Fatalf("PoolRows: %v", err)
+	nodes := []corev1.Node{
+		*labelledNode("elastic-1", "elastic", true),
+		*labelledNode("elastic-2", "elastic", false),
+		*labelledNode("reserved-1", "reserved", true),
+		*readyNode("master"),
 	}
 
+	rows := core.PoolRows(context.Background(), app, nodes)
 	byName := map[string]core.PoolRow{}
 	for _, r := range rows {
 		byName[r.Name] = r
 	}
-	res, ok := byName["reserved-workers"]
+
+	el, ok := byName["elastic"]
 	if !ok {
-		t.Fatalf("missing reserved-workers row: %+v", rows)
+		t.Fatalf("missing elastic pool row: %+v", rows)
 	}
-	if res.Type != "reserved" || res.Desired != "3" || res.Ready != "1" {
+	if el.Type != "elastic" || el.Desired != "2" || el.Ready != "1" {
+		t.Errorf("elastic row = %+v", el)
+	}
+	res, ok := byName["reserved"]
+	if !ok {
+		t.Fatalf("missing reserved pool row: %+v", rows)
+	}
+	if res.Desired != "1" || res.Ready != "1" {
 		t.Errorf("reserved row = %+v", res)
 	}
-	if el := byName["elastic-workers"]; el.Type != "elastic" {
-		t.Errorf("elastic row type = %q, want elastic", el.Type)
-	}
-
-	var found bool
-	for _, m := range res.Machines {
-		if m.Name == "m-running" && m.Phase == "Running" && m.Node == "node-a" && m.ProviderID == "hcloud://123" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("running machine row missing: %+v", res.Machines)
-	}
-}
-
-func TestPoolRowsEmptyPoolHasNoMachines(t *testing.T) {
-	md := mdWithStatus("caph-system", "burst-workers", "burst", 0, 0)
-
-	app := newTestApp()
-	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = capiClient(t, md, initializedCluster("caph-system", "burst", true))
-
-	rows, err := core.PoolRows(context.Background(), app, nil)
-	if err != nil {
-		t.Fatalf("PoolRows: %v", err)
-	}
-	if len(rows) != 1 || rows[0].Name != "burst-workers" {
-		t.Fatalf("unexpected pool rows %+v", rows)
-	}
-	if len(rows[0].Machines) != 0 {
-		t.Errorf("expected no machines for empty pool, got %+v", rows[0].Machines)
-	}
-	if rows[0].Desired != "0" || rows[0].Ready != "0" {
-		t.Errorf("expected zero replica cells, got %+v", rows[0])
-	}
-}
-
-func TestNudgeStateUninitializedWhenControlPlaneNotMarked(t *testing.T) {
-	md := mdWithStatus("caph-system", "burst-workers", "burst", 1, 0)
-
-	app := newTestApp()
-	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = capiClient(t, md, initializedCluster("caph-system", "burst", false))
-
-	state := core.NudgeStateFor(context.Background(), app)
-	if state.Kind != core.NudgeUninitialized {
-		t.Errorf("nudge kind = %v, want NudgeUninitialized", state.Kind)
-	}
-}
-
-func TestNudgeStateNotFoundWhenClusterMissing(t *testing.T) {
-	md := mdWithStatus("caph-system", "burst-workers", "burst", 1, 1)
-
-	app := newTestApp()
-	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = capiClient(t, md)
-
-	state := core.NudgeStateFor(context.Background(), app)
-	if state.Kind != core.NudgeNotFound {
-		t.Errorf("nudge kind = %v, want NudgeNotFound", state.Kind)
+	if _, ok := byName["worker"]; ok {
+		t.Errorf("unlabelled nodes must not form a pool: %+v", rows)
 	}
 }
 
@@ -211,27 +168,23 @@ func TestPressureDegradesWhenMetricsEmpty(t *testing.T) {
 }
 
 func TestBuildSnapshotAssemblesSections(t *testing.T) {
-	node := nodeWithAllocatable("worker-1", "4", "8Gi")
-	md := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 1, 0)
-	bound := machineFor("caph-system", "reserved-workers", "m-bound", "Running", "worker-1", "hcloud://1")
+	worker := nodeWithAllocatable("worker-1", "4", "8Gi")
+	reserved := labelledNode("reserved-1", "reserved", true)
 
 	app := newTestApp()
-	app.KubeClient = fake.NewSimpleClientset(node)
+	app.KubeClient = fake.NewSimpleClientset(worker, reserved)
 	app.MetricsClient = metricsClient(t, nodeMetrics("worker-1", "1", "2Gi"))
-	app.CapiClient = capiClient(t, md, bound, initializedCluster("caph-system", "burst", true))
+	app.CapiClient = burstCapiClient(t)
 
 	snap := core.BuildSnapshot(context.Background(), app)
-	if snap.NodesErr != nil || len(snap.Nodes) != 1 {
+	if snap.NodesErr != nil || len(snap.Nodes) != 2 {
 		t.Errorf("nodes section = %+v err=%v", snap.Nodes, snap.NodesErr)
 	}
 	if snap.PoolsErr != nil || len(snap.Pools) != 1 {
 		t.Errorf("pools section = %+v err=%v", snap.Pools, snap.PoolsErr)
 	}
-	if snap.Pools[0].Ready != "1" {
-		t.Errorf("pool ready = %q, want 1 from ready node", snap.Pools[0].Ready)
-	}
-	if snap.Nudge.Kind != core.NudgeInitialized {
-		t.Errorf("nudge = %v, want NudgeInitialized", snap.Nudge.Kind)
+	if snap.Pools[0].Name != "reserved" || snap.Pools[0].Ready != "1" {
+		t.Errorf("pool row = %+v, want reserved ready 1", snap.Pools[0])
 	}
 	if !snap.Autoscaler.NotFound {
 		t.Errorf("autoscaler = %+v, want NotFound", snap.Autoscaler)

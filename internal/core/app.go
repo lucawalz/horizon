@@ -1,10 +1,12 @@
 package core
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
+	"github.com/lucawalz/horizon/internal/hcloud"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"k8s.io/client-go/kubernetes"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
@@ -58,4 +60,8 @@ func NewApp(contextName, clusterName string) (*App, error) {
 		Cluster:       cluster,
 		Context:       effectiveContext,
 	}, nil
+}
+
+func (a *App) ReservedClient(ctx context.Context) (*hcloud.Client, hcloud.ServerSpec, error) {
+	return ReservedSpec(ctx, a.KubeClient, a.Config.Reserved)
 }

@@ -312,17 +312,15 @@ func poolsCompactBody(snap core.Snapshot, inner int) string {
 
 func rightColumnNaturalWidth(snap core.Snapshot) int {
 	w := lipgloss.Width("Cluster status")
-	for _, line := range []string{nudgeLine(snap.Nudge), autoscalerLine(snap.Autoscaler)} {
-		if x := lipgloss.Width(line); x > w {
-			w = x
-		}
+	if x := lipgloss.Width(autoscalerLine(snap.Autoscaler)); x > w {
+		w = x
 	}
 	return w
 }
 
 func clusterStatusPanel(snap core.Snapshot, width int) string {
 	return titledPanel("Cluster status", width, func(inner int) string {
-		return strings.Join([]string{nudgeLine(snap.Nudge), autoscalerLine(snap.Autoscaler)}, "\n")
+		return autoscalerLine(snap.Autoscaler)
 	})
 }
 
@@ -334,19 +332,6 @@ func neutralTable(headers []string, rows [][]string, inner int) string {
 		return dimNeutralCell(tableCellStyle.PaddingLeft(0), rows[row][col])
 	}).Rows(rows...)
 	return t.Render()
-}
-
-func nudgeLine(state core.NudgeState) string {
-	switch state.Kind {
-	case core.NudgeError:
-		return fmt.Sprintf("control-plane %s %s", statusDot(theme.DotRed), errStyle.Render("status unavailable"))
-	case core.NudgeUninitialized:
-		return fmt.Sprintf("control-plane %s %s", statusDot(theme.DotYellow), warnStyle.Render("uninitialized (workers will not bootstrap)"))
-	case core.NudgeInitialized:
-		return fmt.Sprintf("control-plane %s initialized", statusDot(theme.DotGreen))
-	default:
-		return fmt.Sprintf("control-plane %s not found", statusDot(theme.DotYellow))
-	}
 }
 
 func autoscalerLine(state core.AutoscalerState) string {

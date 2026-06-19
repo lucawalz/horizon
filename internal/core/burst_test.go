@@ -11,7 +11,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 )
 
 func workloadPod(name, ns, node string) *corev1.Pod {
@@ -28,35 +27,19 @@ func poolNode(name, pool string) *corev1.Node {
 	return n
 }
 
-func readyMachine(namespace, pool, nodeName string) *clusterv1.Machine {
-	m := &clusterv1.Machine{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      nodeName,
-			Namespace: namespace,
-			Labels:    map[string]string{clusterv1.MachineDeploymentNameLabel: pool},
-		},
-	}
-	m.Status.NodeRef.Name = nodeName
-	return m
-}
-
 func TestBurstScalesMigratesAndBacksUp(t *testing.T) {
-	hostname := "burst-node-1"
-	cc := burstCapiClient(
-		t,
-		machineDeployment("caph-system", "burst-workers", "burst", 0),
-		readyMachine("caph-system", "burst-workers", hostname),
-	)
+	hostname := "reserved-node-1"
+	hc, _ := newHcloudFake(reservedServer(1, hostname))
 	kc := fake.NewSimpleClientset(
-		poolNode(hostname, "burst"),
+		poolNode(hostname, "reserved"),
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "sentio-systems"}},
 		workloadPod("app-1", "sentio-systems", hostname),
 	)
 	vc := &fakeVeleroClient{}
 
-	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
-	if err := core.Burst(context.Background(), cc, kc, vc, params, core.Progress{}); err != nil {
+	target := core.PoolTarget{PoolType: "reserved", Cluster: "burst", Replicas: 1}
+	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "reserved"}
+	if err := core.Burst(context.Background(), hc, reservedSpec(), kc, vc, params, core.Progress{}); err != nil {
 		t.Fatalf("Burst: %v", err)
 	}
 
@@ -67,12 +50,12 @@ func TestBurstScalesMigratesAndBacksUp(t *testing.T) {
 		t.Errorf("backup IncludedNamespaces = %v, want [sentio-systems]", got)
 	}
 
-	pool, err := cc.GetPool(context.Background(), "caph-system", "burst-workers")
+	servers, err := hc.ListReservedServers(context.Background())
 	if err != nil {
-		t.Fatalf("GetPool: %v", err)
+		t.Fatalf("ListReservedServers: %v", err)
 	}
-	if pool.Spec.Replicas == nil || *pool.Spec.Replicas != 1 {
-		t.Errorf("replicas = %v, want 1", pool.Spec.Replicas)
+	if len(servers) != 1 {
+		t.Errorf("reserved servers = %d, want 1", len(servers))
 	}
 
 	dep, err := kc.AppsV1().Deployments("sentio-systems").Get(context.Background(), "app", metav1.GetOptions{})
@@ -84,51 +67,43 @@ func TestBurstScalesMigratesAndBacksUp(t *testing.T) {
 		t.Fatal("workload affinity not set after migrate")
 	}
 	req := a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
-	if req.Key != k8s.PoolLabelKey || req.Values[0] != "burst" {
-		t.Errorf("affinity = %s=%v, want %s=[burst]", req.Key, req.Values, k8s.PoolLabelKey)
+	if req.Key != k8s.PoolLabelKey || req.Values[0] != "reserved" {
+		t.Errorf("affinity = %s=%v, want %s=[reserved]", req.Key, req.Values, k8s.PoolLabelKey)
 	}
 }
 
-func TestBurstFailsFastWhenPoolMissing(t *testing.T) {
-	cc := burstCapiClient(t)
+func TestBurstRefusesElastic(t *testing.T) {
+	hc, _ := newHcloudFake()
 	kc := fake.NewSimpleClientset()
 	vc := &fakeVeleroClient{}
 
-	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
-	err := core.Burst(context.Background(), cc, kc, vc, params, core.Progress{})
-	if err == nil {
-		t.Fatal("expected fail-fast when pool missing")
-	}
-	if !strings.Contains(err.Error(), "not found") || !strings.Contains(err.Error(), "bedrock") {
-		t.Errorf("error %q should explain the home pool is GitOps-managed", err.Error())
+	target := core.PoolTarget{PoolType: core.ElasticPoolType, Replicas: 1}
+	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "elastic"}
+	err := core.Burst(context.Background(), hc, reservedSpec(), kc, vc, params, core.Progress{})
+	if err == nil || !strings.Contains(err.Error(), "elastic") {
+		t.Fatalf("expected elastic refusal, got %v", err)
 	}
 	if vc.waited {
-		t.Error("backup must not run when the pool is missing")
+		t.Error("backup must not run for an elastic burst")
 	}
 }
 
-func TestBurstRollsBackOnMigrateFailure(t *testing.T) {
-	cc := burstCapiClient(
-		t,
-		machineDeployment("caph-system", "burst-workers", "burst", 2),
-		readyMachine("caph-system", "burst-workers", "burst-node-1"),
-	)
+func TestBurstRollsBackOnLaterStageFailure(t *testing.T) {
+	hc, f := newHcloudFake(reservedServer(1, "reserved-node-1"), reservedServer(2, "reserved-node-2"))
 	kc := fake.NewSimpleClientset()
 	vc := &fakeVeleroClient{}
 
-	target := poolTarget("caph-system", "burst-workers", "burst", 1)
-	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "burst"}
-	err := core.Burst(context.Background(), cc, kc, vc, params, core.Progress{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	target := core.PoolTarget{PoolType: "reserved", Cluster: "burst", Replicas: 1}
+	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "reserved"}
+	err := core.Burst(ctx, hc, reservedSpec(), kc, vc, params, core.Progress{})
 	if err == nil {
-		t.Fatal("expected error when migrate finds no pool node")
+		t.Fatal("expected error when the node wait is cancelled")
 	}
 
-	pool, gerr := cc.GetPool(context.Background(), "caph-system", "burst-workers")
-	if gerr != nil {
-		t.Fatalf("GetPool: %v", gerr)
-	}
-	if pool.Spec.Replicas == nil || *pool.Spec.Replicas != 2 {
-		t.Errorf("pool must roll back to prior 2 replicas, got %v", pool.Spec.Replicas)
+	if len(f.servers) != 2 {
+		t.Errorf("reserved pool must roll back to prior 2 servers, got %d", len(f.servers))
 	}
 }

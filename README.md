@@ -16,10 +16,10 @@ The substrate horizon operates over lives in the companion [bedrock](https://git
 
 horizon distinguishes two capacity categories, each with a different owner.
 
-- Elastic pools (`horizon.dev/pool-type=elastic`): autoscaled by the in-cluster cluster-autoscaler, which scales them to zero and back as pending pods demand. horizon can scale an elastic pool by hand, but the autoscaler owns the pool and may override that scale.
-- Reserved pools (`horizon.dev/pool-type=reserved`): operator-pinned and kept off the autoscaler's min and max annotations. horizon owns these through its scale, drain-down, and burst actions; this is the default pool type. Reserved pools carry a Flux create-once annotation, so a manual scale sticks.
+- Elastic pools (`horizon.dev/pool=elastic`): autoscaled by the in-cluster cluster-autoscaler, which scales them to zero and back as pending pods demand. The autoscaler owns these servers, so horizon never provisions or deletes them.
+- Reserved pools (`horizon.dev/pool=reserved`): operator-pinned capacity. horizon owns these through its scale, drain-down, and burst actions; this is the default pool type. horizon provisions reserved servers on demand against the Hetzner Cloud API and labels each one `horizon.dev/managed-by=horizon`, so it only ever lists or deletes servers it created.
 
-The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). Each type maps to a MachineDeployment name through the `pools.types` config. Pool machines join the existing home cluster, whose control plane is externally managed, so Cluster API never marks it initialized on its own; an in-cluster ExternalControlPlane controller latches that status so workers bootstrap.
+The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). A reserved server boots from the shared pool-node image and joins the home cluster by Hetzner user-data, identical to an autoscaler node apart from its pool label. horizon sources the API token and join material at runtime from the in-cluster `hcloud` and `cluster-autoscaler-hcloud-config` secrets, so no credentials live in its own config.
 
 ### Background
 
@@ -123,7 +123,7 @@ horizon --context homelab --cluster burst
 
 The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory with fixed usage bands and the count of pending pods, and panels on the left list the nodes and the pools with their type and replica state. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
 
-The pool panel shows the type read from each MachineDeployment's `horizon.dev/pool-type` label, alongside its desired and ready replicas and machine state. The pressure header warns when the externally managed control plane is not yet marked initialized, so an uninitialized control plane is not silently missed.
+The pool panel groups nodes by their `horizon.dev/pool` label and, for the reserved pool, overlays the servers horizon has provisioned but not yet joined, alongside desired and ready counts and per-node state.
 
 ### Actions
 
@@ -174,10 +174,10 @@ The tap requires a one-time operator setup that cannot be automated from this re
 
 ## How it works
 
-- Routine scale-out is the cluster-autoscaler's job. The autoscaler owns elastic pools and scales them to zero on its own. horizon owns reserved pools, scaling them directly, and deliberately leaves the autoscaler min and max annotations off them so the two scaling paths do not fight.
-- A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the pool to its prior replica count.
-- The control-plane status is latched by an in-cluster ExternalControlPlane controller, not by horizon. horizon only reads it, and the dashboard warns when it is unset.
-- Workload placement is a contract: bedrock's KThreesConfigTemplate labels nodes `horizon.dev/pool=<type>` at join, and horizon rewrites workload affinity to match the targeted pool type.
+- Routine scale-out is the cluster-autoscaler's job. The autoscaler owns elastic pools and scales them to zero on its own. horizon owns reserved pools, provisioning and deleting their servers directly through the Hetzner Cloud API, so the two scaling paths do not fight.
+- Reserved ownership is enforced in code: horizon only ever lists or deletes servers carrying `horizon.dev/managed-by=horizon`, and refuses any server that also carries the autoscaler's `hcloud/node-group` marker.
+- A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the reserved pool to its prior server count.
+- Workload placement is a contract: a pool node labels itself `horizon.dev/pool=<type>` at join, and horizon rewrites workload affinity to match the targeted pool type.
 
 ## Repository layout
 
@@ -186,8 +186,8 @@ cmd/horizon/        main entry point
 internal/tui/       Bubble Tea command centre and panels
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
-internal/capi/      Cluster API client, pool operations, manifest rendering, git writes
-internal/controller/  ExternalControlPlane controller that latches externally-managed control-plane status
+internal/capi/      Cluster API client for pool-type detection and Flux status
+internal/hcloud/    Hetzner Cloud client for reserved server provisioning
 internal/k8s/       cluster client, drain, workload migration
 internal/prometheus/  pressure queries over a port-forward
 internal/velero/    backups and restores
