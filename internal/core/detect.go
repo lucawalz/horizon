@@ -16,7 +16,6 @@ type Detected struct {
 	PoolsNamespace string
 	PoolTypes      map[string]string
 	ClusterName    string
-	Clusters       []string
 }
 
 func Detect(ctx context.Context, kube kubernetes.Interface, cc *capi.Client) (Detected, error) {
@@ -49,15 +48,6 @@ func Detect(ctx context.Context, kube kubernetes.Interface, cc *capi.Client) (De
 			detected.ClusterName = md.Labels[clusterv1.ClusterNameLabel]
 		}
 	}
-
-	clusters, err := cc.ListClusters(ctx, "")
-	if err != nil {
-		return Detected{}, fmt.Errorf("detect: list clusters: %w", err)
-	}
-	for i := range clusters {
-		detected.Clusters = append(detected.Clusters, clusters[i].Name)
-	}
-	sort.Strings(detected.Clusters)
 
 	return detected, nil
 }

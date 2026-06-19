@@ -15,7 +15,6 @@ type App struct {
 	KubeClient    kubernetes.Interface
 	MetricsClient metricsclient.Interface
 	CapiClient    *capi.Client
-	RemoteNodes   *k8s.RemoteClientCache
 	Cluster       string
 	Context       string
 }
@@ -56,7 +55,6 @@ func NewApp(contextName, clusterName string) (*App, error) {
 		KubeClient:    kc,
 		MetricsClient: mc,
 		CapiClient:    cc,
-		RemoteNodes:   k8s.NewRemoteClientCache(),
 		Cluster:       cluster,
 		Context:       effectiveContext,
 	}, nil

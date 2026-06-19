@@ -144,19 +144,6 @@ func initializedCluster(namespace, name string, initialized bool) *clusterv1.Clu
 	return c
 }
 
-func managedCluster(namespace, name, phase string, initialized bool) *clusterv1.Cluster {
-	c := &clusterv1.Cluster{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      name,
-			Labels:    map[string]string{"horizon.dev/managed-by": "horizon"},
-		},
-	}
-	c.Status.Phase = phase
-	c.Status.Initialization.ControlPlaneInitialized = &initialized
-	return c
-}
-
 func capiClient(t *testing.T, objs ...client.Object) *capi.Client {
 	t.Helper()
 	cl := capiScheme(t).WithObjects(objs...).WithStatusSubresource(&clusterv1.Cluster{}).Build()

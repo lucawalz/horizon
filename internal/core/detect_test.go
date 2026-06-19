@@ -79,22 +79,3 @@ func TestDetectNoPools(t *testing.T) {
 		t.Errorf("Namespaces = %v, want %v", got.Namespaces, wantNs)
 	}
 }
-
-func TestDetectSurfacesClusters(t *testing.T) {
-	kube := kubeWithNamespaces(t, "default")
-	objs := []client.Object{
-		managedCluster("caph-system", "edge-east", "Provisioned", true),
-		managedCluster("caph-system", "edge-west", "Provisioned", true),
-	}
-	cc := burstCapiClient(t, objs...)
-
-	got, err := core.Detect(context.Background(), kube, cc)
-	if err != nil {
-		t.Fatalf("Detect: %v", err)
-	}
-
-	wantClusters := []string{"edge-east", "edge-west"}
-	if !reflect.DeepEqual(got.Clusters, wantClusters) {
-		t.Errorf("Clusters = %v, want %v", got.Clusters, wantClusters)
-	}
-}

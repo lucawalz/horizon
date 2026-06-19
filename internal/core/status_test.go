@@ -76,30 +76,6 @@ func TestPoolRowsEmptyPoolHasNoMachines(t *testing.T) {
 	}
 }
 
-func TestClusterRowsSurfaceManagedClusters(t *testing.T) {
-	md := mdWithType("caph-system", "reserved-workers", "burst", "reserved", 1, 1)
-
-	app := newTestApp()
-	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = capiClient(t, md,
-		initializedCluster("caph-system", "burst", true),
-		managedCluster("caph-system", "edge", "Provisioned", true))
-
-	rows, err := core.ClusterRows(context.Background(), app)
-	if err != nil {
-		t.Fatalf("ClusterRows: %v", err)
-	}
-	var edge core.ClusterRow
-	for _, r := range rows {
-		if r.Name == "edge" {
-			edge = r
-		}
-	}
-	if edge.Name != "edge" || edge.Phase != "Provisioned" || edge.ControlPlaneReady != "true" {
-		t.Errorf("edge cluster row = %+v", edge)
-	}
-}
-
 func TestNudgeStateUninitializedWhenControlPlaneNotMarked(t *testing.T) {
 	md := mdWithStatus("caph-system", "burst-workers", "burst", 1, 0)
 
