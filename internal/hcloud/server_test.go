@@ -13,6 +13,7 @@ import (
 type fakeAPI struct {
 	servers   []*hcloudgo.Server
 	images    []*hcloudgo.Image
+	sshKeys   map[string]*hcloudgo.SSHKey
 	created   []hcloudgo.ServerCreateOpts
 	deleted   []int64
 	nextID    int64
@@ -20,6 +21,7 @@ type fakeAPI struct {
 	createErr error
 	deleteErr error
 	imageErr  error
+	sshKeyErr error
 }
 
 func (f *fakeAPI) AllWithOpts(_ context.Context, opts hcloudgo.ServerListOpts) ([]*hcloudgo.Server, error) {
@@ -68,6 +70,18 @@ func (i fakeImageAPI) AllWithOpts(ctx context.Context, opts hcloudgo.ImageListOp
 	return i.f.imageList(ctx, opts)
 }
 
+type fakeSSHKeyAPI struct{ f *fakeAPI }
+
+func (k fakeSSHKeyAPI) GetByName(_ context.Context, name string) (*hcloudgo.SSHKey, *hcloudgo.Response, error) {
+	if k.f.sshKeyErr != nil {
+		return nil, nil, k.f.sshKeyErr
+	}
+	if key, ok := k.f.sshKeys[name]; ok {
+		return key, nil, nil
+	}
+	return nil, nil, nil
+}
+
 func filterByLabelSelector(servers []*hcloudgo.Server, selector string) []*hcloudgo.Server {
 	if selector == "" {
 		return servers
@@ -87,8 +101,12 @@ func filterByLabelSelector(servers []*hcloudgo.Server, selector string) []*hclou
 }
 
 func newFake(images []*hcloudgo.Image, servers ...*hcloudgo.Server) (*hz.Client, *fakeAPI) {
-	f := &fakeAPI{servers: servers, images: images}
-	return hz.NewClientWithAPIs(f, fakeImageAPI{f}), f
+	f := &fakeAPI{
+		servers: servers,
+		images:  images,
+		sshKeys: map[string]*hcloudgo.SSHKey{"k": {ID: 42, Name: "k"}},
+	}
+	return hz.NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{f}), f
 }
 
 func server(id int64, name string, labels map[string]string) *hcloudgo.Server {
@@ -197,5 +215,28 @@ func TestCreateReservedServerFailsFastWithoutImage(t *testing.T) {
 	_, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", UserData: "ud"})
 	if err == nil || !strings.Contains(err.Error(), "no image") {
 		t.Fatalf("expected no-image error, got %v", err)
+	}
+}
+
+func TestCreateReservedServerResolvesSSHKeyToID(t *testing.T) {
+	c, f := newFake(poolImage())
+
+	if _, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", SSHKeys: []string{"k"}, UserData: "ud"}); err != nil {
+		t.Fatalf("CreateReservedServer: %v", err)
+	}
+	if len(f.created) != 1 || len(f.created[0].SSHKeys) != 1 {
+		t.Fatalf("expected one ssh key in create opts, got %+v", f.created)
+	}
+	if f.created[0].SSHKeys[0].ID != 42 {
+		t.Errorf("ssh key ID = %d, want resolved 42", f.created[0].SSHKeys[0].ID)
+	}
+}
+
+func TestCreateReservedServerFailsFastOnUnknownSSHKey(t *testing.T) {
+	c, _ := newFake(poolImage())
+
+	_, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", SSHKeys: []string{"missing"}, UserData: "ud"})
+	if err == nil || !strings.Contains(err.Error(), `ssh key "missing" not found`) {
+		t.Fatalf("expected not-found ssh key error, got %v", err)
 	}
 }

@@ -81,8 +81,15 @@ func (c *Client) CreateReservedServer(ctx context.Context, spec ServerSpec) (*Se
 		return nil, err
 	}
 	sshKeys := make([]*hcloudgo.SSHKey, 0, len(spec.SSHKeys))
-	for _, k := range spec.SSHKeys {
-		sshKeys = append(sshKeys, &hcloudgo.SSHKey{Name: k})
+	for _, name := range spec.SSHKeys {
+		key, _, err := c.sshKeys.GetByName(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("hcloud: lookup ssh key %q: %w", name, err)
+		}
+		if key == nil {
+			return nil, fmt.Errorf("hcloud: ssh key %q not found in project", name)
+		}
+		sshKeys = append(sshKeys, key)
 	}
 	opts := hcloudgo.ServerCreateOpts{
 		Name:       name,

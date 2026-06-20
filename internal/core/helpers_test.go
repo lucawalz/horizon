@@ -68,6 +68,12 @@ func (i fakeImageAPI) AllWithOpts(ctx context.Context, opts hcloudgo.ImageListOp
 	return i.f.AllWithImageOpts(ctx, opts)
 }
 
+type fakeSSHKeyAPI struct{}
+
+func (fakeSSHKeyAPI) GetByName(_ context.Context, name string) (*hcloudgo.SSHKey, *hcloudgo.Response, error) {
+	return &hcloudgo.SSHKey{ID: 1, Name: name}, nil, nil
+}
+
 func reservedServer(id int64, name string) *hcloudgo.Server {
 	return &hcloudgo.Server{
 		ID:   id,
@@ -89,7 +95,7 @@ func newHcloudFake(servers ...*hcloudgo.Server) (*hcloud.Client, *fakeHcloudAPI)
 			f.nextID = s.ID
 		}
 	}
-	return hcloud.NewClientWithAPIs(f, fakeImageAPI{f}), f
+	return hcloud.NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{}), f
 }
 
 func reservedSpec() hcloud.ServerSpec {

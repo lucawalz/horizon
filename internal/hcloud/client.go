@@ -27,9 +27,14 @@ type ImageAPI interface {
 	AllWithOpts(ctx context.Context, opts hcloudgo.ImageListOpts) ([]*hcloudgo.Image, error)
 }
 
+type SSHKeyAPI interface {
+	GetByName(ctx context.Context, name string) (*hcloudgo.SSHKey, *hcloudgo.Response, error)
+}
+
 type Client struct {
 	servers ServerAPI
 	images  ImageAPI
+	sshKeys SSHKeyAPI
 }
 
 func NewClient(token string) (*Client, error) {
@@ -37,9 +42,9 @@ func NewClient(token string) (*Client, error) {
 		return nil, fmt.Errorf("hcloud: token must not be empty")
 	}
 	cl := hcloudgo.NewClient(hcloudgo.WithToken(token))
-	return &Client{servers: &cl.Server, images: &cl.Image}, nil
+	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey}, nil
 }
 
-func NewClientWithAPIs(servers ServerAPI, images ImageAPI) *Client {
-	return &Client{servers: servers, images: images}
+func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI) *Client {
+	return &Client{servers: servers, images: images, sshKeys: sshKeys}
 }
