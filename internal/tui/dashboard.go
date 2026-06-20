@@ -207,8 +207,10 @@ const (
 )
 
 // drop order is descending so earlier drops never shift later indices
-var poolDropOrder = []int{poolColProviderID, poolColNode}
-var poolFlexCols = []int{poolColPool, poolColMachine, poolColNode}
+var (
+	poolDropOrder = []int{poolColProviderID, poolColNode}
+	poolFlexCols  = []int{poolColPool, poolColMachine, poolColNode}
+)
 
 func poolsTableData(snap core.Snapshot) ([]string, [][]string) {
 	headers := []string{"POOL", "TYPE", "DESIRED", "READY", "MACHINE", "PHASE", "NODE", "PROVIDER-ID"}

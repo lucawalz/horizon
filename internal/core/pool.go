@@ -57,10 +57,7 @@ func ReservedSpec(ctx context.Context, kc kubernetes.Interface, cfg config.Reser
 	if err != nil {
 		return nil, hcloud.ServerSpec{}, err
 	}
-	userData, err := hcloud.BuildUserData(hcloud.UserDataInput{
-		ElasticCloudInit: join.ElasticCloudInit,
-		ElasticPoolValue: join.ElasticPoolValue,
-	})
+	userData, err := hcloud.BuildUserData(hcloud.UserDataInput(join))
 	if err != nil {
 		return nil, hcloud.ServerSpec{}, err
 	}
