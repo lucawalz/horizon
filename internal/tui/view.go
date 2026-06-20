@@ -288,10 +288,6 @@ func readyNodeCount(snap core.Snapshot) int {
 	return n
 }
 
-func splitLines(s string) []string {
-	return strings.Split(strings.TrimRight(s, "\n"), "\n")
-}
-
 func itoa(n int) string {
 	return strconv.Itoa(n)
 }
