@@ -43,12 +43,18 @@ type SecretRef struct {
 	Key       string `mapstructure:"key" yaml:"key"`
 }
 
+type ReservedImage struct {
+	Label string `mapstructure:"label" yaml:"label"`
+	Value string `mapstructure:"value" yaml:"value"`
+}
+
 type Reserved struct {
-	Token      SecretRef `mapstructure:"token" yaml:"token"`
-	JoinConfig SecretRef `mapstructure:"join_config" yaml:"join_config"`
-	Location   string    `mapstructure:"location" yaml:"location"`
-	ServerType string    `mapstructure:"server_type" yaml:"server_type"`
-	SSHKeys    []string  `mapstructure:"ssh_keys" yaml:"ssh_keys"`
+	Token      SecretRef     `mapstructure:"token" yaml:"token"`
+	JoinConfig SecretRef     `mapstructure:"join_config" yaml:"join_config"`
+	Location   string        `mapstructure:"location" yaml:"location"`
+	ServerType string        `mapstructure:"server_type" yaml:"server_type"`
+	Image      ReservedImage `mapstructure:"image" yaml:"image"`
+	SSHKeys    []string      `mapstructure:"ssh_keys" yaml:"ssh_keys"`
 }
 
 type Config struct {
@@ -73,14 +79,14 @@ const (
 	reservedPoolType     = "reserved"
 	reservedPoolName     = "reserved-workers"
 
-	defaultSecretNamespace  = "kube-system"
-	defaultTokenSecret      = "hcloud"
-	defaultTokenKey         = "hcloud-token"
-	defaultJoinConfigSecret = "cluster-autoscaler-hcloud-config"
-	defaultJoinConfigKey    = "HCLOUD_CLUSTER_CONFIG"
-	defaultReservedLocation = "hel1"
-	defaultReservedType     = "cpx22"
-	defaultReservedSSHKey   = "bedrock-capi"
+	defaultSecretNamespace    = "kube-system"
+	defaultTokenSecret        = "hcloud"
+	defaultTokenKey           = "hcloud-token"
+	defaultJoinConfigSecret   = "cluster-autoscaler-hcloud-config"
+	defaultJoinConfigKey      = "HCLOUD_CLUSTER_CONFIG"
+	defaultReservedLocation   = "hel1"
+	defaultReservedType       = "cpx22"
+	defaultReservedImageLabel = "caph-image-name"
 
 	ThemeAuto  = "auto"
 	ThemeLight = "light"
@@ -151,10 +157,6 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("infra_path is retired; set repo_path")
 	}
 
-	if v.IsSet("bedrock_path") && v.GetString("bedrock_path") != "" && cfg.RepoPath == "" {
-		return nil, fmt.Errorf("bedrock_path is retired; set repo_path")
-	}
-
 	applyDefaults(&cfg)
 	if err := validateTheme(cfg.Theme); err != nil {
 		return nil, err
@@ -199,8 +201,8 @@ func applyReservedDefaults(r *Reserved) {
 	if r.ServerType == "" {
 		r.ServerType = defaultReservedType
 	}
-	if len(r.SSHKeys) == 0 {
-		r.SSHKeys = []string{defaultReservedSSHKey}
+	if r.Image.Label == "" {
+		r.Image.Label = defaultReservedImageLabel
 	}
 }
 

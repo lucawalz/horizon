@@ -13,6 +13,8 @@ import (
 type ServerSpec struct {
 	Location   string
 	ServerType string
+	ImageLabel string
+	ImageValue string
 	SSHKeys    []string
 	UserData   string
 }
@@ -40,8 +42,11 @@ func ownedByHorizon(labels map[string]string) bool {
 	return true
 }
 
-func (c *Client) resolveImage(ctx context.Context) (*hcloudgo.Image, error) {
-	selector := ImageSelectorLabel + "=" + ImageSelectorValue
+func (c *Client) resolveImage(ctx context.Context, label, value string) (*hcloudgo.Image, error) {
+	if label == "" {
+		label = ImageSelectorLabel
+	}
+	selector := label + "=" + value
 	images, err := c.images.AllWithOpts(ctx, hcloudgo.ImageListOpts{
 		ListOpts: hcloudgo.ListOpts{LabelSelector: selector},
 	})
@@ -69,10 +74,13 @@ func (c *Client) CreateReservedServer(ctx context.Context, spec ServerSpec) (*Se
 	if spec.Location == "" || spec.ServerType == "" {
 		return nil, fmt.Errorf("hcloud: server location and type are required")
 	}
+	if spec.ImageValue == "" {
+		return nil, fmt.Errorf("hcloud: reserved.image.value is required")
+	}
 	if spec.UserData == "" {
 		return nil, fmt.Errorf("hcloud: server user-data is required")
 	}
-	image, err := c.resolveImage(ctx)
+	image, err := c.resolveImage(ctx, spec.ImageLabel, spec.ImageValue)
 	if err != nil {
 		return nil, err
 	}

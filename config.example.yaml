@@ -16,3 +16,10 @@ pools:
   version: v1.35.2+k3s1
   types:
     reserved: reserved-workers
+
+# reserved:
+#   # image.value selects the boot image by label; required before a reserved server can be provisioned
+#   image:
+#     label: caph-image-name
+#     value: ""
+#   ssh_keys: []

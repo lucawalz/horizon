@@ -167,9 +167,9 @@ Key fields:
 - `repo_path`: path to a GitOps git work tree; resolved to an absolute path and required to exist when set.
 - `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `theme` picker writes this field. Defaults to `auto`.
 - `pools`: the default `namespace` (`caph-system`), `cluster` (`burst`), `default_type` (`reserved`), the Kubernetes `version` applied to rendered pools, and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`). Set `namespace` to the namespace where the provider's MachineDeployments live.
-- `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `join_config` are secret references (`namespace`, `name`, `key`) defaulting to `hcloud`/`hcloud-token` and `cluster-autoscaler-hcloud-config`/`HCLOUD_CLUSTER_CONFIG` in `kube-system`. `location` (`hel1`), `server_type` (`cpx22`), and `ssh_keys` (`bedrock-capi`) set the server shape. SSH key names are resolved to Hetzner key ids at create time.
+- `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `join_config` are secret references (`namespace`, `name`, `key`) defaulting to `hcloud`/`hcloud-token` and `cluster-autoscaler-hcloud-config`/`HCLOUD_CLUSTER_CONFIG` in `kube-system`. `location` (`hel1`) and `server_type` (`cpx22`) set the server shape. `image.label` (`caph-image-name`) and `image.value` select the boot image by label selector; `image.value` has no default and is required before a reserved server can be provisioned. `ssh_keys` defaults to empty; names are resolved to Hetzner key ids at create time.
 
-The retired `infra_path` and `bedrock_path` fields are both rejected at load time; set `repo_path` instead.
+The retired `infra_path` field is rejected at load time; set `repo_path` instead.
 
 ## Releases
 

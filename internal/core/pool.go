@@ -68,6 +68,8 @@ func ReservedSpec(ctx context.Context, kc kubernetes.Interface, cfg config.Reser
 	spec := hcloud.ServerSpec{
 		Location:   cfg.Location,
 		ServerType: cfg.ServerType,
+		ImageLabel: cfg.Image.Label,
+		ImageValue: cfg.Image.Value,
 		SSHKeys:    cfg.SSHKeys,
 		UserData:   userData,
 	}

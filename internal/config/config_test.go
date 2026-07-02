@@ -330,45 +330,6 @@ infra_path: ` + dir + `
 	}
 }
 
-func TestLegacyBedrockPathWithoutRepoPathFailsFast(t *testing.T) {
-	dir := t.TempDir()
-	content := `
-bedrock_path: ` + dir + `
-`
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	_, err := config.Load()
-	if err == nil {
-		t.Fatal("expected error when bedrock_path is set without repo_path, got nil")
-	}
-	if !strings.Contains(err.Error(), "repo_path") {
-		t.Errorf("error %q must mention repo_path", err.Error())
-	}
-}
-
-func TestEmptyLegacyBedrockPathLoadsCleanly(t *testing.T) {
-	dir := t.TempDir()
-	content := `
-repo_path: ` + dir + `
-bedrock_path: ""
-`
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-	if !filepath.IsAbs(cfg.RepoPath) {
-		t.Errorf("RepoPath not absolute: %q", cfg.RepoPath)
-	}
-}
-
 func TestReservedDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := "repo_path: " + dir + "\n"
@@ -391,8 +352,14 @@ func TestReservedDefaults(t *testing.T) {
 	if r.Location != "hel1" || r.ServerType != "cpx22" {
 		t.Errorf("location/type = %q/%q, want hel1/cpx22", r.Location, r.ServerType)
 	}
-	if len(r.SSHKeys) != 1 || r.SSHKeys[0] != "bedrock-capi" {
-		t.Errorf("ssh keys = %v, want [bedrock-capi]", r.SSHKeys)
+	if r.Image.Label != "caph-image-name" {
+		t.Errorf("image label = %q, want caph-image-name", r.Image.Label)
+	}
+	if r.Image.Value != "" {
+		t.Errorf("image value = %q, want empty", r.Image.Value)
+	}
+	if len(r.SSHKeys) != 0 {
+		t.Errorf("ssh keys = %v, want empty", r.SSHKeys)
 	}
 }
 
@@ -408,6 +375,9 @@ reserved:
     namespace: capi
   location: nbg1
   server_type: cpx31
+  image:
+    label: my-image-label
+    value: my-pool-node
   ssh_keys:
     - alpha
     - beta
@@ -430,6 +400,9 @@ reserved:
 	}
 	if r.Location != "nbg1" || r.ServerType != "cpx31" {
 		t.Errorf("location/type = %q/%q", r.Location, r.ServerType)
+	}
+	if r.Image.Label != "my-image-label" || r.Image.Value != "my-pool-node" {
+		t.Errorf("image = %+v, want my-image-label/my-pool-node", r.Image)
 	}
 	if len(r.SSHKeys) != 2 || r.SSHKeys[0] != "alpha" {
 		t.Errorf("ssh keys = %v", r.SSHKeys)

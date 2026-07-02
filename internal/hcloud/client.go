@@ -14,7 +14,6 @@ const (
 	ManagedByValue     = "horizon"
 	NodeGroupLabelKey  = "hcloud/node-group"
 	ImageSelectorLabel = "caph-image-name"
-	ImageSelectorValue = "bedrock-pool-node"
 )
 
 type ServerAPI interface {

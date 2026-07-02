@@ -99,7 +99,7 @@ func newHcloudFake(servers ...*hcloudgo.Server) (*hcloud.Client, *fakeHcloudAPI)
 }
 
 func reservedSpec() hcloud.ServerSpec {
-	return hcloud.ServerSpec{Location: "hel1", ServerType: "cpx22", SSHKeys: []string{"k"}, UserData: "ud"}
+	return hcloud.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageValue: "reserved-pool", SSHKeys: []string{"k"}, UserData: "ud"}
 }
 
 func testPoolDefaults() config.PoolDefaults {

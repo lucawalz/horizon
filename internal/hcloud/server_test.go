@@ -11,17 +11,18 @@ import (
 )
 
 type fakeAPI struct {
-	servers   []*hcloudgo.Server
-	images    []*hcloudgo.Image
-	sshKeys   map[string]*hcloudgo.SSHKey
-	created   []hcloudgo.ServerCreateOpts
-	deleted   []int64
-	nextID    int64
-	listErr   error
-	createErr error
-	deleteErr error
-	imageErr  error
-	sshKeyErr error
+	servers       []*hcloudgo.Server
+	images        []*hcloudgo.Image
+	sshKeys       map[string]*hcloudgo.SSHKey
+	created       []hcloudgo.ServerCreateOpts
+	deleted       []int64
+	nextID        int64
+	imageSelector string
+	listErr       error
+	createErr     error
+	deleteErr     error
+	imageErr      error
+	sshKeyErr     error
 }
 
 func (f *fakeAPI) AllWithOpts(_ context.Context, opts hcloudgo.ServerListOpts) ([]*hcloudgo.Server, error) {
@@ -61,6 +62,7 @@ func (f *fakeAPI) imageList(_ context.Context, opts hcloudgo.ImageListOpts) ([]*
 	if f.imageErr != nil {
 		return nil, f.imageErr
 	}
+	f.imageSelector = opts.LabelSelector
 	return f.images, nil
 }
 
@@ -173,7 +175,7 @@ func TestScaleReservedToRefusesToDeleteForeignServer(t *testing.T) {
 func TestScaleReservedToCreatesWithReservedLabels(t *testing.T) {
 	c, f := newFake(poolImage())
 
-	if _, err := c.ScaleReservedTo(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", SSHKeys: []string{"k"}, UserData: "ud"}, 2); err != nil {
+	if _, err := c.ScaleReservedTo(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageValue: "reserved-pool", SSHKeys: []string{"k"}, UserData: "ud"}, 2); err != nil {
 		t.Fatalf("ScaleReservedTo: %v", err)
 	}
 	if len(f.created) != 2 {
@@ -202,7 +204,7 @@ func TestCreateReservedServerPicksNewestImage(t *testing.T) {
 	}
 	c, f := newFake(images)
 
-	if _, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", UserData: "ud"}); err != nil {
+	if _, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageValue: "reserved-pool", UserData: "ud"}); err != nil {
 		t.Fatalf("CreateReservedServer: %v", err)
 	}
 	if f.created[0].Image.ID != 2 {
@@ -212,16 +214,44 @@ func TestCreateReservedServerPicksNewestImage(t *testing.T) {
 
 func TestCreateReservedServerFailsFastWithoutImage(t *testing.T) {
 	c, _ := newFake(nil)
-	_, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", UserData: "ud"})
+	_, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageValue: "reserved-pool", UserData: "ud"})
 	if err == nil || !strings.Contains(err.Error(), "no image") {
 		t.Fatalf("expected no-image error, got %v", err)
+	}
+}
+
+func TestCreateReservedServerFailsFastOnEmptyImageValue(t *testing.T) {
+	c, _ := newFake(poolImage())
+	_, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", UserData: "ud"})
+	if err == nil || !strings.Contains(err.Error(), "reserved.image.value is required") {
+		t.Fatalf("expected image value error, got %v", err)
+	}
+}
+
+func TestCreateReservedServerUsesConfiguredImageSelector(t *testing.T) {
+	c, f := newFake(poolImage())
+	if _, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageLabel: "custom-label", ImageValue: "custom-node", UserData: "ud"}); err != nil {
+		t.Fatalf("CreateReservedServer: %v", err)
+	}
+	if f.imageSelector != "custom-label=custom-node" {
+		t.Errorf("image selector = %q, want custom-label=custom-node", f.imageSelector)
+	}
+}
+
+func TestCreateReservedServerDefaultsImageLabel(t *testing.T) {
+	c, f := newFake(poolImage())
+	if _, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageValue: "reserved-pool", UserData: "ud"}); err != nil {
+		t.Fatalf("CreateReservedServer: %v", err)
+	}
+	if f.imageSelector != hz.ImageSelectorLabel+"=reserved-pool" {
+		t.Errorf("image selector = %q, want %s=reserved-pool", f.imageSelector, hz.ImageSelectorLabel)
 	}
 }
 
 func TestCreateReservedServerResolvesSSHKeyToID(t *testing.T) {
 	c, f := newFake(poolImage())
 
-	if _, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", SSHKeys: []string{"k"}, UserData: "ud"}); err != nil {
+	if _, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageValue: "reserved-pool", SSHKeys: []string{"k"}, UserData: "ud"}); err != nil {
 		t.Fatalf("CreateReservedServer: %v", err)
 	}
 	if len(f.created) != 1 || len(f.created[0].SSHKeys) != 1 {
@@ -235,7 +265,7 @@ func TestCreateReservedServerResolvesSSHKeyToID(t *testing.T) {
 func TestCreateReservedServerFailsFastOnUnknownSSHKey(t *testing.T) {
 	c, _ := newFake(poolImage())
 
-	_, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", SSHKeys: []string{"missing"}, UserData: "ud"})
+	_, err := c.CreateReservedServer(context.Background(), hz.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageValue: "reserved-pool", SSHKeys: []string{"missing"}, UserData: "ud"})
 	if err == nil || !strings.Contains(err.Error(), `ssh key "missing" not found`) {
 		t.Fatalf("expected not-found ssh key error, got %v", err)
 	}
