@@ -3,7 +3,6 @@ package core_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/lucawalz/horizon/internal/capi"
@@ -208,8 +207,4 @@ func burstCapiClient(t *testing.T, objs ...client.Object) *capi.Client {
 
 func collectProgress(msgs *[]string) core.Progress {
 	return core.NewProgress(func(msg string) { *msgs = append(*msgs, msg) }, nil)
-}
-
-func fixedNow() time.Time {
-	return time.Date(2026, 6, 12, 14, 30, 5, 0, time.UTC)
 }
