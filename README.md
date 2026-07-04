@@ -40,9 +40,8 @@ The code follows a hexagonal layout: a presentation-free core of queries and act
 - `internal/capi` reads Cluster API MachineDeployments for pool-type detection and Flux Kustomization and HelmRelease status.
 - `internal/hcloud` provisions, lists, and deletes reserved servers and reads the in-cluster Hetzner secrets.
 - `internal/k8s` holds the cluster client, node drain, and workload migration.
-- `internal/velero` drives backups, restores, schedules, and storage locations.
 
-A burst composes these adapters: it takes a Velero backup of the target namespace, provisions reserved servers through the Hetzner Cloud API, waits for the new nodes to become ready, rewrites the workload's node affinity onto the reserved pool and adds the burst toleration, and waits for the workload to land. A failed migration restores the saved affinity and a failed scale returns the reserved pool to its prior server count.
+A burst composes these adapters: it provisions reserved servers through the Hetzner Cloud API, waits for the new nodes to become ready, rewrites the workload's node affinity onto the reserved pool and adds the burst toleration, and waits for the workload to land. A failed migration restores the saved affinity and a failed scale returns the reserved pool to its prior server count.
 
 ```mermaid
 flowchart LR
@@ -67,7 +66,6 @@ Optional, each gating one feature:
 
 - metrics-server for the dashboard CPU and memory pressure header.
 - cluster-autoscaler for the autoscaler status line; its status is read from the `cluster-autoscaler-status` ConfigMap.
-- Velero for backups, restores, schedules, and the burst workflow.
 - Flux for the GitOps status line.
 
 ### Minimal configuration
@@ -141,11 +139,7 @@ The available commands are:
 
 - `up [--type elastic|reserved] [--replicas N] [<replicas>]` scales the reserved pool up to the requested server count, defaulting to one server.
 - `down [--type elastic|reserved] [--delete]` scales the reserved pool to zero, removing every server horizon provisioned.
-- `burst <namespace> [--type ...] [--replicas n]` backs up the namespace, provisions reserved servers, and migrates the workload onto the new nodes.
-- `backup create [--include-namespaces ...] [--ttl ...] [--selector ...] [--storage-location ...] [--snapshot-volumes ...] [--name ...] [--wait]`, `backup list`, `backup describe <name>`, and `backup delete <name>` drive Velero backups.
-- `restore create --from-backup <name> [--include-namespaces ...] [--namespace-mappings old:new] [--name ...] [--wait]`, `restore list`, and `restore describe <name>` drive Velero restores.
-- `schedule create <name> --schedule "<cron>" [--include-namespaces ...]`, `schedule list`, `schedule describe <name>`, and `schedule delete <name>` manage recurring backup schedules.
-- `bsl create <name> --provider <p> --bucket <b> [--prefix ...] [--credential secret/key]` registers a backup storage location against an existing bucket, and `bsl list` inspects them.
+- `burst <namespace> [--type ...] [--replicas n]` provisions reserved servers and migrates the workload onto the new nodes.
 - `drain <node>` cordons a node and evicts its pods.
 - `theme [light|dark|auto]` sets the theme directly, or opens a live picker with no argument. The choice persists to the config file.
 
@@ -164,12 +158,9 @@ Key fields:
 - `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
 - `context`: target kubeconfig context; the `--context` flag overrides it, and the setup wizard records the chosen context here.
 - `cluster`: default cluster name; falls back to the pool cluster when unset.
-- `repo_path`: path to a GitOps git work tree; resolved to an absolute path and required to exist when set.
 - `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `theme` picker writes this field. Defaults to `auto`.
-- `pools`: the default `namespace` (`caph-system`), `cluster` (`burst`), `default_type` (`reserved`), the Kubernetes `version` applied to rendered pools, and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`). Set `namespace` to the namespace where the provider's MachineDeployments live.
+- `pools`: the default `namespace` (`caph-system`), `cluster` (`burst`), `default_type` (`reserved`), and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`). Set `namespace` to the namespace where the provider's MachineDeployments live.
 - `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `cloud_init` are credential sources, each set through one of `value` (inline), `path` (a file read from disk), or `env` (an environment variable name); the cloud-init must already carry the `horizon.dev/pool=reserved` node label. `location` (`hel1`) and `server_type` (`cpx22`) set the server shape. `image.label` (`caph-image-name`) and `image.value` select the boot image by label selector; `image.value` has no default and is required before a reserved server can be provisioned. `ssh_keys` defaults to empty; names are resolved to Hetzner key ids at create time.
-
-The retired `infra_path` field is rejected at load time; set `repo_path` instead.
 
 ## Releases
 
@@ -198,7 +189,6 @@ internal/config/    configuration loading and schema
 internal/capi/      Cluster API client for pool-type detection and Flux status
 internal/hcloud/    Hetzner Cloud client for reserved server provisioning
 internal/k8s/       cluster client, drain, workload migration
-internal/velero/    backups, restores, schedules, storage locations
 docs/adr/           architecture decision records
 ```
 
@@ -212,7 +202,7 @@ Open an issue on the [GitHub repository](https://github.com/lucawalz/horizon/iss
 
 ## Authors and acknowledgment
 
-Built and maintained by Luca Walz. It builds on cobra, viper, Bubble Tea, controller-runtime, client-go, the Cluster API libraries, the Hetzner Cloud SDK, and Velero.
+Built and maintained by Luca Walz. It builds on cobra, viper, Bubble Tea, controller-runtime, client-go, the Cluster API libraries, and the Hetzner Cloud SDK.
 
 ## License
 
