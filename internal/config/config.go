@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 var ErrNotConfigured = errors.New("horizon is not configured")
@@ -37,13 +40,20 @@ func (p PoolDefaults) Resolve(typeName string) (string, error) {
 	return "", fmt.Errorf("unknown pool type %q (known: %s)", typeName, strings.Join(known, ", "))
 }
 
-type CredentialSource struct {
-	Value string `mapstructure:"value" yaml:"value"`
-	Path  string `mapstructure:"path" yaml:"path"`
-	Env   string `mapstructure:"env" yaml:"env"`
+type SecretRef struct {
+	Namespace string `mapstructure:"namespace" yaml:"namespace"`
+	Name      string `mapstructure:"name" yaml:"name"`
+	Key       string `mapstructure:"key" yaml:"key"`
 }
 
-func (c CredentialSource) Resolve() (string, error) {
+type CredentialSource struct {
+	Value  string     `mapstructure:"value" yaml:"value"`
+	Path   string     `mapstructure:"path" yaml:"path"`
+	Env    string     `mapstructure:"env" yaml:"env"`
+	Secret *SecretRef `mapstructure:"secret" yaml:"secret"`
+}
+
+func (c CredentialSource) Resolve(ctx context.Context, kc kubernetes.Interface) (string, error) {
 	switch {
 	case c.Value != "":
 		return c.Value, nil
@@ -55,9 +65,29 @@ func (c CredentialSource) Resolve() (string, error) {
 		return strings.TrimRight(string(data), "\n"), nil
 	case c.Env != "":
 		return os.Getenv(c.Env), nil
+	case c.Secret != nil:
+		return c.Secret.resolve(ctx, kc)
 	default:
-		return "", fmt.Errorf("credential source empty: set one of value, path, or env")
+		return "", fmt.Errorf("credential source empty: set one of value, path, env, or secret")
 	}
+}
+
+func (s SecretRef) resolve(ctx context.Context, kc kubernetes.Interface) (string, error) {
+	if kc == nil {
+		return "", fmt.Errorf("secret credential source requires a kubernetes client")
+	}
+	if s.Namespace == "" || s.Name == "" || s.Key == "" {
+		return "", fmt.Errorf("secret credential source requires namespace, name, and key")
+	}
+	secret, err := kc.CoreV1().Secrets(s.Namespace).Get(ctx, s.Name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("read secret %s/%s: %w", s.Namespace, s.Name, err)
+	}
+	data, ok := secret.Data[s.Key]
+	if !ok {
+		return "", fmt.Errorf("secret %s/%s has no key %q", s.Namespace, s.Name, s.Key)
+	}
+	return string(data), nil
 }
 
 type ReservedImage struct {

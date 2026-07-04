@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/lucawalz/horizon/internal/capi"
@@ -61,6 +62,6 @@ func NewApp(contextName, clusterName string) (*App, error) {
 	}, nil
 }
 
-func (a *App) ReservedClient() (*hcloud.Client, hcloud.ServerSpec, error) {
-	return ReservedSpec(a.Config.Reserved)
+func (a *App) ReservedClient(ctx context.Context) (*hcloud.Client, hcloud.ServerSpec, error) {
+	return ReservedSpec(ctx, a.KubeClient, a.Config.Reserved)
 }

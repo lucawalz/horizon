@@ -309,7 +309,7 @@ func groupNodesByPool(nodes []corev1.Node) map[string][]MachineRow {
 }
 
 func listReservedServers(ctx context.Context, app *App) []hcloud.Server {
-	hc, _, err := app.ReservedClient()
+	hc, _, err := app.ReservedClient(ctx)
 	if err != nil {
 		return nil
 	}

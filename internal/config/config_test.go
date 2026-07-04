@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -8,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/config"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestLoad(t *testing.T) {
@@ -408,10 +412,19 @@ reserved:
 	}
 }
 
-func TestCredentialSourceValueWinsOverPathAndEnv(t *testing.T) {
+func TestCredentialSourceValueWinsOverPathEnvAndSecret(t *testing.T) {
 	t.Setenv("HZ_CRED", "from-env")
-	c := config.CredentialSource{Value: "from-value", Path: "/nonexistent", Env: "HZ_CRED"}
-	got, err := c.Resolve()
+	kc := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "cred"},
+		Data:       map[string][]byte{"token": []byte("from-secret")},
+	})
+	c := config.CredentialSource{
+		Value:  "from-value",
+		Path:   "/nonexistent",
+		Env:    "HZ_CRED",
+		Secret: &config.SecretRef{Namespace: "ns", Name: "cred", Key: "token"},
+	}
+	got, err := c.Resolve(context.Background(), kc)
 	if err != nil || got != "from-value" {
 		t.Fatalf("Resolve() = %q, %v; want from-value", got, err)
 	}
@@ -425,7 +438,7 @@ func TestCredentialSourcePathTrimsTrailingNewline(t *testing.T) {
 	}
 	t.Setenv("HZ_CRED", "from-env")
 	c := config.CredentialSource{Path: p, Env: "HZ_CRED"}
-	got, err := c.Resolve()
+	got, err := c.Resolve(context.Background(), nil)
 	if err != nil || got != "secret-token" {
 		t.Fatalf("Resolve() = %q, %v; want secret-token", got, err)
 	}
@@ -434,14 +447,52 @@ func TestCredentialSourcePathTrimsTrailingNewline(t *testing.T) {
 func TestCredentialSourceEnvUsedWhenValueAndPathEmpty(t *testing.T) {
 	t.Setenv("HZ_CRED", "env-token")
 	c := config.CredentialSource{Env: "HZ_CRED"}
-	got, err := c.Resolve()
+	got, err := c.Resolve(context.Background(), nil)
 	if err != nil || got != "env-token" {
 		t.Fatalf("Resolve() = %q, %v; want env-token", got, err)
 	}
 }
 
+func TestCredentialSourceSecretUsedWhenOthersEmpty(t *testing.T) {
+	kc := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "cred"},
+		Data:       map[string][]byte{"token": []byte("secret-value")},
+	})
+	c := config.CredentialSource{Secret: &config.SecretRef{Namespace: "ns", Name: "cred", Key: "token"}}
+	got, err := c.Resolve(context.Background(), kc)
+	if err != nil || got != "secret-value" {
+		t.Fatalf("Resolve() = %q, %v; want secret-value", got, err)
+	}
+}
+
+func TestCredentialSourceSecretMissingKeyFailsFast(t *testing.T) {
+	kc := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "cred"},
+		Data:       map[string][]byte{"other": []byte("x")},
+	})
+	c := config.CredentialSource{Secret: &config.SecretRef{Namespace: "ns", Name: "cred", Key: "token"}}
+	if _, err := c.Resolve(context.Background(), kc); err == nil {
+		t.Fatal("expected error when secret lacks the requested key")
+	}
+}
+
+func TestCredentialSourceSecretMissingSecretFailsFast(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	c := config.CredentialSource{Secret: &config.SecretRef{Namespace: "ns", Name: "absent", Key: "token"}}
+	if _, err := c.Resolve(context.Background(), kc); err == nil {
+		t.Fatal("expected error when the secret is absent")
+	}
+}
+
+func TestCredentialSourceSecretRequiresClient(t *testing.T) {
+	c := config.CredentialSource{Secret: &config.SecretRef{Namespace: "ns", Name: "cred", Key: "token"}}
+	if _, err := c.Resolve(context.Background(), nil); err == nil {
+		t.Fatal("expected error when the secret source has no kubernetes client")
+	}
+}
+
 func TestCredentialSourceEmptyFailsFast(t *testing.T) {
-	if _, err := (config.CredentialSource{}).Resolve(); err == nil {
+	if _, err := (config.CredentialSource{}).Resolve(context.Background(), nil); err == nil {
 		t.Fatal("expected error when no credential source is set")
 	}
 }
