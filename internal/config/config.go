@@ -37,10 +37,27 @@ func (p PoolDefaults) Resolve(typeName string) (string, error) {
 	return "", fmt.Errorf("unknown pool type %q (known: %s)", typeName, strings.Join(known, ", "))
 }
 
-type SecretRef struct {
-	Namespace string `mapstructure:"namespace" yaml:"namespace"`
-	Name      string `mapstructure:"name" yaml:"name"`
-	Key       string `mapstructure:"key" yaml:"key"`
+type CredentialSource struct {
+	Value string `mapstructure:"value" yaml:"value"`
+	Path  string `mapstructure:"path" yaml:"path"`
+	Env   string `mapstructure:"env" yaml:"env"`
+}
+
+func (c CredentialSource) Resolve() (string, error) {
+	switch {
+	case c.Value != "":
+		return c.Value, nil
+	case c.Path != "":
+		data, err := os.ReadFile(ExpandUserPath(c.Path))
+		if err != nil {
+			return "", fmt.Errorf("read credential file %q: %w", c.Path, err)
+		}
+		return strings.TrimRight(string(data), "\n"), nil
+	case c.Env != "":
+		return os.Getenv(c.Env), nil
+	default:
+		return "", fmt.Errorf("credential source empty: set one of value, path, or env")
+	}
 }
 
 type ReservedImage struct {
@@ -49,12 +66,12 @@ type ReservedImage struct {
 }
 
 type Reserved struct {
-	Token      SecretRef     `mapstructure:"token" yaml:"token"`
-	JoinConfig SecretRef     `mapstructure:"join_config" yaml:"join_config"`
-	Location   string        `mapstructure:"location" yaml:"location"`
-	ServerType string        `mapstructure:"server_type" yaml:"server_type"`
-	Image      ReservedImage `mapstructure:"image" yaml:"image"`
-	SSHKeys    []string      `mapstructure:"ssh_keys" yaml:"ssh_keys"`
+	Token      CredentialSource `mapstructure:"token" yaml:"token"`
+	CloudInit  CredentialSource `mapstructure:"cloud_init" yaml:"cloud_init"`
+	Location   string           `mapstructure:"location" yaml:"location"`
+	ServerType string           `mapstructure:"server_type" yaml:"server_type"`
+	Image      ReservedImage    `mapstructure:"image" yaml:"image"`
+	SSHKeys    []string         `mapstructure:"ssh_keys" yaml:"ssh_keys"`
 }
 
 type Config struct {
@@ -79,11 +96,6 @@ const (
 	reservedPoolType     = "reserved"
 	reservedPoolName     = "reserved-workers"
 
-	defaultSecretNamespace    = "kube-system"
-	defaultTokenSecret        = "hcloud"
-	defaultTokenKey           = "hcloud-token"
-	defaultJoinConfigSecret   = "cluster-autoscaler-hcloud-config"
-	defaultJoinConfigKey      = "HCLOUD_CLUSTER_CONFIG"
 	defaultReservedLocation   = "hel1"
 	defaultReservedType       = "cpx22"
 	defaultReservedImageLabel = "caph-image-name"
@@ -193,8 +205,6 @@ func applyDefaults(cfg *Config) {
 }
 
 func applyReservedDefaults(r *Reserved) {
-	applySecretDefaults(&r.Token, defaultTokenSecret, defaultTokenKey)
-	applySecretDefaults(&r.JoinConfig, defaultJoinConfigSecret, defaultJoinConfigKey)
 	if r.Location == "" {
 		r.Location = defaultReservedLocation
 	}
@@ -203,18 +213,6 @@ func applyReservedDefaults(r *Reserved) {
 	}
 	if r.Image.Label == "" {
 		r.Image.Label = defaultReservedImageLabel
-	}
-}
-
-func applySecretDefaults(ref *SecretRef, name, key string) {
-	if ref.Namespace == "" {
-		ref.Namespace = defaultSecretNamespace
-	}
-	if ref.Name == "" {
-		ref.Name = name
-	}
-	if ref.Key == "" {
-		ref.Key = key
 	}
 }
 

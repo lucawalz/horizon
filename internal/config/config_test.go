@@ -343,11 +343,11 @@ func TestReservedDefaults(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 	r := cfg.Reserved
-	if r.Token.Namespace != "kube-system" || r.Token.Name != "hcloud" || r.Token.Key != "hcloud-token" {
-		t.Errorf("Token ref = %+v, want kube-system/hcloud[hcloud-token]", r.Token)
+	if r.Token != (config.CredentialSource{}) {
+		t.Errorf("Token = %+v, want empty default", r.Token)
 	}
-	if r.JoinConfig.Name != "cluster-autoscaler-hcloud-config" || r.JoinConfig.Key != "HCLOUD_CLUSTER_CONFIG" {
-		t.Errorf("JoinConfig ref = %+v", r.JoinConfig)
+	if r.CloudInit != (config.CredentialSource{}) {
+		t.Errorf("CloudInit = %+v, want empty default", r.CloudInit)
 	}
 	if r.Location != "hel1" || r.ServerType != "cpx22" {
 		t.Errorf("location/type = %q/%q, want hel1/cpx22", r.Location, r.ServerType)
@@ -369,10 +369,9 @@ func TestReservedOverrides(t *testing.T) {
 repo_path: ` + dir + `
 reserved:
   token:
-    name: my-hcloud
-    key: token
-  join_config:
-    namespace: capi
+    env: HCLOUD_TOKEN
+  cloud_init:
+    path: ~/reserved-cloud-init.yaml
   location: nbg1
   server_type: cpx31
   image:
@@ -392,11 +391,11 @@ reserved:
 		t.Fatalf("Load() error: %v", err)
 	}
 	r := cfg.Reserved
-	if r.Token.Name != "my-hcloud" || r.Token.Key != "token" || r.Token.Namespace != "kube-system" {
+	if r.Token.Env != "HCLOUD_TOKEN" || r.Token.Value != "" || r.Token.Path != "" {
 		t.Errorf("token override = %+v", r.Token)
 	}
-	if r.JoinConfig.Namespace != "capi" || r.JoinConfig.Name != "cluster-autoscaler-hcloud-config" {
-		t.Errorf("join config override = %+v", r.JoinConfig)
+	if r.CloudInit.Path != "~/reserved-cloud-init.yaml" || r.CloudInit.Value != "" || r.CloudInit.Env != "" {
+		t.Errorf("cloud_init override = %+v", r.CloudInit)
 	}
 	if r.Location != "nbg1" || r.ServerType != "cpx31" {
 		t.Errorf("location/type = %q/%q", r.Location, r.ServerType)
@@ -406,6 +405,44 @@ reserved:
 	}
 	if len(r.SSHKeys) != 2 || r.SSHKeys[0] != "alpha" {
 		t.Errorf("ssh keys = %v", r.SSHKeys)
+	}
+}
+
+func TestCredentialSourceValueWinsOverPathAndEnv(t *testing.T) {
+	t.Setenv("HZ_CRED", "from-env")
+	c := config.CredentialSource{Value: "from-value", Path: "/nonexistent", Env: "HZ_CRED"}
+	got, err := c.Resolve()
+	if err != nil || got != "from-value" {
+		t.Fatalf("Resolve() = %q, %v; want from-value", got, err)
+	}
+}
+
+func TestCredentialSourcePathTrimsTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "token")
+	if err := os.WriteFile(p, []byte("secret-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HZ_CRED", "from-env")
+	c := config.CredentialSource{Path: p, Env: "HZ_CRED"}
+	got, err := c.Resolve()
+	if err != nil || got != "secret-token" {
+		t.Fatalf("Resolve() = %q, %v; want secret-token", got, err)
+	}
+}
+
+func TestCredentialSourceEnvUsedWhenValueAndPathEmpty(t *testing.T) {
+	t.Setenv("HZ_CRED", "env-token")
+	c := config.CredentialSource{Env: "HZ_CRED"}
+	got, err := c.Resolve()
+	if err != nil || got != "env-token" {
+		t.Fatalf("Resolve() = %q, %v; want env-token", got, err)
+	}
+}
+
+func TestCredentialSourceEmptyFailsFast(t *testing.T) {
+	if _, err := (config.CredentialSource{}).Resolve(); err == nil {
+		t.Fatal("expected error when no credential source is set")
 	}
 }
 

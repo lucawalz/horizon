@@ -6,7 +6,6 @@ import (
 
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/hcloud"
-	"k8s.io/client-go/kubernetes"
 )
 
 const ElasticPoolType = "elastic"
@@ -44,20 +43,16 @@ func ElasticAutoscalerErr() error {
 	return fmt.Errorf("the cluster-autoscaler owns the elastic pool; horizon does not provision elastic nodes")
 }
 
-func secretRef(r config.SecretRef) hcloud.SecretRef {
-	return hcloud.SecretRef{Namespace: r.Namespace, Name: r.Name, Key: r.Key}
-}
-
-func ReservedSpec(ctx context.Context, kc kubernetes.Interface, cfg config.Reserved) (*hcloud.Client, hcloud.ServerSpec, error) {
-	token, err := hcloud.ReadToken(ctx, kc, secretRef(cfg.Token))
+func ReservedSpec(cfg config.Reserved) (*hcloud.Client, hcloud.ServerSpec, error) {
+	token, err := cfg.Token.Resolve()
 	if err != nil {
 		return nil, hcloud.ServerSpec{}, err
 	}
-	join, err := hcloud.ReadJoinMaterial(ctx, kc, secretRef(cfg.JoinConfig))
+	raw, err := cfg.CloudInit.Resolve()
 	if err != nil {
 		return nil, hcloud.ServerSpec{}, err
 	}
-	userData, err := hcloud.BuildUserData(hcloud.UserDataInput(join))
+	userData, err := hcloud.BuildUserData(raw)
 	if err != nil {
 		return nil, hcloud.ServerSpec{}, err
 	}

@@ -23,7 +23,7 @@ func (m model) runScaleUp(target core.PoolTarget) tea.Cmd {
 		if target.PoolType == core.ElasticPoolType {
 			return "", core.ElasticAutoscalerErr()
 		}
-		hc, spec, err := app.ReservedClient(ctx)
+		hc, spec, err := app.ReservedClient()
 		if err != nil {
 			return "", err
 		}
@@ -37,7 +37,7 @@ func (m model) runScaleDown(target core.PoolTarget) tea.Cmd {
 		if target.PoolType == core.ElasticPoolType {
 			return "", core.ElasticAutoscalerErr()
 		}
-		hc, spec, err := app.ReservedClient(ctx)
+		hc, spec, err := app.ReservedClient()
 		if err != nil {
 			return "", err
 		}
@@ -51,7 +51,7 @@ func (m model) runBurst(params core.BurstParams) tea.Cmd {
 		if params.Target.PoolType == core.ElasticPoolType {
 			return "", core.ElasticAutoscalerErr()
 		}
-		hc, spec, err := app.ReservedClient(ctx)
+		hc, spec, err := app.ReservedClient()
 		if err != nil {
 			return "", err
 		}

@@ -5,19 +5,13 @@ import (
 	"strings"
 )
 
-type UserDataInput struct {
-	ElasticCloudInit string
-	ElasticPoolValue string
-}
-
-func BuildUserData(in UserDataInput) (string, error) {
-	if strings.TrimSpace(in.ElasticCloudInit) == "" {
-		return "", fmt.Errorf("hcloud: elastic cloud-init template is empty")
+func BuildUserData(userData string) (string, error) {
+	if strings.TrimSpace(userData) == "" {
+		return "", fmt.Errorf("hcloud: cloud-init is empty")
 	}
-	from := PoolLabelKey + "=" + in.ElasticPoolValue
-	to := PoolLabelKey + "=" + ReservedPoolValue
-	if !strings.Contains(in.ElasticCloudInit, from) {
-		return "", fmt.Errorf("hcloud: cloud-init template missing node-label %q", from)
+	label := PoolLabelKey + "=" + ReservedPoolValue
+	if !strings.Contains(userData, label) {
+		return "", fmt.Errorf("hcloud: cloud-init missing node-label %q", label)
 	}
-	return strings.ReplaceAll(in.ElasticCloudInit, from, to), nil
+	return userData, nil
 }
