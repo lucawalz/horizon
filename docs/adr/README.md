@@ -16,3 +16,4 @@ These records capture horizon's own design decisions, the choices behind the Go 
 - [0012. Retire scaling thresholds and rename the GitOps path](0012-retire-scaling-thresholds-and-rename-repo-path.md) (accepted)
 - [0013. What the Cluster API move bought over Terraform](0013-cluster-api-over-terraform.md) (accepted)
 - [0014. Narrow horizon to an on-demand pool scaler](0014-narrow-horizon-to-on-demand-pool-scaler.md) (accepted)
+- [0015. Narrow horizon to a standalone burst scaler](0015-standalone-burst-scaler-credential-model.md) (accepted)
