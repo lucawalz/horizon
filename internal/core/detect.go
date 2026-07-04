@@ -32,7 +32,7 @@ func Detect(ctx context.Context, kube kubernetes.Interface, cc *capi.Client) (De
 
 	mds, err := cc.ListMachineDeploymentsByType(ctx, "")
 	if err != nil {
-		return Detected{}, fmt.Errorf("detect: list machine deployments: %w", err)
+		return detected, nil
 	}
 
 	detected.PoolsNamespace = busiestNamespace(mds)

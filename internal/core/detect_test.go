@@ -56,6 +56,30 @@ func TestDetectPicksBusiestNamespace(t *testing.T) {
 	}
 }
 
+func TestDetectToleratesMissingCAPICRDs(t *testing.T) {
+	kube := kubeWithNamespaces(t, "default", "kube-system")
+	cc := noCapiClient(t)
+
+	got, err := core.Detect(context.Background(), kube, cc)
+	if err != nil {
+		t.Fatalf("Detect must tolerate a cluster without CAPI CRDs, got error: %v", err)
+	}
+
+	if got.PoolsNamespace != "" {
+		t.Errorf("PoolsNamespace = %q, want empty", got.PoolsNamespace)
+	}
+	if len(got.PoolTypes) != 0 {
+		t.Errorf("PoolTypes = %v, want empty", got.PoolTypes)
+	}
+	if got.ClusterName != "" {
+		t.Errorf("ClusterName = %q, want empty", got.ClusterName)
+	}
+	wantNs := []string{"default", "kube-system"}
+	if !reflect.DeepEqual(got.Namespaces, wantNs) {
+		t.Errorf("Namespaces = %v, want %v", got.Namespaces, wantNs)
+	}
+}
+
 func TestDetectNoPools(t *testing.T) {
 	kube := kubeWithNamespaces(t, "default", "kube-system")
 	cc := burstCapiClient(t)

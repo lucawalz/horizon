@@ -204,6 +204,11 @@ func burstCapiClient(t *testing.T, objs ...client.Object) *capi.Client {
 	return capi.NewClientWithCRClient(cl)
 }
 
+func noCapiClient(t *testing.T) *capi.Client {
+	t.Helper()
+	return capi.NewClientWithCRClient(crfake.NewClientBuilder().Build())
+}
+
 func collectProgress(msgs *[]string) core.Progress {
 	return core.NewProgress(func(msg string) { *msgs = append(*msgs, msg) }, nil)
 }
