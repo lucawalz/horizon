@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"time"
 
@@ -108,17 +107,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForStream(msg.ch)
 	case streamEvent:
 		return m.onStreamEvent(msg)
-	case detailMsg:
-		m.log.append(msg.body)
-		return m, nil
-	case backupsLoadedMsg:
-		return m.onBackupsLoaded(msg)
-	case restoresLoadedMsg:
-		return m.onRestoresLoaded(msg)
-	case schedulesLoadedMsg:
-		return m.onSchedulesLoaded(msg)
-	case storageLocationsLoadedMsg:
-		return m.onStorageLocationsLoaded(msg)
 	case tea.KeyMsg:
 		return m.onKey(msg)
 	}
@@ -308,84 +296,4 @@ func (m model) onStreamEvent(ev streamEvent) (tea.Model, tea.Cmd) {
 		m.log.append(ev.line)
 	}
 	return m, waitForStream(m.stream)
-}
-
-func (m model) onBackupsLoaded(msg backupsLoadedMsg) (tea.Model, tea.Cmd) {
-	m.mode = modeNav
-	if msg.err != nil {
-		m.log.append(errStyle.Render("error: " + msg.err.Error()))
-		return m, nil
-	}
-	sort.Slice(msg.backups, func(i, j int) bool {
-		return msg.backups[i].CreationTimestamp.After(msg.backups[j].CreationTimestamp.Time)
-	})
-	rows := [][]string{{"NAME", "STATUS", "CREATED", "EXPIRES", "ERRORS"}}
-	for i := range msg.backups {
-		b := &msg.backups[i]
-		rows = append(rows, []string{
-			b.Name, phaseOrDash(string(b.Status.Phase)),
-			fmtTime(&b.CreationTimestamp), fmtTime(b.Status.Expiration),
-			itoa(b.Status.Errors),
-		})
-	}
-	m.log.append(renderLogTable(rows))
-	return m, nil
-}
-
-func (m model) onRestoresLoaded(msg restoresLoadedMsg) (tea.Model, tea.Cmd) {
-	m.mode = modeNav
-	if msg.err != nil {
-		m.log.append(errStyle.Render("error: " + msg.err.Error()))
-		return m, nil
-	}
-	rows := [][]string{{"NAME", "BACKUP", "STATUS", "WARNINGS", "ERRORS"}}
-	for i := range msg.restores {
-		r := &msg.restores[i]
-		rows = append(rows, []string{
-			r.Name, r.Spec.BackupName, phaseOrDash(string(r.Status.Phase)),
-			itoa(r.Status.Warnings), itoa(r.Status.Errors),
-		})
-	}
-	m.log.append(renderLogTable(rows))
-	return m, nil
-}
-
-func (m model) onSchedulesLoaded(msg schedulesLoadedMsg) (tea.Model, tea.Cmd) {
-	m.mode = modeNav
-	if msg.err != nil {
-		m.log.append(errStyle.Render("error: " + msg.err.Error()))
-		return m, nil
-	}
-	rows := [][]string{{"NAME", "SCHEDULE", "STATUS", "LAST-BACKUP", "PAUSED"}}
-	for i := range msg.schedules {
-		s := &msg.schedules[i]
-		rows = append(rows, []string{
-			s.Name, s.Spec.Schedule, phaseOrDash(string(s.Status.Phase)),
-			fmtTime(s.Status.LastBackup), fmtBool(s.Spec.Paused),
-		})
-	}
-	m.log.append(renderLogTable(rows))
-	return m, nil
-}
-
-func (m model) onStorageLocationsLoaded(msg storageLocationsLoadedMsg) (tea.Model, tea.Cmd) {
-	m.mode = modeNav
-	if msg.err != nil {
-		m.log.append(errStyle.Render("error: " + msg.err.Error()))
-		return m, nil
-	}
-	rows := [][]string{{"NAME", "PROVIDER", "BUCKET", "PHASE", "DEFAULT"}}
-	for i := range msg.locations {
-		l := &msg.locations[i]
-		bucket := "-"
-		if l.Spec.ObjectStorage != nil {
-			bucket = l.Spec.ObjectStorage.Bucket
-		}
-		rows = append(rows, []string{
-			l.Name, l.Spec.Provider, bucket,
-			phaseOrDash(string(l.Status.Phase)), fmtBool(l.Spec.Default),
-		})
-	}
-	m.log.append(renderLogTable(rows))
-	return m, nil
 }

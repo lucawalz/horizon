@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -58,14 +57,6 @@ func (m model) dispatch(input string) commandResult {
 		return m.parseDown(args)
 	case "burst":
 		return m.parseBurst(args)
-	case "backup":
-		return m.parseBackup(args)
-	case "restore":
-		return m.parseRestore(args)
-	case "schedule":
-		return m.parseSchedule(args)
-	case "bsl":
-		return m.parseBSL(args)
 	case "drain":
 		return m.parseDrain(args)
 	case "theme":
@@ -203,202 +194,6 @@ func (m model) parseBurst(args []string) commandResult {
 	return commandResult{cmd: m.runBurst(params)}
 }
 
-func (m model) parseBackup(args []string) commandResult {
-	if len(args) == 0 {
-		return errResult("backup: want create|list|describe|delete")
-	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "list":
-		return commandResult{cmd: m.loadBackups()}
-	case "describe":
-		if len(rest) == 0 {
-			return errResult("backup describe: name argument is required")
-		}
-		return commandResult{cmd: m.describeBackupCmd(rest[0])}
-	case "delete":
-		if len(rest) == 0 {
-			return errResult("backup delete: name argument is required")
-		}
-		return commandResult{
-			cmd:     m.runBackupDelete(rest[0]),
-			confirm: fmt.Sprintf("delete backup %q?", rest[0]),
-		}
-	case "create":
-		return m.parseBackupCreate(rest)
-	default:
-		return errResult("backup: unknown subcommand %q", sub)
-	}
-}
-
-func (m model) parseBackupCreate(args []string) commandResult {
-	fs := newFlagSet("backup create")
-	values := map[string]*string{
-		"include-namespaces": fs.String("include-namespaces", "", ""),
-		"exclude-namespaces": fs.String("exclude-namespaces", "", ""),
-		"include-resources":  fs.String("include-resources", "", ""),
-		"selector":           fs.String("selector", "", ""),
-		"storage-location":   fs.String("storage-location", core.DefaultStorageLocation, ""),
-		"ttl":                fs.String("ttl", core.DefaultBackupTTL.String(), ""),
-		"snapshot-volumes":   fs.String("snapshot-volumes", "true", ""),
-	}
-	name := fs.String("name", "", "")
-	wait := fs.Bool("wait", false, "")
-	if err := parseFlags(fs, args); err != nil {
-		return errResult("backup create: %v", err)
-	}
-	flat := flatten(values)
-	spec, err := buildBackupSpecFromValues(flat)
-	if err != nil {
-		return errResult("backup create: %v", err)
-	}
-	bname := *name
-	if bname == "" {
-		bname = core.DefaultBackupName(spec.IncludedNamespaces, time.Now())
-	}
-	return commandResult{cmd: m.runBackupCreate(spec, bname, *wait)}
-}
-
-func (m model) parseRestore(args []string) commandResult {
-	if len(args) == 0 {
-		return errResult("restore: want create|list|describe")
-	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "list":
-		return commandResult{cmd: m.loadRestores()}
-	case "describe":
-		if len(rest) == 0 {
-			return errResult("restore describe: name argument is required")
-		}
-		return commandResult{cmd: m.describeRestoreCmd(rest[0])}
-	case "create":
-		return m.parseRestoreCreate(rest)
-	default:
-		return errResult("restore: unknown subcommand %q", sub)
-	}
-}
-
-func (m model) parseRestoreCreate(args []string) commandResult {
-	fs := newFlagSet("restore create")
-	fromBackup := fs.String("from-backup", "", "")
-	values := map[string]*string{
-		"include-namespaces": fs.String("include-namespaces", "", ""),
-		"namespace-mappings": fs.String("namespace-mappings", "", ""),
-	}
-	name := fs.String("name", "", "")
-	wait := fs.Bool("wait", false, "")
-	if err := parseFlags(fs, args); err != nil {
-		return errResult("restore create: %v", err)
-	}
-	if strings.TrimSpace(*fromBackup) == "" {
-		return errResult("restore create: --from-backup is required")
-	}
-	spec, err := buildRestoreSpecFromValues(*fromBackup, flatten(values))
-	if err != nil {
-		return errResult("restore create: %v", err)
-	}
-	rname := *name
-	if rname == "" {
-		rname = core.DefaultRestoreName(spec.BackupName, time.Now())
-	}
-	return commandResult{
-		cmd:     m.runRestoreCreate(spec, rname, *wait),
-		confirm: fmt.Sprintf("restore from backup %q as %q?", spec.BackupName, rname),
-	}
-}
-
-func (m model) parseSchedule(args []string) commandResult {
-	if len(args) == 0 {
-		return errResult("schedule: want create|list|describe|delete")
-	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "list":
-		return commandResult{cmd: m.loadSchedules()}
-	case "describe":
-		if len(rest) == 0 {
-			return errResult("schedule describe: name argument is required")
-		}
-		return commandResult{cmd: m.describeScheduleCmd(rest[0])}
-	case "delete":
-		if len(rest) == 0 {
-			return errResult("schedule delete: name argument is required")
-		}
-		return commandResult{
-			cmd:     m.runScheduleDelete(rest[0]),
-			confirm: fmt.Sprintf("delete schedule %q?", rest[0]),
-		}
-	case "create":
-		return m.parseScheduleCreate(rest)
-	default:
-		return errResult("schedule: unknown subcommand %q", sub)
-	}
-}
-
-func (m model) parseScheduleCreate(args []string) commandResult {
-	fs := newFlagSet("schedule create")
-	cron := fs.String("schedule", "", "")
-	values := map[string]*string{
-		"include-namespaces": fs.String("include-namespaces", "", ""),
-		"exclude-namespaces": fs.String("exclude-namespaces", "", ""),
-		"include-resources":  fs.String("include-resources", "", ""),
-		"selector":           fs.String("selector", "", ""),
-		"storage-location":   fs.String("storage-location", core.DefaultStorageLocation, ""),
-		"ttl":                fs.String("ttl", core.DefaultBackupTTL.String(), ""),
-		"snapshot-volumes":   fs.String("snapshot-volumes", "true", ""),
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return errResult("schedule create: %v", err)
-	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		return errResult("schedule create: name argument is required")
-	}
-	spec, err := buildScheduleSpecFromValues(*cron, flatten(values))
-	if err != nil {
-		return errResult("schedule create: %v", err)
-	}
-	return commandResult{cmd: m.runScheduleCreate(spec, rest[0])}
-}
-
-func (m model) parseBSL(args []string) commandResult {
-	if len(args) == 0 {
-		return errResult("bsl: want create|list")
-	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "list":
-		return commandResult{cmd: m.loadStorageLocations()}
-	case "create":
-		return m.parseBSLCreate(rest)
-	default:
-		return errResult("bsl: unknown subcommand %q", sub)
-	}
-}
-
-func (m model) parseBSLCreate(args []string) commandResult {
-	fs := newFlagSet("bsl create")
-	values := map[string]*string{
-		"provider":   fs.String("provider", "", ""),
-		"bucket":     fs.String("bucket", "", ""),
-		"prefix":     fs.String("prefix", "", ""),
-		"credential": fs.String("credential", "", ""),
-	}
-	if err := parseFlags(fs, args); err != nil {
-		return errResult("bsl create: %v", err)
-	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		return errResult("bsl create: name argument is required")
-	}
-	spec, err := buildBSLSpecFromValues(flatten(values))
-	if err != nil {
-		return errResult("bsl create: %v", err)
-	}
-	return commandResult{cmd: m.runBSLCreate(spec, rest[0])}
-}
-
 func (m model) parseDrain(args []string) commandResult {
 	if len(args) == 0 {
 		return errResult("drain: node argument is required")
@@ -427,14 +222,6 @@ func (m model) parseTheme(args []string) commandResult {
 	return commandResult{lines: []string{dimStyle.Render(fmt.Sprintf("theme set to %s", pref))}}
 }
 
-func flatten(values map[string]*string) map[string]string {
-	out := make(map[string]string, len(values))
-	for k, v := range values {
-		out[k] = *v
-	}
-	return out
-}
-
 type helpEntry struct {
 	command string
 	desc    string
@@ -444,15 +231,7 @@ func helpLines() []helpEntry {
 	return []helpEntry{
 		{"up [--type elastic|reserved] [--replicas N] [<replicas>]", "scale a pool up"},
 		{"down [--type ...] [--delete]", "scale a pool to zero or delete it"},
-		{"burst <namespace> [--type ...] [--replicas n]", "back up, scale, migrate a workload"},
-		{"backup create [--include-namespaces ...] [--wait]", "create a velero backup"},
-		{"backup list · describe <name> · delete <name>", "inspect velero backups"},
-		{"restore create --from-backup <name> [--wait]", "restore from a backup"},
-		{"restore list · restore describe <name>", "inspect velero restores"},
-		{"schedule create <name> --schedule \"<cron>\" [--include-namespaces ...]", "create a recurring backup schedule"},
-		{"schedule list · describe <name> · delete <name>", "inspect velero schedules"},
-		{"bsl create <name> --provider <p> --bucket <b>", "point velero at an existing bucket"},
-		{"bsl list", "inspect backup storage locations"},
+		{"burst <namespace> [--type ...] [--replicas n]", "scale and migrate a workload"},
 		{"drain <node>", "cordon and evict a node"},
 		{"theme [light|dark|auto]", "set or live-pick the theme"},
 		{"<any command> --debug", "stream the underlying steps and API calls"},

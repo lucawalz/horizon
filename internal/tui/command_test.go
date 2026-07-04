@@ -65,16 +65,6 @@ func TestDispatchNonDestructiveHaveNoConfirm(t *testing.T) {
 		"up --type elastic 3",
 		"up --type reserved --replicas 3",
 		"burst myns",
-		"backup list",
-		"backup create --wait",
-		"backup describe foo",
-		"restore list",
-		"restore describe r1",
-		"schedule list",
-		"schedule create nightly --schedule @daily --include-namespaces app",
-		"schedule describe nightly",
-		"bsl list",
-		"bsl create secondary --provider aws --bucket horizon-backups",
 	} {
 		res := m.dispatch(input)
 		if len(res.lines) != 0 {
@@ -98,10 +88,7 @@ func TestDispatchDestructiveRequireConfirm(t *testing.T) {
 	}{
 		{"down", "delete all reserved servers"},
 		{"down --delete", "delete all reserved servers"},
-		{"backup delete b1", "delete backup"},
 		{"drain worker-1", "drain node"},
-		{"restore create --from-backup b1", "restore from backup"},
-		{"schedule delete nightly", "delete schedule"},
 	}
 	for _, tc := range cases {
 		res := m.dispatch(tc.input)
@@ -122,24 +109,7 @@ func TestDispatchMissingRequiredArgs(t *testing.T) {
 	m := testModel()
 	for _, input := range []string{
 		"burst",
-		"backup describe",
-		"backup delete",
-		"restore create",
-		"restore describe",
 		"drain",
-		"backup bogus",
-		"restore bogus",
-		"schedule",
-		"schedule create nightly",
-		"schedule create --schedule @daily",
-		"schedule describe",
-		"schedule delete",
-		"schedule bogus",
-		"bsl",
-		"bsl create secondary",
-		"bsl create secondary --provider aws",
-		"bsl create --provider aws --bucket b",
-		"bsl bogus",
 	} {
 		res := m.dispatch(input)
 		if len(res.lines) == 0 {

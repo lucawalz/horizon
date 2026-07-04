@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
 )
@@ -72,4 +73,8 @@ func (l logModel) scrollLabel() string {
 
 func (l logModel) render() string {
 	return l.view.View()
+}
+
+func joinLines(lines []string) string {
+	return strings.Join(lines, "\n")
 }
