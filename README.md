@@ -26,10 +26,10 @@ horizon enforces reserved ownership in code. It labels each server it creates `h
 horizon recognizes three categories of capacity.
 
 - Elastic: autoscaled by the cluster-autoscaler. Nodes carry `horizon.dev/pool=elastic`. A pod lands on an elastic burst node only when it declares both halves of the contract itself: a `nodeSelector` or required node affinity for `horizon.dev/pool=elastic`, and a toleration for the `horizon.dev/burst=true:NoSchedule` taint that keeps Longhorn off the node and lets the autoscaler drain it back to zero.
-- Reserved: operator-pinned through horizon. A reserved server boots from the shared pool-node image and joins the cluster by Hetzner user-data built from the autoscaler's elastic join material, identical to an autoscaler node apart from its pool label. A reserved burst needs no manual workload setup, since horizon's migration rewrites the affinity and adds the burst toleration on each migrated Deployment and StatefulSet.
+- Reserved: operator-pinned through horizon. A reserved server boots from the shared pool-node image and joins the cluster with the reserved cloud-init from horizon's config, identical to an autoscaler node apart from its pool label. A reserved burst needs no manual workload setup, since horizon's migration rewrites the affinity and adds the burst toleration on each migrated Deployment and StatefulSet.
 - The home cluster's permanent nodes, defined entirely in bedrock.
 
-horizon sources the Hetzner API token and the join material at runtime from in-cluster secrets (`hcloud` and `cluster-autoscaler-hcloud-config` by default), so no cloud credentials live in its own config.
+horizon carries the Hetzner API token and the node cloud-init in its own config, each resolved from an inline value, a file path, or an environment variable, so it reads no cluster secret to provision.
 
 ## Architecture
 
@@ -61,7 +61,7 @@ horizon reads cluster state through a kubeconfig and provisions reserved servers
 Hard requirements:
 
 - A Kubernetes cluster and a kubeconfig with a context that reaches it.
-- For reserved capacity: a Hetzner Cloud token and the autoscaler's elastic join material, read from the in-cluster secrets named in the `reserved` config block. The shared pool-node image must be present in the Hetzner project.
+- For reserved capacity: a Hetzner Cloud token and the reserved node cloud-init, both supplied through the `reserved` config block as a value, a file path, or an environment variable. The shared pool-node image must be present in the Hetzner project.
 
 Optional, each gating one feature:
 
@@ -167,7 +167,7 @@ Key fields:
 - `repo_path`: path to a GitOps git work tree; resolved to an absolute path and required to exist when set.
 - `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `theme` picker writes this field. Defaults to `auto`.
 - `pools`: the default `namespace` (`caph-system`), `cluster` (`burst`), `default_type` (`reserved`), the Kubernetes `version` applied to rendered pools, and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`). Set `namespace` to the namespace where the provider's MachineDeployments live.
-- `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `join_config` are secret references (`namespace`, `name`, `key`) defaulting to `hcloud`/`hcloud-token` and `cluster-autoscaler-hcloud-config`/`HCLOUD_CLUSTER_CONFIG` in `kube-system`. `location` (`hel1`) and `server_type` (`cpx22`) set the server shape. `image.label` (`caph-image-name`) and `image.value` select the boot image by label selector; `image.value` has no default and is required before a reserved server can be provisioned. `ssh_keys` defaults to empty; names are resolved to Hetzner key ids at create time.
+- `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `cloud_init` are credential sources, each set through one of `value` (inline), `path` (a file read from disk), or `env` (an environment variable name); the cloud-init must already carry the `horizon.dev/pool=reserved` node label. `location` (`hel1`) and `server_type` (`cpx22`) set the server shape. `image.label` (`caph-image-name`) and `image.value` select the boot image by label selector; `image.value` has no default and is required before a reserved server can be provisioned. `ssh_keys` defaults to empty; names are resolved to Hetzner key ids at create time.
 
 The retired `infra_path` field is rejected at load time; set `repo_path` instead.
 

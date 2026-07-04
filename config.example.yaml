@@ -18,6 +18,12 @@ pools:
     reserved: reserved-workers
 
 # reserved:
+#   # token and cloud_init each resolve from one of value, path, or env
+#   token:
+#     env: HCLOUD_TOKEN
+#   # the cloud-init must already carry the horizon.dev/pool=reserved node label
+#   cloud_init:
+#     path: ~/.config/horizon/reserved-cloud-init.yaml
 #   # image.value selects the boot image by label; required before a reserved server can be provisioned
 #   image:
 #     label: caph-image-name
