@@ -21,7 +21,6 @@ type PoolDefaults struct {
 	Namespace   string            `mapstructure:"namespace" yaml:"namespace"`
 	Cluster     string            `mapstructure:"cluster" yaml:"cluster"`
 	DefaultType string            `mapstructure:"default_type" yaml:"default_type"`
-	Version     string            `mapstructure:"version" yaml:"version"`
 	Types       map[string]string `mapstructure:"types" yaml:"types"`
 }
 
@@ -122,7 +121,6 @@ const (
 	defaultPoolNamespace = "caph-system"
 	defaultPoolCluster   = "burst"
 	defaultPoolType      = "reserved"
-	defaultPoolVersion   = "v1.35.2+k3s1"
 	reservedPoolType     = "reserved"
 	reservedPoolName     = "reserved-workers"
 
@@ -216,9 +214,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Pools.DefaultType == "" {
 		cfg.Pools.DefaultType = defaultPoolType
-	}
-	if cfg.Pools.Version == "" {
-		cfg.Pools.Version = defaultPoolVersion
 	}
 	if len(cfg.Pools.Types) == 0 {
 		cfg.Pools.Types = map[string]string{

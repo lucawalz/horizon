@@ -13,7 +13,6 @@ pools:
   # namespace where the CAPI provider's MachineDeployments live; set to the chosen provider's namespace
   namespace: caph-system
   default_type: reserved
-  version: v1.35.2+k3s1
   types:
     reserved: reserved-workers
 

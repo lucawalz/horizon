@@ -15,7 +15,6 @@ func testModel() model {
 			Pools: config.PoolDefaults{
 				Namespace:   "caph-system",
 				DefaultType: "reserved",
-				Version:     "v1.35.2+k3s1",
 				Types: map[string]string{
 					"reserved": "reserved-workers",
 					"elastic":  "elastic-workers",
