@@ -25,6 +25,7 @@ const (
 	stepContext setupStep = iota
 	stepDetect
 	stepFields
+	stepReserved
 	stepTheme
 	stepDone
 )
@@ -35,6 +36,14 @@ type setupInput struct {
 	poolsNamespace string
 	poolTypesRaw   string
 	theme          string
+
+	reservedTokenRaw     string
+	reservedCloudInitRaw string
+	reservedLocation     string
+	reservedServerType   string
+	reservedImageLabel   string
+	reservedImageValue   string
+	reservedSSHKeysRaw   string
 }
 
 func parsePoolTypes(raw string) (map[string]string, error) {
@@ -74,9 +83,49 @@ func formatPoolTypes(types map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
+func parseCredentialSource(raw string) (config.CredentialSource, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return config.CredentialSource{}, nil
+	}
+	kv := strings.SplitN(raw, "=", 2)
+	if len(kv) != 2 {
+		return config.CredentialSource{}, fmt.Errorf("credential %q must be kind=value (kind: value|path|env|secret)", raw)
+	}
+	kind := strings.TrimSpace(kv[0])
+	val := strings.TrimSpace(kv[1])
+	if val == "" {
+		return config.CredentialSource{}, fmt.Errorf("credential %q must supply a value after =", raw)
+	}
+	switch kind {
+	case "value":
+		return config.CredentialSource{Value: val}, nil
+	case "path":
+		return config.CredentialSource{Path: val}, nil
+	case "env":
+		return config.CredentialSource{Env: val}, nil
+	case "secret":
+		parts := strings.Split(val, "/")
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+			return config.CredentialSource{}, fmt.Errorf("secret credential %q must be secret=namespace/name/key", raw)
+		}
+		return config.CredentialSource{Secret: &config.SecretRef{Namespace: parts[0], Name: parts[1], Key: parts[2]}}, nil
+	default:
+		return config.CredentialSource{}, fmt.Errorf("credential kind %q must be one of value, path, env, secret", kind)
+	}
+}
+
 func buildSetupConfig(in setupInput) (*config.Config, error) {
 	cfg := config.Default(config.DefaultConfigPath())
 	types, err := parsePoolTypes(in.poolTypesRaw)
+	if err != nil {
+		return nil, err
+	}
+	token, err := parseCredentialSource(in.reservedTokenRaw)
+	if err != nil {
+		return nil, err
+	}
+	cloudInit, err := parseCredentialSource(in.reservedCloudInitRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -84,6 +133,17 @@ func buildSetupConfig(in setupInput) (*config.Config, error) {
 	cfg.Cluster = in.cluster
 	cfg.Pools.Namespace = in.poolsNamespace
 	cfg.Pools.Types = types
+	cfg.Reserved = config.Reserved{
+		Token:      token,
+		CloudInit:  cloudInit,
+		Location:   strings.TrimSpace(in.reservedLocation),
+		ServerType: strings.TrimSpace(in.reservedServerType),
+		Image: config.ReservedImage{
+			Label: strings.TrimSpace(in.reservedImageLabel),
+			Value: strings.TrimSpace(in.reservedImageValue),
+		},
+		SSHKeys: parseList(in.reservedSSHKeysRaw),
+	}
 	if err := cfg.SetTheme(in.theme); err != nil {
 		return nil, err
 	}
@@ -114,6 +174,27 @@ var fieldLabels = [fieldCount]string{
 	"pool types (type=mdname,…)",
 }
 
+const (
+	reservedFieldToken = iota
+	reservedFieldCloudInit
+	reservedFieldLocation
+	reservedFieldServerType
+	reservedFieldImageLabel
+	reservedFieldImageValue
+	reservedFieldSSHKeys
+	reservedFieldCount
+)
+
+var reservedFieldLabels = [reservedFieldCount]string{
+	"hetzner token (value=|path=|env=|secret=ns/name/key, blank to skip)",
+	"reserved cloud-init (value=|path=|env=|secret=ns/name/key, blank to skip)",
+	"location (e.g. hel1)",
+	"server type (e.g. cpx22)",
+	"image label",
+	"image value",
+	"ssh keys (name,name,…)",
+}
+
 type setupModel struct {
 	step   setupStep
 	width  int
@@ -134,6 +215,10 @@ type setupModel struct {
 	fieldIndex int
 	fieldErr   string
 
+	reservedFields [reservedFieldCount]textinput.Model
+	reservedIndex  int
+	reservedErr    string
+
 	picker themePicker
 
 	saved   bool
@@ -145,8 +230,10 @@ func newSetupModel() setupModel {
 	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(refreshLabelStyle))
 	m := setupModel{step: stepContext, spinner: sp}
 	for i := range m.fields {
-		ti := textinput.New()
-		m.fields[i] = ti
+		m.fields[i] = textinput.New()
+	}
+	for i := range m.reservedFields {
+		m.reservedFields[i] = textinput.New()
 	}
 	return m
 }
@@ -242,6 +329,8 @@ func (m setupModel) onKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.onDetectKey(msg)
 	case stepFields:
 		return m.onFieldsKey(msg)
+	case stepReserved:
+		return m.onReservedKey(msg)
 	case stepTheme:
 		return m.onThemeKey(msg)
 	case stepDone:
@@ -326,9 +415,9 @@ func (m setupModel) onFieldsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.fieldErr = ""
 		m.blurFields()
-		m.step = stepTheme
-		m.picker = newThemePicker(config.ThemeAuto)
-		return m, nil
+		m.step = stepReserved
+		m.reservedIndex = 0
+		return m, m.reservedFields[0].Focus()
 	}
 	var cmd tea.Cmd
 	m.fields[m.fieldIndex], cmd = m.fields[m.fieldIndex].Update(msg)
@@ -353,6 +442,64 @@ func (m *setupModel) blurFields() {
 	}
 }
 
+func (m setupModel) onReservedKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.blurReservedFields()
+		m.step = stepFields
+		return m, m.fields[m.fieldIndex].Focus()
+	case "up":
+		return m.focusReservedField(m.reservedIndex - 1)
+	case "down", "tab":
+		return m.focusReservedField(m.reservedIndex + 1)
+	case "enter":
+		if m.reservedIndex < reservedFieldCount-1 {
+			m.reservedErr = ""
+			return m.focusReservedField(m.reservedIndex + 1)
+		}
+		if err := m.validateReserved(); err != nil {
+			m.reservedErr = err.Error()
+			return m, nil
+		}
+		m.reservedErr = ""
+		m.blurReservedFields()
+		m.step = stepTheme
+		m.picker = newThemePicker(config.ThemeAuto)
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.reservedFields[m.reservedIndex], cmd = m.reservedFields[m.reservedIndex].Update(msg)
+	return m, cmd
+}
+
+func (m setupModel) validateReserved() error {
+	if _, err := parseCredentialSource(m.reservedFields[reservedFieldToken].Value()); err != nil {
+		return err
+	}
+	if _, err := parseCredentialSource(m.reservedFields[reservedFieldCloudInit].Value()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m setupModel) focusReservedField(idx int) (tea.Model, tea.Cmd) {
+	if idx < 0 {
+		idx = reservedFieldCount - 1
+	}
+	if idx >= reservedFieldCount {
+		idx = 0
+	}
+	m.blurReservedFields()
+	m.reservedIndex = idx
+	return m, m.reservedFields[idx].Focus()
+}
+
+func (m *setupModel) blurReservedFields() {
+	for i := range m.reservedFields {
+		m.reservedFields[i].Blur()
+	}
+}
+
 func (m setupModel) onThemeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
@@ -362,8 +509,8 @@ func (m setupModel) onThemeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.picker.moveDown()
 		return m, nil
 	case "esc":
-		m.step = stepFields
-		return m, m.fields[m.fieldIndex].Focus()
+		m.step = stepReserved
+		return m, m.reservedFields[m.reservedIndex].Focus()
 	case "enter":
 		return m.save()
 	}
@@ -377,6 +524,14 @@ func (m setupModel) save() (tea.Model, tea.Cmd) {
 		poolsNamespace: m.fields[fieldPoolsNamespace].Value(),
 		poolTypesRaw:   m.fields[fieldPoolTypes].Value(),
 		theme:          m.picker.selected().pref,
+
+		reservedTokenRaw:     m.reservedFields[reservedFieldToken].Value(),
+		reservedCloudInitRaw: m.reservedFields[reservedFieldCloudInit].Value(),
+		reservedLocation:     m.reservedFields[reservedFieldLocation].Value(),
+		reservedServerType:   m.reservedFields[reservedFieldServerType].Value(),
+		reservedImageLabel:   m.reservedFields[reservedFieldImageLabel].Value(),
+		reservedImageValue:   m.reservedFields[reservedFieldImageValue].Value(),
+		reservedSSHKeysRaw:   m.reservedFields[reservedFieldSSHKeys].Value(),
 	}
 	cfg, err := buildSetupConfig(in)
 	if err != nil {
@@ -432,6 +587,8 @@ func (m setupModel) content() string {
 		body = m.detectView()
 	case stepFields:
 		body = m.fieldsView()
+	case stepReserved:
+		body = m.reservedView()
 	case stepTheme:
 		body = m.themeView()
 	default:
@@ -455,6 +612,7 @@ var breadcrumbSteps = []struct {
 	{"context", stepContext},
 	{"detect", stepDetect},
 	{"configure", stepFields},
+	{"reserved", stepReserved},
 	{"theme", stepTheme},
 }
 
@@ -528,6 +686,26 @@ func (m setupModel) fieldsView() string {
 	parts := []string{strings.Join(rows, "\n")}
 	if m.fieldErr != "" {
 		parts = append(parts, errStyle.Render(m.fieldErr))
+	}
+	parts = append(parts, "", dimStyle.Render("↑↓/tab move · enter next · esc back"))
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func (m setupModel) reservedView() string {
+	rows := make([]string, 0, reservedFieldCount)
+	for i := range m.reservedFields {
+		marker := pickerCursorIndent
+		label := dimStyle.Render(reservedFieldLabels[i])
+		if i == m.reservedIndex {
+			marker = helpCommandStyle.Render(pickerCursor)
+			label = helpCommandStyle.Render(reservedFieldLabels[i])
+		}
+		rows = append(rows, marker+label)
+		rows = append(rows, pickerCursorIndent+m.reservedFields[i].View())
+	}
+	parts := []string{strings.Join(rows, "\n")}
+	if m.reservedErr != "" {
+		parts = append(parts, errStyle.Render(m.reservedErr))
 	}
 	parts = append(parts, "", dimStyle.Render("↑↓/tab move · enter next · esc back"))
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
