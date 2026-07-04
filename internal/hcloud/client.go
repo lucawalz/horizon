@@ -8,12 +8,11 @@ import (
 )
 
 const (
-	PoolLabelKey       = "horizon.dev/pool"
-	ReservedPoolValue  = "reserved"
-	ManagedByLabelKey  = "horizon.dev/managed-by"
-	ManagedByValue     = "horizon"
-	NodeGroupLabelKey  = "hcloud/node-group"
-	ImageSelectorLabel = "caph-image-name"
+	PoolLabelKey      = "horizon.dev/pool"
+	ReservedPoolValue = "reserved"
+	ManagedByLabelKey = "horizon.dev/managed-by"
+	ManagedByValue    = "horizon"
+	NodeGroupLabelKey = "hcloud/node-group"
 )
 
 type ServerAPI interface {

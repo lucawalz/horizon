@@ -117,15 +117,9 @@ type Config struct {
 func (c *Config) Path() string { return c.path }
 
 const (
-	defaultPoolNamespace = "caph-system"
-	defaultPoolCluster   = "burst"
-	defaultPoolType      = "reserved"
-	reservedPoolType     = "reserved"
-	reservedPoolName     = "reserved-workers"
-
-	defaultReservedLocation   = "hel1"
-	defaultReservedType       = "cpx22"
-	defaultReservedImageLabel = "caph-image-name"
+	defaultPoolType  = "reserved"
+	reservedPoolType = "reserved"
+	reservedPoolName = "reserved-workers"
 
 	ThemeAuto  = "auto"
 	ThemeLight = "light"
@@ -189,12 +183,6 @@ func Load() (*Config, error) {
 }
 
 func applyDefaults(cfg *Config) {
-	if cfg.Pools.Namespace == "" {
-		cfg.Pools.Namespace = defaultPoolNamespace
-	}
-	if cfg.Pools.Cluster == "" {
-		cfg.Pools.Cluster = defaultPoolCluster
-	}
 	if cfg.Pools.DefaultType == "" {
 		cfg.Pools.DefaultType = defaultPoolType
 	}
@@ -208,19 +196,6 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Theme == "" {
 		cfg.Theme = ThemeAuto
-	}
-	applyReservedDefaults(&cfg.Reserved)
-}
-
-func applyReservedDefaults(r *Reserved) {
-	if r.Location == "" {
-		r.Location = defaultReservedLocation
-	}
-	if r.ServerType == "" {
-		r.ServerType = defaultReservedType
-	}
-	if r.Image.Label == "" {
-		r.Image.Label = defaultReservedImageLabel
 	}
 }
 

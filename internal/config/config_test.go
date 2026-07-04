@@ -57,11 +57,11 @@ func TestPoolDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.Pools.Namespace != "caph-system" {
-		t.Errorf("Pools.Namespace: got %q, want caph-system", cfg.Pools.Namespace)
+	if cfg.Pools.Namespace != "" {
+		t.Errorf("Pools.Namespace: got %q, want empty (no provider default)", cfg.Pools.Namespace)
 	}
-	if cfg.Pools.Cluster != "burst" {
-		t.Errorf("Pools.Cluster: got %q, want burst", cfg.Pools.Cluster)
+	if cfg.Pools.Cluster != "" {
+		t.Errorf("Pools.Cluster: got %q, want empty (no provider default)", cfg.Pools.Cluster)
 	}
 	if cfg.Pools.DefaultType != "reserved" {
 		t.Errorf("Pools.DefaultType: got %q, want reserved", cfg.Pools.DefaultType)
@@ -72,8 +72,8 @@ func TestPoolDefaults(t *testing.T) {
 	if _, ok := cfg.Pools.Types["elastic"]; ok {
 		t.Errorf("Pools.Types should not default an elastic entry, got %v", cfg.Pools.Types)
 	}
-	if cfg.Cluster != "burst" {
-		t.Errorf("Cluster: got %q, want burst", cfg.Cluster)
+	if cfg.Cluster != "" {
+		t.Errorf("Cluster: got %q, want empty (no provider default)", cfg.Cluster)
 	}
 }
 
@@ -276,21 +276,21 @@ func TestDefaultSaveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if reloaded.Pools.Namespace != "caph-system" {
-		t.Errorf("Pools.Namespace: got %q, want caph-system", reloaded.Pools.Namespace)
+	if reloaded.Pools.Namespace != "" {
+		t.Errorf("Pools.Namespace: got %q, want empty (no provider default)", reloaded.Pools.Namespace)
 	}
 	if reloaded.Pools.DefaultType != "reserved" {
 		t.Errorf("Pools.DefaultType: got %q, want reserved", reloaded.Pools.DefaultType)
 	}
-	if reloaded.Cluster != "burst" {
-		t.Errorf("Cluster: got %q, want burst", reloaded.Cluster)
+	if reloaded.Cluster != "" {
+		t.Errorf("Cluster: got %q, want empty (no provider default)", reloaded.Cluster)
 	}
 	if reloaded.Theme != config.ThemeAuto {
 		t.Errorf("Theme: got %q, want %q", reloaded.Theme, config.ThemeAuto)
 	}
 }
 
-func TestReservedDefaults(t *testing.T) {
+func TestReservedHasNoProviderDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := "kubeconfig: \"\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
@@ -304,16 +304,16 @@ func TestReservedDefaults(t *testing.T) {
 	}
 	r := cfg.Reserved
 	if r.Token != (config.CredentialSource{}) {
-		t.Errorf("Token = %+v, want empty default", r.Token)
+		t.Errorf("Token = %+v, want empty", r.Token)
 	}
 	if r.CloudInit != (config.CredentialSource{}) {
-		t.Errorf("CloudInit = %+v, want empty default", r.CloudInit)
+		t.Errorf("CloudInit = %+v, want empty", r.CloudInit)
 	}
-	if r.Location != "hel1" || r.ServerType != "cpx22" {
-		t.Errorf("location/type = %q/%q, want hel1/cpx22", r.Location, r.ServerType)
+	if r.Location != "" || r.ServerType != "" {
+		t.Errorf("location/type = %q/%q, want empty (no provider default)", r.Location, r.ServerType)
 	}
-	if r.Image.Label != "caph-image-name" {
-		t.Errorf("image label = %q, want caph-image-name", r.Image.Label)
+	if r.Image.Label != "" {
+		t.Errorf("image label = %q, want empty (no provider default)", r.Image.Label)
 	}
 	if r.Image.Value != "" {
 		t.Errorf("image value = %q, want empty", r.Image.Value)

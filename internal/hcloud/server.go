@@ -43,9 +43,6 @@ func ownedByHorizon(labels map[string]string) bool {
 }
 
 func (c *Client) resolveImage(ctx context.Context, label, value string) (*hcloudgo.Image, error) {
-	if label == "" {
-		label = ImageSelectorLabel
-	}
 	selector := label + "=" + value
 	images, err := c.images.AllWithOpts(ctx, hcloudgo.ImageListOpts{
 		ListOpts: hcloudgo.ListOpts{LabelSelector: selector},
@@ -73,6 +70,9 @@ func reservedServerName() (string, error) {
 func (c *Client) CreateReservedServer(ctx context.Context, spec ServerSpec) (*Server, error) {
 	if spec.Location == "" || spec.ServerType == "" {
 		return nil, fmt.Errorf("hcloud: server location and type are required")
+	}
+	if spec.ImageLabel == "" {
+		return nil, fmt.Errorf("hcloud: reserved.image.label is required")
 	}
 	if spec.ImageValue == "" {
 		return nil, fmt.Errorf("hcloud: reserved.image.value is required")
