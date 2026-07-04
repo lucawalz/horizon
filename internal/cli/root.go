@@ -7,6 +7,7 @@ import (
 
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/core"
+	"github.com/lucawalz/horizon/internal/hcloud"
 	"github.com/lucawalz/horizon/internal/tui"
 	"github.com/lucawalz/horizon/internal/version"
 	"github.com/spf13/cobra"
@@ -30,7 +31,7 @@ var rootCmd = &cobra.Command{
 			return err
 		}
 
-		built, err := core.NewApp(contextName, clusterName)
+		built, err := core.NewApp(contextName, clusterName, hcloud.Reserved)
 		if err != nil {
 			if errors.Is(err, config.ErrNotConfigured) {
 				return nil
@@ -51,7 +52,7 @@ var rootCmd = &cobra.Command{
 			}
 			contextFlag, _ := cmd.Flags().GetString("context")
 			clusterFlag, _ := cmd.Flags().GetString("cluster")
-			built, err := core.NewApp(contextFlag, clusterFlag)
+			built, err := core.NewApp(contextFlag, clusterFlag, hcloud.Reserved)
 			if err != nil {
 				return err
 			}

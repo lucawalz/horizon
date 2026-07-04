@@ -1,9 +1,7 @@
-package hcloud_test
+package hcloud
 
 import (
 	"testing"
-
-	hz "github.com/lucawalz/horizon/internal/hcloud"
 )
 
 const reservedCloudInit = `#cloud-config
@@ -17,9 +15,9 @@ write_files:
 `
 
 func TestBuildUserDataReturnsValidTemplateUnchanged(t *testing.T) {
-	out, err := hz.BuildUserData(reservedCloudInit)
+	out, err := buildUserData(reservedCloudInit)
 	if err != nil {
-		t.Fatalf("BuildUserData: %v", err)
+		t.Fatalf("buildUserData: %v", err)
 	}
 	if out != reservedCloudInit {
 		t.Errorf("cloud-init must be returned unchanged:\n%s", out)
@@ -27,13 +25,13 @@ func TestBuildUserDataReturnsValidTemplateUnchanged(t *testing.T) {
 }
 
 func TestBuildUserDataFailsFastOnEmptyTemplate(t *testing.T) {
-	if _, err := hz.BuildUserData("  \n"); err == nil {
+	if _, err := buildUserData("  \n"); err == nil {
 		t.Fatal("expected error on empty cloud-init")
 	}
 }
 
 func TestBuildUserDataFailsFastWhenReservedLabelMissing(t *testing.T) {
-	if _, err := hz.BuildUserData("#cloud-config\nnode-label:\n- horizon.dev/pool=elastic\n"); err == nil {
+	if _, err := buildUserData("#cloud-config\nnode-label:\n- horizon.dev/pool=elastic\n"); err == nil {
 		t.Fatal("expected error when reserved node-label is absent")
 	}
 }

@@ -2,13 +2,13 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
-	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/core"
-	"github.com/lucawalz/horizon/internal/hcloud"
+	"github.com/lucawalz/horizon/internal/provider"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,85 +19,44 @@ import (
 	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-type fakeHcloudAPI struct {
-	servers []*hcloudgo.Server
-	images  []*hcloudgo.Image
+type fakeProvider struct {
+	servers []provider.Server
 	nextID  int64
 }
 
-func (f *fakeHcloudAPI) AllWithOpts(_ context.Context, opts hcloudgo.ServerListOpts) ([]*hcloudgo.Server, error) {
-	if opts.LabelSelector == "" {
-		return f.servers, nil
-	}
-	out := []*hcloudgo.Server{}
-	for _, s := range f.servers {
-		if s.Labels[hcloud.ManagedByLabelKey] == hcloud.ManagedByValue {
-			out = append(out, s)
+func newFakeProvider(seed ...provider.Server) *fakeProvider {
+	p := &fakeProvider{servers: append([]provider.Server(nil), seed...)}
+	for _, s := range seed {
+		if s.ID > p.nextID {
+			p.nextID = s.ID
 		}
 	}
-	return out, nil
+	return p
 }
 
-func (f *fakeHcloudAPI) Create(_ context.Context, opts hcloudgo.ServerCreateOpts) (hcloudgo.ServerCreateResult, *hcloudgo.Response, error) {
-	f.nextID++
-	srv := &hcloudgo.Server{ID: f.nextID, Name: opts.Name, Labels: opts.Labels}
-	f.servers = append(f.servers, srv)
-	return hcloudgo.ServerCreateResult{Server: srv}, nil, nil
+func (p *fakeProvider) ListReservedServers(context.Context) ([]provider.Server, error) {
+	return append([]provider.Server(nil), p.servers...), nil
 }
 
-func (f *fakeHcloudAPI) Delete(_ context.Context, server *hcloudgo.Server) (*hcloudgo.Response, error) {
-	kept := f.servers[:0]
-	for _, s := range f.servers {
-		if s.ID != server.ID {
-			kept = append(kept, s)
-		}
+func (p *fakeProvider) ScaleReservedTo(_ context.Context, want int) (int, error) {
+	for len(p.servers) < want {
+		p.nextID++
+		p.servers = append(p.servers, provider.Server{ID: p.nextID, Name: fmt.Sprintf("reserved-%d", p.nextID)})
 	}
-	f.servers = kept
-	return nil, nil
+	if want < len(p.servers) {
+		p.servers = p.servers[:want]
+	}
+	return want, nil
 }
 
-func (f *fakeHcloudAPI) AllWithImageOpts(_ context.Context, _ hcloudgo.ImageListOpts) ([]*hcloudgo.Image, error) {
-	return f.images, nil
-}
-
-type fakeImageAPI struct{ f *fakeHcloudAPI }
-
-func (i fakeImageAPI) AllWithOpts(ctx context.Context, opts hcloudgo.ImageListOpts) ([]*hcloudgo.Image, error) {
-	return i.f.AllWithImageOpts(ctx, opts)
-}
-
-type fakeSSHKeyAPI struct{}
-
-func (fakeSSHKeyAPI) GetByName(_ context.Context, name string) (*hcloudgo.SSHKey, *hcloudgo.Response, error) {
-	return &hcloudgo.SSHKey{ID: 1, Name: name}, nil, nil
-}
-
-func reservedServer(id int64, name string) *hcloudgo.Server {
-	return &hcloudgo.Server{
+func reservedServer(id int64, name string) provider.Server {
+	return provider.Server{
 		ID:   id,
 		Name: name,
 		Labels: map[string]string{
-			hcloud.PoolLabelKey:      hcloud.ReservedPoolValue,
-			hcloud.ManagedByLabelKey: hcloud.ManagedByValue,
+			provider.PoolLabelKey: provider.ReservedPoolValue,
 		},
 	}
-}
-
-func newHcloudFake(servers ...*hcloudgo.Server) (*hcloud.Client, *fakeHcloudAPI) {
-	f := &fakeHcloudAPI{
-		servers: servers,
-		images:  []*hcloudgo.Image{{ID: 1, Name: "pool-node"}},
-	}
-	for _, s := range servers {
-		if s.ID > f.nextID {
-			f.nextID = s.ID
-		}
-	}
-	return hcloud.NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{}), f
-}
-
-func reservedSpec() hcloud.ServerSpec {
-	return hcloud.ServerSpec{Location: "hel1", ServerType: "cpx22", ImageLabel: "pool-image", ImageValue: "reserved-pool", SSHKeys: []string{"k"}, UserData: "ud"}
 }
 
 func testPoolDefaults() config.PoolDefaults {

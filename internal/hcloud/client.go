@@ -5,11 +5,10 @@ import (
 	"fmt"
 
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
+	"github.com/lucawalz/horizon/internal/provider"
 )
 
 const (
-	PoolLabelKey      = "horizon.dev/pool"
-	ReservedPoolValue = "reserved"
 	ManagedByLabelKey = "horizon.dev/managed-by"
 	ManagedByValue    = "horizon"
 	NodeGroupLabelKey = "hcloud/node-group"
@@ -33,16 +32,22 @@ type Client struct {
 	servers ServerAPI
 	images  ImageAPI
 	sshKeys SSHKeyAPI
+	spec    ServerSpec
 }
 
-func NewClient(token string) (*Client, error) {
+var _ provider.Provider = (*Client)(nil)
+
+func NewClient(token string, spec ServerSpec) (provider.Provider, error) {
 	if token == "" {
 		return nil, fmt.Errorf("hcloud: token must not be empty")
 	}
+	if _, err := buildUserData(spec.UserData); err != nil {
+		return nil, err
+	}
 	cl := hcloudgo.NewClient(hcloudgo.WithToken(token))
-	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey}, nil
+	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey, spec: spec}, nil
 }
 
-func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI) *Client {
-	return &Client{servers: servers, images: images, sshKeys: sshKeys}
+func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, spec ServerSpec) *Client {
+	return &Client{servers: servers, images: images, sshKeys: sshKeys, spec: spec}
 }

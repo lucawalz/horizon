@@ -6,11 +6,13 @@ import (
 
 	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
-	"github.com/lucawalz/horizon/internal/hcloud"
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/provider"
 	"k8s.io/client-go/kubernetes"
 	metricsclient "k8s.io/metrics/pkg/client/clientset/versioned"
 )
+
+type ReservedProviderFunc func(ctx context.Context, kc kubernetes.Interface, cfg config.Reserved) (provider.Provider, error)
 
 type App struct {
 	Config        *config.Config
@@ -19,9 +21,10 @@ type App struct {
 	CapiClient    *capi.Client
 	Cluster       string
 	Context       string
+	NewReserved   ReservedProviderFunc
 }
 
-func NewApp(contextName, clusterName string) (*App, error) {
+func NewApp(contextName, clusterName string, reserved ReservedProviderFunc) (*App, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -59,9 +62,13 @@ func NewApp(contextName, clusterName string) (*App, error) {
 		CapiClient:    cc,
 		Cluster:       cluster,
 		Context:       effectiveContext,
+		NewReserved:   reserved,
 	}, nil
 }
 
-func (a *App) ReservedClient(ctx context.Context) (*hcloud.Client, hcloud.ServerSpec, error) {
-	return ReservedSpec(ctx, a.KubeClient, a.Config.Reserved)
+func (a *App) ReservedProvider(ctx context.Context) (provider.Provider, error) {
+	if a.NewReserved == nil {
+		return nil, fmt.Errorf("core: reserved provider not configured")
+	}
+	return a.NewReserved(ctx, a.KubeClient, a.Config.Reserved)
 }

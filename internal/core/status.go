@@ -6,8 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lucawalz/horizon/internal/hcloud"
-	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/provider"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -291,7 +290,7 @@ func groupNodesByPool(nodes []corev1.Node) map[string][]MachineRow {
 	byPool := map[string][]MachineRow{}
 	for i := range nodes {
 		node := nodes[i]
-		pool, ok := node.Labels[k8s.PoolLabelKey]
+		pool, ok := node.Labels[provider.PoolLabelKey]
 		if !ok {
 			continue
 		}
@@ -308,36 +307,36 @@ func groupNodesByPool(nodes []corev1.Node) map[string][]MachineRow {
 	return byPool
 }
 
-func listReservedServers(ctx context.Context, app *App) []hcloud.Server {
-	hc, _, err := app.ReservedClient(ctx)
+func listReservedServers(ctx context.Context, app *App) []provider.Server {
+	prov, err := app.ReservedProvider(ctx)
 	if err != nil {
 		return nil
 	}
-	servers, err := hc.ListReservedServers(ctx)
+	servers, err := prov.ListReservedServers(ctx)
 	if err != nil {
 		return nil
 	}
 	return servers
 }
 
-func mergeReservedServers(byPool map[string][]MachineRow, servers []hcloud.Server) {
+func mergeReservedServers(byPool map[string][]MachineRow, servers []provider.Server) {
 	if len(servers) == 0 {
 		return
 	}
 	joined := map[string]bool{}
-	for _, m := range byPool[hcloud.ReservedPoolValue] {
+	for _, m := range byPool[provider.ReservedPoolValue] {
 		joined[m.Name] = true
 	}
 	for _, s := range servers {
 		if joined[s.Name] {
-			for i := range byPool[hcloud.ReservedPoolValue] {
-				if byPool[hcloud.ReservedPoolValue][i].Name == s.Name {
-					byPool[hcloud.ReservedPoolValue][i].ProviderID = fmt.Sprintf("hcloud://%d", s.ID)
+			for i := range byPool[provider.ReservedPoolValue] {
+				if byPool[provider.ReservedPoolValue][i].Name == s.Name {
+					byPool[provider.ReservedPoolValue][i].ProviderID = fmt.Sprintf("hcloud://%d", s.ID)
 				}
 			}
 			continue
 		}
-		byPool[hcloud.ReservedPoolValue] = append(byPool[hcloud.ReservedPoolValue], MachineRow{
+		byPool[provider.ReservedPoolValue] = append(byPool[provider.ReservedPoolValue], MachineRow{
 			Name:       s.Name,
 			Phase:      "Provisioning",
 			ProviderID: fmt.Sprintf("hcloud://%d", s.ID),

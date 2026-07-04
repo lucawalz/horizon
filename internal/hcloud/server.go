@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
+	"github.com/lucawalz/horizon/internal/provider"
 )
 
 type ServerSpec struct {
@@ -19,16 +20,10 @@ type ServerSpec struct {
 	UserData   string
 }
 
-type Server struct {
-	ID     int64
-	Name   string
-	Labels map[string]string
-}
-
 func reservedLabels() map[string]string {
 	return map[string]string{
-		PoolLabelKey:      ReservedPoolValue,
-		ManagedByLabelKey: ManagedByValue,
+		provider.PoolLabelKey: provider.ReservedPoolValue,
+		ManagedByLabelKey:     ManagedByValue,
 	}
 }
 
@@ -64,10 +59,11 @@ func reservedServerName() (string, error) {
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("hcloud: generate server name: %w", err)
 	}
-	return ReservedPoolValue + "-" + hex.EncodeToString(b), nil
+	return provider.ReservedPoolValue + "-" + hex.EncodeToString(b), nil
 }
 
-func (c *Client) CreateReservedServer(ctx context.Context, spec ServerSpec) (*Server, error) {
+func (c *Client) createReservedServer(ctx context.Context) (*provider.Server, error) {
+	spec := c.spec
 	if spec.Location == "" || spec.ServerType == "" {
 		return nil, fmt.Errorf("hcloud: server location and type are required")
 	}
@@ -112,10 +108,10 @@ func (c *Client) CreateReservedServer(ctx context.Context, spec ServerSpec) (*Se
 	if err != nil {
 		return nil, fmt.Errorf("hcloud: create reserved server: %w", err)
 	}
-	return &Server{ID: res.Server.ID, Name: res.Server.Name, Labels: res.Server.Labels}, nil
+	return &provider.Server{ID: res.Server.ID, Name: res.Server.Name, Labels: res.Server.Labels}, nil
 }
 
-func (c *Client) ListReservedServers(ctx context.Context) ([]Server, error) {
+func (c *Client) ListReservedServers(ctx context.Context) ([]provider.Server, error) {
 	selector := ManagedByLabelKey + "=" + ManagedByValue
 	raw, err := c.servers.AllWithOpts(ctx, hcloudgo.ServerListOpts{
 		ListOpts: hcloudgo.ListOpts{LabelSelector: selector},
@@ -123,18 +119,18 @@ func (c *Client) ListReservedServers(ctx context.Context) ([]Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hcloud: list reserved servers: %w", err)
 	}
-	out := make([]Server, 0, len(raw))
+	out := make([]provider.Server, 0, len(raw))
 	for _, s := range raw {
 		if !ownedByHorizon(s.Labels) {
 			continue
 		}
-		out = append(out, Server{ID: s.ID, Name: s.Name, Labels: s.Labels})
+		out = append(out, provider.Server{ID: s.ID, Name: s.Name, Labels: s.Labels})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
-func (c *Client) deleteReservedServer(ctx context.Context, s Server) error {
+func (c *Client) deleteReservedServer(ctx context.Context, s provider.Server) error {
 	if !ownedByHorizon(s.Labels) {
 		return fmt.Errorf("hcloud: refusing to delete server %q (%d): not labelled %s=%s",
 			s.Name, s.ID, ManagedByLabelKey, ManagedByValue)
@@ -145,7 +141,7 @@ func (c *Client) deleteReservedServer(ctx context.Context, s Server) error {
 	return nil
 }
 
-func (c *Client) ScaleReservedTo(ctx context.Context, spec ServerSpec, want int) (int, error) {
+func (c *Client) ScaleReservedTo(ctx context.Context, want int) (int, error) {
 	if want < 0 {
 		return 0, fmt.Errorf("hcloud: desired reserved count must not be negative")
 	}
@@ -157,7 +153,7 @@ func (c *Client) ScaleReservedTo(ctx context.Context, spec ServerSpec, want int)
 	switch {
 	case have < want:
 		for i := have; i < want; i++ {
-			if _, err := c.CreateReservedServer(ctx, spec); err != nil {
+			if _, err := c.createReservedServer(ctx); err != nil {
 				return i, err
 			}
 		}

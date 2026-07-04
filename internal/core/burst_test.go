@@ -29,7 +29,7 @@ func poolNode(name, pool string) *corev1.Node {
 
 func TestBurstScalesAndMigrates(t *testing.T) {
 	hostname := "reserved-node-1"
-	hc, _ := newHcloudFake(reservedServer(1, hostname))
+	p := newFakeProvider(reservedServer(1, hostname))
 	kc := fake.NewSimpleClientset(
 		poolNode(hostname, "reserved"),
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "sentio-systems"}},
@@ -38,11 +38,11 @@ func TestBurstScalesAndMigrates(t *testing.T) {
 
 	target := core.PoolTarget{PoolType: "reserved", Cluster: "burst", Replicas: 1}
 	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "reserved"}
-	if err := core.Burst(context.Background(), hc, reservedSpec(), kc, params, core.Progress{}); err != nil {
+	if err := core.Burst(context.Background(), p, kc, params, core.Progress{}); err != nil {
 		t.Fatalf("Burst: %v", err)
 	}
 
-	servers, err := hc.ListReservedServers(context.Background())
+	servers, err := p.ListReservedServers(context.Background())
 	if err != nil {
 		t.Fatalf("ListReservedServers: %v", err)
 	}
@@ -65,19 +65,19 @@ func TestBurstScalesAndMigrates(t *testing.T) {
 }
 
 func TestBurstRefusesElastic(t *testing.T) {
-	hc, _ := newHcloudFake()
+	p := newFakeProvider()
 	kc := fake.NewSimpleClientset()
 
 	target := core.PoolTarget{PoolType: core.ElasticPoolType, Replicas: 1}
 	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "elastic"}
-	err := core.Burst(context.Background(), hc, reservedSpec(), kc, params, core.Progress{})
+	err := core.Burst(context.Background(), p, kc, params, core.Progress{})
 	if err == nil || !strings.Contains(err.Error(), "elastic") {
 		t.Fatalf("expected elastic refusal, got %v", err)
 	}
 }
 
 func TestBurstRollsBackOnLaterStageFailure(t *testing.T) {
-	hc, f := newHcloudFake(reservedServer(1, "reserved-node-1"), reservedServer(2, "reserved-node-2"))
+	p := newFakeProvider(reservedServer(1, "reserved-node-1"), reservedServer(2, "reserved-node-2"))
 	kc := fake.NewSimpleClientset()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -85,12 +85,12 @@ func TestBurstRollsBackOnLaterStageFailure(t *testing.T) {
 
 	target := core.PoolTarget{PoolType: "reserved", Cluster: "burst", Replicas: 1}
 	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "reserved"}
-	err := core.Burst(ctx, hc, reservedSpec(), kc, params, core.Progress{})
+	err := core.Burst(ctx, p, kc, params, core.Progress{})
 	if err == nil {
 		t.Fatal("expected error when the node wait is cancelled")
 	}
 
-	if len(f.servers) != 2 {
-		t.Errorf("reserved pool must roll back to prior 2 servers, got %d", len(f.servers))
+	if len(p.servers) != 2 {
+		t.Errorf("reserved pool must roll back to prior 2 servers, got %d", len(p.servers))
 	}
 }

@@ -187,7 +187,8 @@ internal/tui/       Bubble Tea command centre, command line, and panels
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
 internal/capi/      Cluster API client for pool-type detection and Flux status
-internal/hcloud/    Hetzner Cloud client for reserved server provisioning
+internal/provider/  reserved-pool provider interface and node-label constants
+internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
 internal/k8s/       cluster client, drain, workload migration
 docs/adr/           architecture decision records
 ```

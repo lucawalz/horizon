@@ -3,13 +3,15 @@ package hcloud
 import (
 	"fmt"
 	"strings"
+
+	"github.com/lucawalz/horizon/internal/provider"
 )
 
-func BuildUserData(userData string) (string, error) {
+func buildUserData(userData string) (string, error) {
 	if strings.TrimSpace(userData) == "" {
 		return "", fmt.Errorf("hcloud: cloud-init is empty")
 	}
-	label := PoolLabelKey + "=" + ReservedPoolValue
+	label := provider.PoolLabelKey + "=" + provider.ReservedPoolValue
 	if !strings.Contains(userData, label) {
 		return "", fmt.Errorf("hcloud: cloud-init missing node-label %q", label)
 	}

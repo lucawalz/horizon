@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lucawalz/horizon/internal/config"
-	"github.com/lucawalz/horizon/internal/hcloud"
-	"k8s.io/client-go/kubernetes"
+	"github.com/lucawalz/horizon/internal/provider"
 )
 
 const ElasticPoolType = "elastic"
@@ -44,35 +42,7 @@ func ElasticAutoscalerErr() error {
 	return fmt.Errorf("the cluster-autoscaler owns the elastic pool; horizon does not provision elastic nodes")
 }
 
-func ReservedSpec(ctx context.Context, kc kubernetes.Interface, cfg config.Reserved) (*hcloud.Client, hcloud.ServerSpec, error) {
-	token, err := cfg.Token.Resolve(ctx, kc)
-	if err != nil {
-		return nil, hcloud.ServerSpec{}, err
-	}
-	raw, err := cfg.CloudInit.Resolve(ctx, kc)
-	if err != nil {
-		return nil, hcloud.ServerSpec{}, err
-	}
-	userData, err := hcloud.BuildUserData(raw)
-	if err != nil {
-		return nil, hcloud.ServerSpec{}, err
-	}
-	client, err := hcloud.NewClient(token)
-	if err != nil {
-		return nil, hcloud.ServerSpec{}, err
-	}
-	spec := hcloud.ServerSpec{
-		Location:   cfg.Location,
-		ServerType: cfg.ServerType,
-		ImageLabel: cfg.Image.Label,
-		ImageValue: cfg.Image.Value,
-		SSHKeys:    cfg.SSHKeys,
-		UserData:   userData,
-	}
-	return client, spec, nil
-}
-
-func ScaleUp(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, target PoolTarget, dryRun bool, progress Progress) error {
+func ScaleUp(ctx context.Context, prov provider.Provider, target PoolTarget, dryRun bool, progress Progress) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -80,7 +50,7 @@ func ScaleUp(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, tar
 		return ElasticAutoscalerErr()
 	}
 
-	current, err := hc.ListReservedServers(ctx)
+	current, err := prov.ListReservedServers(ctx)
 	if err != nil {
 		return err
 	}
@@ -98,14 +68,14 @@ func ScaleUp(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, tar
 	}
 
 	progress.Debug(fmt.Sprintf("scaling reserved servers %d -> %d", have, target.Replicas))
-	if _, err := hc.ScaleReservedTo(ctx, spec, int(target.Replicas)); err != nil {
+	if _, err := prov.ScaleReservedTo(ctx, int(target.Replicas)); err != nil {
 		return err
 	}
 	progress.Emit(fmt.Sprintf("Scaled reserved pool: %d -> %d servers", have, target.Replicas))
 	return nil
 }
 
-func ScaleDown(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, target PoolTarget, dryRun bool, progress Progress) error {
+func ScaleDown(ctx context.Context, prov provider.Provider, target PoolTarget, dryRun bool, progress Progress) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -113,7 +83,7 @@ func ScaleDown(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, t
 		return ElasticAutoscalerErr()
 	}
 
-	current, err := hc.ListReservedServers(ctx)
+	current, err := prov.ListReservedServers(ctx)
 	if err != nil {
 		return err
 	}
@@ -131,7 +101,7 @@ func ScaleDown(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, t
 	}
 
 	progress.Debug("scaling reserved servers -> 0")
-	if _, err := hc.ScaleReservedTo(ctx, spec, 0); err != nil {
+	if _, err := prov.ScaleReservedTo(ctx, 0); err != nil {
 		return err
 	}
 	progress.Emit(fmt.Sprintf("Scaled reserved pool to 0 servers (was %d)", have))

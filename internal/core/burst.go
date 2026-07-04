@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lucawalz/horizon/internal/hcloud"
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/provider"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -24,7 +24,7 @@ type BurstParams struct {
 	PoolNode string
 }
 
-func Burst(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, kc kubernetes.Interface, p BurstParams, progress Progress) (err error) {
+func Burst(ctx context.Context, prov provider.Provider, kc kubernetes.Interface, p BurstParams, progress Progress) (err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -32,7 +32,7 @@ func Burst(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, kc ku
 		return ElasticAutoscalerErr()
 	}
 
-	prior, err := hc.ListReservedServers(ctx)
+	prior, err := prov.ListReservedServers(ctx)
 	if err != nil {
 		return fmt.Errorf("list reserved servers: %w", err)
 	}
@@ -45,18 +45,18 @@ func Burst(ctx context.Context, hc *hcloud.Client, spec hcloud.ServerSpec, kc ku
 		}
 		rbCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
 		defer cancel()
-		_, _ = hc.ScaleReservedTo(rbCtx, spec, priorCount)
+		_, _ = prov.ScaleReservedTo(rbCtx, priorCount)
 	}()
 
 	want := int(p.Target.Replicas)
 	progress.Debug(fmt.Sprintf("phase scale: reserved servers -> %d", want))
-	if _, err := hc.ScaleReservedTo(ctx, spec, want); err != nil {
+	if _, err := prov.ScaleReservedTo(ctx, want); err != nil {
 		return fmt.Errorf("scale reserved: %w", err)
 	}
 	scaled = true
 
 	progress.Debug("phase wait: reserved nodes ready")
-	if err := k8s.WaitReservedNodesReady(ctx, kc, hcloud.ReservedPoolValue, want, burstNodePoll, burstNodeTimeout); err != nil {
+	if err := k8s.WaitReservedNodesReady(ctx, kc, provider.ReservedPoolValue, want, burstNodePoll, burstNodeTimeout); err != nil {
 		return fmt.Errorf("wait nodes: %w", err)
 	}
 
