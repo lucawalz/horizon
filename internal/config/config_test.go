@@ -17,7 +17,6 @@ import (
 func TestLoad(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-repo_path: ` + dir + `
 kubeconfig: ~/.kube/config
 cluster: prod
 `
@@ -35,25 +34,6 @@ cluster: prod
 	}
 }
 
-func TestRepoPath(t *testing.T) {
-	dir := t.TempDir()
-	content := `
-repo_path: ` + dir + `
-`
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-	if !filepath.IsAbs(cfg.RepoPath) {
-		t.Errorf("RepoPath not absolute: %q", cfg.RepoPath)
-	}
-}
-
 func TestLoadMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -67,9 +47,7 @@ func TestLoadMissingFile(t *testing.T) {
 
 func TestPoolDefaults(t *testing.T) {
 	dir := t.TempDir()
-	content := `
-repo_path: ` + dir + `
-`
+	content := "kubeconfig: \"\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -101,9 +79,7 @@ repo_path: ` + dir + `
 
 func TestPoolResolve(t *testing.T) {
 	dir := t.TempDir()
-	content := `
-repo_path: ` + dir + `
-`
+	content := "kubeconfig: \"\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +103,6 @@ repo_path: ` + dir + `
 func TestPoolOverrides(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-repo_path: ` + dir + `
 cluster: prod
 pools:
   namespace: capi-system
@@ -165,7 +140,7 @@ pools:
 
 func TestThemeDefaultsToAuto(t *testing.T) {
 	dir := t.TempDir()
-	content := "repo_path: " + dir + "\n"
+	content := "kubeconfig: \"\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +157,7 @@ func TestThemeDefaultsToAuto(t *testing.T) {
 
 func TestThemeInvalidRejected(t *testing.T) {
 	dir := t.TempDir()
-	content := "repo_path: " + dir + "\ntheme: neon\n"
+	content := "theme: neon\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +170,7 @@ func TestThemeInvalidRejected(t *testing.T) {
 
 func TestSaveRoundTripsTheme(t *testing.T) {
 	dir := t.TempDir()
-	content := "repo_path: " + dir + "\ncluster: prod\ntheme: dark\n"
+	content := "cluster: prod\ntheme: dark\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +243,7 @@ func TestLoadNotConfigured(t *testing.T) {
 
 func TestLoadParseErrorIsNotNotConfigured(t *testing.T) {
 	dir := t.TempDir()
-	content := "repo_path: [unterminated\n"
+	content := "cluster: [unterminated\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +292,7 @@ func TestDefaultSaveRoundTrip(t *testing.T) {
 
 func TestReservedDefaults(t *testing.T) {
 	dir := t.TempDir()
-	content := "repo_path: " + dir + "\n"
+	content := "kubeconfig: \"\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +326,6 @@ func TestReservedDefaults(t *testing.T) {
 func TestReservedOverrides(t *testing.T) {
 	dir := t.TempDir()
 	content := `
-repo_path: ` + dir + `
 reserved:
   token:
     env: HCLOUD_TOKEN

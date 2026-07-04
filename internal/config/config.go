@@ -104,7 +104,6 @@ type Reserved struct {
 }
 
 type Config struct {
-	RepoPath   string       `mapstructure:"repo_path" yaml:"repo_path"`
 	Cluster    string       `mapstructure:"cluster" yaml:"cluster"`
 	Kubeconfig string       `mapstructure:"kubeconfig" yaml:"kubeconfig"`
 	Context    string       `mapstructure:"context" yaml:"context"`
@@ -180,18 +179,6 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	cfg.path = v.ConfigFileUsed()
-
-	cfg.RepoPath = ExpandUserPath(os.ExpandEnv(cfg.RepoPath))
-	if cfg.RepoPath != "" {
-		abs, err := filepath.Abs(cfg.RepoPath)
-		if err != nil {
-			return nil, fmt.Errorf("repo_path: %w", err)
-		}
-		if _, err := os.Stat(abs); err != nil {
-			return nil, fmt.Errorf("repo_path %q: %w", abs, err)
-		}
-		cfg.RepoPath = abs
-	}
 
 	applyDefaults(&cfg)
 	if err := validateTheme(cfg.Theme); err != nil {
