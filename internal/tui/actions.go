@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/k8s"
-	"github.com/lucawalz/horizon/internal/velero"
 )
 
 const (
@@ -17,10 +16,6 @@ const (
 
 	progressBuffer = 256
 )
-
-func newVeleroClient(app *core.App) (core.VeleroClient, error) {
-	return velero.NewClient(app.Config.Kubeconfig)
-}
 
 func (m model) runScaleUp(target core.PoolTarget) tea.Cmd {
 	app := m.app
@@ -60,11 +55,7 @@ func (m model) runBurst(params core.BurstParams) tea.Cmd {
 		if err != nil {
 			return "", err
 		}
-		vc, err := newVeleroClient(app)
-		if err != nil {
-			return "", err
-		}
-		err = core.Burst(ctx, hc, spec, app.KubeClient, vc, params, p)
+		err = core.Burst(ctx, hc, spec, app.KubeClient, params, p)
 		return "", err
 	})
 }
