@@ -193,10 +193,6 @@ func Load() (*Config, error) {
 		cfg.RepoPath = abs
 	}
 
-	if v.IsSet("infra_path") && cfg.RepoPath == "" {
-		return nil, fmt.Errorf("infra_path is retired; set repo_path")
-	}
-
 	applyDefaults(&cfg)
 	if err := validateTheme(cfg.Theme); err != nil {
 		return nil, err

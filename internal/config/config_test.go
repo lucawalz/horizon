@@ -315,25 +315,6 @@ func TestDefaultSaveRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLegacyInfraPathWithoutRepoPathFailsFast(t *testing.T) {
-	dir := t.TempDir()
-	content := `
-infra_path: ` + dir + `
-`
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	_, err := config.Load()
-	if err == nil {
-		t.Fatal("expected error when infra_path is set without repo_path, got nil")
-	}
-	if !strings.Contains(err.Error(), "repo_path") {
-		t.Errorf("error %q must mention repo_path", err.Error())
-	}
-}
-
 func TestReservedDefaults(t *testing.T) {
 	dir := t.TempDir()
 	content := "repo_path: " + dir + "\n"
