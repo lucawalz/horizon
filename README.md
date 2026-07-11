@@ -10,22 +10,22 @@ An operator CLI and terminal dashboard for adding on-demand reserved capacity to
 
 horizon is a command-line operator and Bubble Tea dashboard for a small Kubernetes cluster. It observes cluster pressure, drives on-demand reserved capacity, and migrates a workload onto that capacity and back. It is optional and never load-bearing: routine scale-out happens without it, and the cluster keeps running when it is closed.
 
-The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for the permanent cluster and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity. An in-cluster cluster-autoscaler, configured with the native Hetzner Cloud provider, owns elastic burst capacity. horizon reads cluster state through a kubeconfig context and provisions reserved servers through the Hetzner Cloud API directly. bedrock defines the cluster; horizon adds and removes temporary reserved capacity on top of it.
+The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for the permanent cluster and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity. bedrock has since retired its in-cluster cluster-autoscaler (ADR 0062), so no elastic burst pool is provisioned any more and reserved capacity is the only on-demand path. horizon reads cluster state through a kubeconfig context and provisions reserved servers through the Hetzner Cloud API directly. bedrock defines the cluster; horizon adds and removes temporary reserved capacity on top of it.
 
 ### What horizon does and does not do
 
-Two scaling paths exist, with two different owners, and they do not overlap.
+Reserved capacity is the only on-demand scaling path. A second, elastic path is retired but still visible in the tool.
 
-- Elastic capacity is owned by the in-cluster cluster-autoscaler. The autoscaler watches for pending pods and scales the elastic pool to zero and back on its own, talking to the native Hetzner provider. horizon never provisions or deletes elastic servers; the scale actions refuse the elastic pool type and point back at the autoscaler.
-- Reserved capacity is owned by horizon. Reserved servers are operator-pinned: horizon provisions them on demand against the Hetzner Cloud API and removes them when asked. This is the default pool type.
+- Reserved capacity is owned by horizon. Reserved servers are operator-pinned: horizon provisions them on demand against the Hetzner Cloud API and removes them when asked. It is the default and only provisionable pool type.
+- Elastic capacity was owned by an in-cluster cluster-autoscaler that bedrock has retired (ADR 0062). No elastic pool is provisioned any more; horizon never provisioned elastic servers, and its scale actions still refuse the elastic pool type outright.
 
-horizon enforces reserved ownership in code. It labels each server it creates `horizon.dev/managed-by=horizon` and `horizon.dev/pool=reserved`, and only ever lists or deletes servers carrying the managed-by label. A server that also carries the autoscaler's `hcloud/node-group` marker is refused outright, so the two scaling paths never fight over the same machine.
+horizon enforces reserved ownership in code. It labels each server it creates `horizon.dev/managed-by=horizon` and `horizon.dev/pool=reserved`, and only ever lists or deletes servers carrying the managed-by label. A server that also carries an `hcloud/node-group` marker, the label the retired autoscaler used, is refused outright, so horizon never touches a machine it did not create.
 
 ### Pool model
 
 horizon recognizes three categories of capacity.
 
-- Elastic: autoscaled by the cluster-autoscaler. Nodes carry `horizon.dev/pool=elastic`. A pod lands on an elastic burst node only when it declares both halves of the contract itself: a `nodeSelector` or required node affinity for `horizon.dev/pool=elastic`, and a toleration for the `horizon.dev/burst=true:NoSchedule` taint that keeps Longhorn off the node and lets the autoscaler drain it back to zero.
+- Elastic: a retired pool, once autoscaled by bedrock's cluster-autoscaler (removed in ADR 0062). No elastic node is created any more. horizon still recognizes the `horizon.dev/pool=elastic` label and the `horizon.dev/burst=true:NoSchedule` contract but refuses to provision the pool.
 - Reserved: operator-pinned through horizon. A reserved server boots from the shared pool-node image and joins the cluster with the reserved cloud-init from horizon's config, identical to an autoscaler node apart from its pool label. A reserved burst needs no manual workload setup, since horizon's migration rewrites the affinity and adds the burst toleration on each migrated Deployment and StatefulSet.
 - The home cluster's permanent nodes, defined entirely in bedrock.
 
@@ -45,12 +45,9 @@ A burst composes these adapters: it provisions reserved servers through the Hetz
 
 ```mermaid
 flowchart LR
-  pods[(Pending pods)] --> autoscaler[cluster-autoscaler]
-  autoscaler --> elastic[(Elastic servers)]
   horizon[horizon CLI / TUI] -->|up / down / burst reserved| hcloud[Hetzner Cloud API]
   hcloud --> reserved[(Reserved servers)]
   horizon -->|observe + migrate| cluster[(Home cluster)]
-  autoscaler -. hcloud/node-group .-> hcloud
 ```
 
 ## Requirements
@@ -65,7 +62,7 @@ Hard requirements:
 Optional, each gating one feature:
 
 - metrics-server for the dashboard CPU and memory pressure header.
-- cluster-autoscaler for the autoscaler status line; its status is read from the `cluster-autoscaler-status` ConfigMap.
+- cluster-autoscaler for the autoscaler status line, read from the `cluster-autoscaler-status` ConfigMap; bedrock no longer runs one, so this line stays empty there.
 - Flux for the GitOps status line.
 
 ### Minimal configuration
@@ -143,7 +140,7 @@ The available commands are:
 - `drain <node>` cordons a node and evicts its pods.
 - `theme [light|dark|auto]` sets the theme directly, or opens a live picker with no argument. The choice persists to the config file.
 
-The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). Passing `--type elastic` returns an error pointing back at the cluster-autoscaler, since horizon does not provision elastic capacity. The `--namespace` and `--pool` flags on `up`, `down`, and `burst` override the resolved MachineDeployment namespace and name.
+The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). Passing `--type elastic` returns an error, since horizon does not provision elastic capacity and bedrock's autoscaler that once did has been retired. The `--namespace` and `--pool` flags on `up`, `down`, and `burst` override the resolved MachineDeployment namespace and name.
 
 Any command accepts a trailing `--debug` flag. It streams a curated step trace of the action alongside the raw Kubernetes API calls into the command log, dimmed and prefixed for separation, and pauses the periodic refresh for the duration so the trace stays focused on the action. The flag is per-command and off by default.
 
@@ -173,8 +170,8 @@ The tap requires a one-time operator setup that cannot be automated from this re
 
 ## How it works
 
-- Routine scale-out is the cluster-autoscaler's job. The autoscaler owns elastic capacity and scales it to zero on its own through the native Hetzner provider. horizon owns reserved capacity, provisioning and deleting its servers directly through the Hetzner Cloud API, so the two scaling paths do not fight.
-- Reserved ownership is enforced in code: horizon only ever lists or deletes servers carrying `horizon.dev/managed-by=horizon`, and refuses any server that also carries the autoscaler's `hcloud/node-group` marker.
+- On-demand capacity is horizon's alone: it provisions and deletes reserved servers directly through the Hetzner Cloud API. bedrock's cluster-autoscaler that once owned an elastic pool has been retired (ADR 0062), so reserved is the only on-demand path; horizon still refuses the elastic type outright.
+- Reserved ownership is enforced in code: horizon only ever lists or deletes servers carrying `horizon.dev/managed-by=horizon`, and refuses any server that also carries an `hcloud/node-group` marker from the retired autoscaler.
 - A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the reserved pool to its prior server count.
 - Workload placement is a contract: a pool node labels itself `horizon.dev/pool=<type>` at join, and horizon rewrites workload affinity to match the targeted pool type.
 
