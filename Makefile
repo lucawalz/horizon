@@ -2,18 +2,28 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X github.com/lucawalz/horizon/internal/version.version=$(VERSION)
 PREFIX ?= $(HOME)/.local/bin
 CONTROLLER_GEN := go tool controller-gen
+SETUP_ENVTEST := go tool setup-envtest
 API_PATHS := ./api/...
 CRD_DIR := config/crd/bases
 CHART_DIR := charts/horizon
 IMAGE ?= ghcr.io/lucawalz/horizon
+ENVTEST_K8S_VERSION ?= 1.36.2
+ENVTEST_BIN_DIR := $(CURDIR)/bin
+KUBEBUILDER_ASSETS = $(shell $(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_BIN_DIR) -p path)
 
-.PHONY: build test vet fmt install uninstall manifests generate image chart-lint
+.PHONY: build test test-race vet fmt install uninstall manifests generate image chart-lint envtest
 
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o horizon ./cmd/horizon
 
-test:
-	go test ./...
+envtest:
+	$(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_BIN_DIR)
+
+test: envtest
+	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test ./...
+
+test-race: envtest
+	KUBEBUILDER_ASSETS="$(KUBEBUILDER_ASSETS)" go test -race ./...
 
 vet:
 	go vet ./...

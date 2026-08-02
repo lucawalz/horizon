@@ -7,6 +7,9 @@ dist/
 *.test
 *.tgz
 
+# Downloaded envtest control plane binaries
+/bin/
+
 # Config — contains API keys, never commit
 /config.yaml
 
