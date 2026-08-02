@@ -8,149 +8,231 @@ Leases on-demand cloud capacity for a Kubernetes cluster and guarantees the capa
 
 ## Description
 
-horizon adds temporary worker capacity to a cluster that already exists, for a bounded period, and takes it away again. A lease states how much capacity, from which provider and region, for how long, and for which workload. The teardown is the point: the value of the tool is the promise that nothing is still billing after the deadline, not the provisioning itself.
+horizon is a Kubernetes operator. It adds temporary worker capacity to a cluster that already exists, holds it for a bounded period, and takes it away again. A `CapacityLease` states how much capacity, from which provider and region, for how long, and for which workload. The controller provisions against that statement, moves the named workload onto the new nodes, and releases everything once the deadline passes.
 
-The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for the permanent cluster and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity. bedrock defines the cluster; horizon adds and removes temporary capacity on top of it. horizon is optional and never load-bearing: routine scale-out happens without it and the cluster keeps running when it is gone.
+Renting capacity is easy. Guaranteeing it goes away is the engineering problem, and that is what the project exists to solve. The value on offer is the promise that nothing is still billing after the deadline, not the provisioning.
+
+The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: three bare-metal nodes running NixOS and K3s, reconciled by Flux v2, with Tailscale carrying connectivity for nodes that are not on the home network. bedrock defines the cluster; horizon adds and removes temporary capacity on top of it. horizon is optional and never load-bearing: routine operation happens without it and the cluster keeps running when it is gone.
 
 ## Status
 
-horizon is being rebuilt around an in-cluster controller, and parts of that work are not finished. Two records set the direction.
+`0.1.0` is the first release. At the time of writing no tag has been pushed, so neither the image nor the chart exists in a registry yet.
 
-[ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) moves orchestration out of the command line and into a `CapacityLease` custom resource reconciled by a controller. A linear command-line sequence cleans up only if the process survives to clean up, which was measured to leak a rented server on every kill; a level-triggered loop runs again after a crash by construction.
+Implemented:
 
-[ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md) replaces the terminal interface with a web interface, printer columns on the custom resource, and a non-interactive watch command. The terminal dashboard and the first-run setup wizard that earlier versions shipped are removed.
+- the `CapacityLease` and `ProviderConfig` custom resource definitions, both cluster-scoped
+- the lease controller: accept, provision, adopt the joining nodes, migrate the named workload, expire, release
+- the orphan collector, which reconciles the provider against the cluster on a timer and deletes what no live lease claims
+- the Hetzner Cloud provider behind a narrow instance seam, with an in-memory implementation and a contract suite every implementation must pass
+- workload migration onto and off the leased nodes, and node drain
+- the Helm chart that installs the controller and the definitions
+- two commands, `horizon controller` and `horizon version`
 
-What works today:
+Not implemented:
 
-- reserved server provisioning against the Hetzner Cloud API, with ownership labels that stop horizon touching a machine it did not create
-- workload migration onto and off the provisioned nodes, and node drain
-- cluster queries for nodes, pools, workloads, and Flux status
-- `horizon version`
+- the web interface. The chart carries a `ui.enabled` value and the binary accepts `--ui-bind-address`, but nothing is served and the controller logs that the address is ignored.
+- the watch command and the lease verbs on the command line. Lease state is read with `kubectl get capacityleases`, which the printer columns make readable.
+- the watchdog policy. `ProviderConfig.spec.watchdog` is required by the schema and validated, but no controller reads it and `CapacityLease.status.watchdogDeadline` is never written.
+- `ProviderConfig` status conditions. The subresource exists and stays empty.
+- `hetzner.nodeCredentialSecretRef`. The schema accepts it and nothing reads it.
 
-What is still to come:
+Two records set the direction. [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) moved orchestration out of a command line sequence and into a custom resource reconciled by a controller, because a linear sequence cleans up only if the process survives to clean up and was measured leaking a rented server on every kill. [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md) removed the terminal interface and the first-run wizard in favour of printer columns, a watch command, and a web interface.
 
-- the `CapacityLease` custom resource and the controller that reconciles it
-- the web interface, served on loopback locally or from the pod in-cluster
-- the watch command and the lease verbs on the command line
+## How teardown is enforced
 
-Running `horizon` with no subcommand prints help. Until the surfaces above land, the capacity actions are reachable as library calls in `internal/core` rather than as commands.
+Teardown is layered, so that no single failure leaves a machine running and billing.
 
-## Interfaces
+A finalizer is first. `horizon.dev/capacity-lease` is added and persisted in its own reconcile pass, which returns before the provider is ever consulted. No instance can exist without a finalizer already standing between its lease and deletion.
 
-The two records above set out four surfaces. None of them is built yet; this is the shape the work is heading for.
+Ownership labels are applied atomically at create. Every instance carries `horizon.dev/managed-by=horizon`, `horizon.dev/pool=reserved`, `horizon.dev/expires-at` as a Unix timestamp, `horizon.dev/lease`, and `horizon.dev/lease-uid`, all passed in the same create call as the machine itself. The deadline is recorded on the lease before the first instance is requested, so an instance that exists always carries the deadline it is meant to die at. The Hetzner implementation lists and deletes only servers carrying the managed-by label, and refuses to create or delete a server that also carries an `hcloud/node-group` marker, so an autoscaler's machine is never touched.
 
-The custom resource is the API. A lease is applied with `kubectl`, committed to a git tree, and reconciled by Flux like anything else in the estate, which is also what makes it scriptable and testable.
+Deletion is confirmed, not assumed. After the provider reports a successful delete the controller reads the instance back and requires a not-found result. Anything else keeps the instance unreleased, the lease unfinished, and the finalizer in place.
 
-A web interface is how people use horizon. It is one server-rendered implementation with two serving modes rather than two implementations: bound to loopback by a local command, or listening in the pod when the chart enables it. It also takes over the wizard's job of supplying provider credentials and machine settings, writing them to a Secret instead of asking for a hand-written resource, and it refuses to edit a configuration that carries the ownership labels of a git reconciler.
+An orphan collector reconciles the provider against the cluster. Once a minute it lists every instance carrying the managed-by label across every `ProviderConfig` and deletes any whose owning lease UID no longer resolves to a live lease, either five minutes past the deadline on its own label or immediately if that label cannot be parsed. A second reconciler watches Nodes, and deletes a Node that carries a dead lease UID, reports not ready, and has no matching instance at any configured provider.
 
-The command line is a thin bridge. It serves the interface, prints lease state as scrolling output with no terminal framework, and offers lease verbs that are sugar over applying a resource. It stays small because the declarative path has to work and because a tool with no scriptable surface cannot be tested.
+Launch and registration have deadlines of their own. An instance that has not launched within five minutes, or that has launched but whose node has not registered within fifteen, is released and the lease marked degraded rather than left waiting.
 
-Printer columns on the custom resource carry the remaining time and the lease state, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client.
+The schema bounds the blast radius before any of that runs. `replicas` is capped at 8, `duration` at 8 hours, and `teardownGrace` at 15 minutes, all rejected by the API server rather than by the controller.
+
+Node deletion is guarded in the other direction too. The controller refuses to delete a Node whose `horizon.dev/lease-uid` label does not match the lease doing the deleting, and sends the Node UID as a precondition so a recreated node of the same name is not deleted by mistake.
+
+## Custom resources
+
+Both definitions are cluster-scoped and live in the `horizon.dev/v1alpha1` group.
+
+### CapacityLease
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `spec.providerRef` | yes | Name of the `ProviderConfig` to provision through. |
+| `spec.region` | yes | Provider region, passed through unchanged. A Hetzner location name such as `nbg1`. |
+| `spec.size` | yes | Provider machine type, such as `cx22`. |
+| `spec.replicas` | yes | Number of instances, between 1 and 8. |
+| `spec.duration` | yes | Lifetime measured from acceptance, between `5m` and `8h`. |
+| `spec.workload.namespace` | no | Namespace whose Deployments and StatefulSets are moved onto the leased nodes and restored on release. Omit it to add bare capacity. |
+| `spec.teardownGrace` | no | Drain timeout per node before the instance is deleted, between `0s` and `15m`. Defaults to `2m`. |
+
+The status carries `phase`, `acceptedAt`, `expiresAt`, a per-instance list with the provider id, node name and instance phase, the names of the migrated workloads, and conditions. The phase is derived from the conditions and is one of `Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`. The conditions are `Accepted`, `InstancesReady`, `WorkloadMigrated`, `Expired`, `Released`, and `Degraded`.
+
+Printer columns expose replicas, region, phase, expiry, readiness, and age, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client. The short name is `cl`.
+
+```yaml
+apiVersion: horizon.dev/v1alpha1
+kind: CapacityLease
+metadata:
+  name: batch-run
+spec:
+  providerRef: hetzner
+  region: nbg1
+  size: cx22
+  replicas: 2
+  duration: 2h
+  workload:
+    namespace: batch
+```
+
+### ProviderConfig
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `spec.type` | yes | Provider type. `hetzner` is the only accepted value. |
+| `spec.hetzner.credentialsSecretRef` | yes | Secret name and key holding the Hetzner Cloud API token. |
+| `spec.hetzner.cloudInitSecretRef` | yes | Secret name and key holding the cloud-init the instance boots with. It must already apply the `horizon.dev/pool=reserved` node label. |
+| `spec.hetzner.imageSelector` | no in the schema | Exactly one label and value selecting the boot image. The provider refuses to build without it, so it is required in practice. |
+| `spec.hetzner.sshKeys` | no | Hetzner SSH key names, resolved to key ids at create time. |
+| `spec.hetzner.nodeCredentialSecretRef` | no | Accepted and not read by anything today. |
+| `spec.watchdog` | yes | `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other. Required by the schema and not read by anything today. |
+
+```yaml
+apiVersion: horizon.dev/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: hetzner
+spec:
+  type: hetzner
+  hetzner:
+    credentialsSecretRef:
+      name: horizon-hetzner
+      key: token
+    cloudInitSecretRef:
+      name: horizon-cloud-init
+      key: cloud-init
+    imageSelector:
+      snapshot-name: cluster-node
+  watchdog:
+    renewInterval: 1m
+    slack: 2m
+    maxLifetime: 8h
+```
+
+## Configuration
+
+Configuration is the `ProviderConfig` resource plus the Secrets it points at. There is no configuration file, and the binary reads none.
+
+Secret references are resolved in the namespace the controller runs in, taken from the `POD_NAMESPACE` environment variable and falling back to the service account namespace file projected into the pod. A `ProviderConfig` is cluster-scoped, so the reference carries a name and a key but no namespace.
 
 ## Capacity model
 
-Reserved capacity is the only on-demand path. A reserved server is operator-pinned: horizon provisions it on demand against the Hetzner Cloud API and removes it when the lease ends. It boots from the shared pool-node image and joins the cluster with the reserved cloud-init from horizon's configuration.
+Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. It boots from the image the selector names and joins the cluster through the cloud-init held in the Secret.
 
-Ownership is enforced in code. horizon labels each server it creates `horizon.dev/managed-by=horizon` and `horizon.dev/pool=reserved`, and only ever lists or deletes servers carrying the managed-by label. A server that also carries an `hcloud/node-group` marker is refused outright, so a machine belonging to an autoscaler is never touched.
+Node placement is a contract. A leased node is labelled `horizon.dev/pool=reserved` along with the lease name and UID, and tainted `horizon.dev/burst=<lease>:NoSchedule` as it joins, so nothing schedules onto it by accident. When a lease names a workload namespace, horizon rewrites the affinity of each Deployment and StatefulSet in it to target the pool and adds the matching toleration, then restores the original placement during teardown.
 
-Workload placement is a contract. A pool node labels itself `horizon.dev/pool=<type>` when it joins, and horizon rewrites workload affinity to match the targeted pool and adds the `horizon.dev/burst=true:NoSchedule` toleration on each migrated Deployment and StatefulSet.
-
-horizon carries the Hetzner API token and the node cloud-init in its own configuration, each resolved from an inline value, a file path, an environment variable, or a reference to a single key in a cluster Secret.
+```mermaid
+flowchart LR
+  lease[CapacityLease] --> controller[horizon controller]
+  config[ProviderConfig] --> controller
+  controller -->|create and destroy| hcloud[Hetzner Cloud API]
+  hcloud --> servers[(Leased servers)]
+  controller -->|migrate and restore| cluster[(Home cluster)]
+  orphan[Orphan collector] -->|sweep| hcloud
+```
 
 ## Architecture
 
-The code follows a hexagonal layout: a presentation-free core of queries and actions surrounded by adapters.
+The controller is built on controller-runtime. The provider is a seam rather than a dependency, so the reconcilers never reach a cloud SDK directly.
 
-- `internal/core` holds the query surface and the action functions and depends on no presentation code.
-- `internal/k8s` holds the cluster client, node drain, workload migration, Flux Kustomization and HelmRelease status, and the Kubernetes API tracer.
+- `api/v1alpha1` holds the `CapacityLease` and `ProviderConfig` types and their validation markers.
+- `internal/controller` holds the lease reconciler, the orphan collector, and the factory that turns a `ProviderConfig` into a provider.
+- `internal/manager` wires the manager: scheme, cache, metrics, health probes, leader election, and the reconcilers.
 - `internal/provider` declares the instance lifecycle interface, the capability report, and the label constants.
 - `internal/provider/hetzner` creates, gets, lists, and deletes Hetzner servers behind that interface.
 - `internal/provider/conformance` holds the contract suite every provider implementation must pass.
 - `internal/provider/fake` holds the in-memory provider and the create and delete ledger used in tests.
-- `internal/config` loads and validates the configuration file.
-- `internal/cli` holds the cobra root and the version command.
-
-```mermaid
-flowchart LR
-  lease[CapacityLease resource] --> controller[horizon controller]
-  controller -->|create and destroy| hcloud[Hetzner Cloud API]
-  hcloud --> servers[(Reserved servers)]
-  controller -->|migrate and restore| cluster[(Home cluster)]
-  web[Web interface] --> lease
-```
+- `internal/k8s` holds workload migration, placement restore, and node drain.
+- `internal/cli` holds the cobra root and the two commands.
+- `internal/version` holds the build stamp.
 
 ## Requirements
 
 Hard requirements:
 
-- A Kubernetes cluster and a kubeconfig with a context that reaches it.
-- A Hetzner Cloud token and the reserved node cloud-init, both supplied through the `reserved` configuration block as a value, a file path, an environment variable, or a Secret reference. The shared pool-node image must be present in the Hetzner project.
-
-Optional:
-
-- metrics-server for the cluster CPU and memory pressure figures.
-- Flux for the GitOps status.
+- A Kubernetes cluster at 1.29 or newer, and permission to install cluster-scoped custom resource definitions and RBAC into it.
+- A Hetzner Cloud API token and a cloud-init that joins the cluster and applies the `horizon.dev/pool=reserved` node label, each stored in a Secret in the controller's namespace.
+- A boot image in the Hetzner project, selectable by a single label.
 
 ## Installation
 
-Building from source needs Go 1.26 or newer:
-
-```
-go build -o horizon ./cmd/horizon
-```
-
-Install it into the Go bin directory:
-
-```
-go install github.com/lucawalz/horizon/cmd/horizon@latest
-```
-
-`make install` builds and installs the binary into `~/.local/bin`, re-signing it on macOS. Override the destination with `PREFIX`, and remove it with `make uninstall`.
-
-Tagged releases publish darwin and linux archives for amd64 and arm64 on the GitHub releases page, a multi-architecture container image at `ghcr.io/lucawalz/horizon`, and a Helm chart at `ghcr.io/lucawalz/charts/horizon`. No Homebrew formula is published.
-
-The in-cluster controller is installed with the chart:
+The controller is installed from the Helm chart, published as an OCI artifact by a release tag:
 
 ```
 helm install horizon oci://ghcr.io/lucawalz/charts/horizon \
   --namespace horizon-system --create-namespace
 ```
 
-The chart templates the controller Deployment, its RBAC, a Service, an optional Ingress for the web interface, and the custom resource definitions. See [`charts/horizon/README.md`](charts/horizon/README.md) for the values.
+No tag has been pushed yet, so that command has nothing to resolve until `v0.1.0` is released. Until then, install from a checkout of the repository:
 
-## Configuration
+```
+helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
+```
 
-Configuration is read from `$HORIZON_CONFIG_DIR/config.yaml`, then `$XDG_CONFIG_HOME/horizon/config.yaml`, falling back to `~/.config/horizon/config.yaml`. A template is in [`config.example.yaml`](config.example.yaml).
+The chart templates the controller Deployment, its ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service, an optional Ingress, and the two custom resource definitions. See [`charts/horizon/README.md`](charts/horizon/README.md) for every value and for why the definitions live in `crds/` rather than `templates/`.
 
-Key fields:
+Building from source needs Go 1.26 or newer:
 
-- `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
-- `context`: target kubeconfig context.
-- `cluster`: default cluster name; falls back to the pool cluster when unset.
-- `pools`: the `namespace` where the provider's MachineDeployments live, the `cluster` name, the `default_type` (`reserved`), and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`).
-- `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `cloud_init` are credential sources, each set through one of `value` (inline), `path` (a file read from disk), `env` (an environment variable name), or `secret` (a namespace, name, and key in a cluster Secret); the cloud-init must already carry the `horizon.dev/pool=reserved` node label. `location` and `server_type` set the server shape. `image.label` and `image.value` select the boot image by label selector; `image.value` has no default and is required before a reserved server can be provisioned. `ssh_keys` defaults to empty; names are resolved to Hetzner key ids at create time.
+```
+make build
+```
+
+`make install` builds and installs the binary into `~/.local/bin`, re-signing it on macOS. Override the destination with `PREFIX`, and remove it with `make uninstall`. The binary is the controller, so it is only useful where it can reach a cluster.
+
+## Command line
+
+```
+horizon controller   Run the in-cluster capacity lease controller
+horizon version      Print the build stamp
+```
+
+`horizon` with no subcommand prints help. `horizon controller` takes four flags:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--leader-elect` | `true` | Hold a leader election lease so only one replica reconciles. |
+| `--metrics-bind-address` | `:8080` | Address the metrics endpoint binds to. |
+| `--health-probe-bind-address` | `:8081` | Address the liveness and readiness endpoints bind to. |
+| `--ui-bind-address` | empty | Reserved for the web interface. Setting it logs that it was ignored. |
 
 ## Releases
 
 `charts/horizon/Chart.yaml` is the single source of truth for the released version. Bumping its `version` and `appVersion` is a deliberate commit that precedes the tag, and the workflow refuses to publish anything when the tag does not match the declared chart version.
 
-Pushing a `v*` tag triggers the release workflow, which can also be dispatched manually against an existing tag when a run needs repeating. It builds the linux amd64 and arm64 container image from the repository `Dockerfile` and pushes it to `ghcr.io/lucawalz/horizon`, packages the Helm chart and pushes it to `ghcr.io/lucawalz/charts/horizon`, and only then has GoReleaser build the darwin and linux binaries and publish the GitHub release with the archives attached. The release is created last so that a published release always advertises an image and a chart that exist. See [0020](docs/adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) for the full contract.
+Pushing a `v*` tag triggers the release workflow, which can also be dispatched manually against an existing tag when a run needs repeating. It builds the linux amd64 and arm64 container image from the repository `Dockerfile` and pushes it to `ghcr.io/lucawalz/horizon`, packages the Helm chart and pushes it to `ghcr.io/lucawalz/charts/horizon`, and only then has GoReleaser build the darwin and linux binaries and publish the GitHub release with the archives attached. The release is created last so that a published release always advertises an image and a chart that exist. See [ADR 0020](docs/adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) for the full contract.
 
 The image is built from source in a `golang` stage and shipped on `gcr.io/distroless/static-debian12:nonroot`, so it carries no shell and no package manager and runs as uid 65532. Both the archive binaries and the image binary are built with `-trimpath` and identical linker flags, so the two are byte-identical for a given platform.
 
 ## Repository layout
 
 ```
+api/v1alpha1/       CapacityLease and ProviderConfig types
 cmd/horizon/        main entry point
-internal/cli/       cobra root and version command
-internal/core/      presentation-free query surface and action functions
-internal/config/    configuration loading and schema
+internal/cli/       cobra root, version command, controller command
+internal/manager/   controller-runtime wiring
+internal/controller/  lease reconciler, orphan collector, provider factory
+internal/k8s/       workload migration, placement restore, node drain
 internal/provider/  instance lifecycle interface, capabilities, label constants
                     hetzner/ Hetzner Cloud implementation
                     conformance/ contract suite every implementation must pass
                     fake/ in-memory implementation with a create and delete ledger
-internal/k8s/       cluster client, drain, workload migration, Flux status, API tracer
-api/v1alpha1/       CapacityLease and ProviderConfig types
+internal/version/   build stamp
 config/crd/bases/   generated custom resource definitions
 charts/horizon/     Helm chart for the in-cluster controller
 docs/adr/           architecture decision records
@@ -158,7 +240,7 @@ docs/adr/           architecture decision records
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build, test, branch, and commit conventions. In short: `go build ./...`, `go test ./...`, and `golangci-lint run`, then open a PR against `main`; CI runs the same checks.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build, test, branch, and commit conventions. In short: `go build ./...`, `make test`, which fetches the envtest control plane binaries the controller tests need, and `golangci-lint run`, then open a PR against `main`; CI runs the same checks.
 
 ## Security
 
@@ -170,7 +252,7 @@ Open an issue on the [GitHub repository](https://github.com/lucawalz/horizon/iss
 
 ## Authors and acknowledgment
 
-Built and maintained by Luca Walz. It builds on cobra, viper, controller-runtime, client-go, the Cluster API libraries, and the Hetzner Cloud SDK.
+Built and maintained by Luca Walz. It builds on cobra, controller-runtime, client-go, the kubectl drain libraries, and the Hetzner Cloud SDK.
 
 ## License
 
