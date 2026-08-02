@@ -132,12 +132,12 @@ func TestSecretValueNamesWhatIsMissing(t *testing.T) {
 		{
 			name:    "reference without a name",
 			ref:     secretKeyRef("", "token"),
-			wantErr: "secret reference needs both a name and a key",
+			wantErr: "credentialsSecretRef needs both a name and a key",
 		},
 		{
 			name:    "reference without a key",
 			ref:     secretKeyRef("hcloud", ""),
-			wantErr: "secret reference needs both a name and a key",
+			wantErr: "credentialsSecretRef needs both a name and a key",
 		},
 		{
 			name:    "secret is absent",
@@ -158,7 +158,7 @@ func TestSecretValueNamesWhatIsMissing(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := secretValue(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, tc.ref)
+			got, err := secretValue(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, "credentialsSecretRef", tc.ref)
 			assertErrorMessage(t, err, tc.wantErr)
 			if got != tc.want {
 				t.Errorf("secret value is %q, want %q", got, tc.want)
@@ -280,7 +280,10 @@ func TestHetznerProviderReportsEveryConstructionFailure(t *testing.T) {
 
 func TestNewProviderFactoryBuildsTheConfiguredProvider(t *testing.T) {
 	t.Setenv(podNamespaceEnvVar, testOperatorNS)
-	factory := NewProviderFactory(newKubeClient(credentialSecrets()...))
+	factory, err := NewProviderFactory(newKubeClient(credentialSecrets()...))
+	if err != nil {
+		t.Fatalf("building the factory failed: %v", err)
+	}
 
 	prov, err := factory(t.Context(), &v1alpha1.ProviderConfig{
 		Spec: v1alpha1.ProviderConfigSpec{Type: v1alpha1.ProviderTypeHetzner, Hetzner: hetznerSpec(nil)},
@@ -293,33 +296,29 @@ func TestNewProviderFactoryBuildsTheConfiguredProvider(t *testing.T) {
 
 func TestNewProviderFactoryRejectsAnUnknownProviderType(t *testing.T) {
 	t.Setenv(podNamespaceEnvVar, testOperatorNS)
-	factory := NewProviderFactory(newKubeClient())
+	factory, err := NewProviderFactory(newKubeClient())
+	if err != nil {
+		t.Fatalf("building the factory failed: %v", err)
+	}
 
-	_, err := factory(t.Context(), &v1alpha1.ProviderConfig{
+	_, err = factory(t.Context(), &v1alpha1.ProviderConfig{
 		Spec: v1alpha1.ProviderConfigSpec{Type: "aws"},
 	})
 	assertErrorMessage(t, err, `unsupported provider type "aws"`)
 }
 
-func TestNewProviderFactoryKeepsReportingAnUnresolvedNamespace(t *testing.T) {
+func TestNewProviderFactoryRefusesToBuildWithoutANamespace(t *testing.T) {
 	t.Setenv(podNamespaceEnvVar, "")
 	setServiceAccountNSPath(t, filepath.Join(t.TempDir(), namespaceFileName))
-	factory := NewProviderFactory(newKubeClient(credentialSecrets()...))
 
-	t.Setenv(podNamespaceEnvVar, testOperatorNS)
-	cfg := &v1alpha1.ProviderConfig{
-		Spec: v1alpha1.ProviderConfigSpec{Type: v1alpha1.ProviderTypeHetzner, Hetzner: hetznerSpec(nil)},
+	factory, err := NewProviderFactory(newKubeClient(credentialSecrets()...))
+	if err == nil {
+		t.Fatal("a factory was built without a resolvable namespace")
 	}
-	for range 2 {
-		prov, err := factory(t.Context(), cfg)
-		if err == nil {
-			t.Fatal("a factory built without a namespace produced a provider")
-		}
-		if prov != nil {
-			t.Error("a provider was returned alongside an error")
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("error %v does not wrap the namespace lookup failure", err)
-		}
+	if factory != nil {
+		t.Error("a factory was returned alongside an error")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("error %v does not wrap the namespace lookup failure", err)
 	}
 }

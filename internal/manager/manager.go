@@ -90,7 +90,10 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		return nil, fmt.Errorf("build kubernetes clientset: %w", err)
 	}
 
-	providers := controller.NewProviderFactory(kube)
+	providers, err := controller.NewProviderFactory(kube)
+	if err != nil {
+		return nil, err
+	}
 
 	leases := &controller.CapacityLeaseReconciler{
 		Client:   mgr.GetClient(),

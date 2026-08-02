@@ -21,19 +21,19 @@ const podNamespaceEnvVar = "POD_NAMESPACE"
 
 var serviceAccountNSPath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
-func NewProviderFactory(kc kubernetes.Interface) ProviderFactory {
-	namespace, namespaceErr := operatorNamespace()
+func NewProviderFactory(kc kubernetes.Interface) (ProviderFactory, error) {
+	namespace, err := operatorNamespace()
+	if err != nil {
+		return nil, err
+	}
 	return func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error) {
-		if namespaceErr != nil {
-			return nil, namespaceErr
-		}
 		switch cfg.Spec.Type {
 		case v1alpha1.ProviderTypeHetzner:
 			return hetznerProvider(ctx, kc, namespace, cfg.Spec.Hetzner)
 		default:
 			return nil, fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
 		}
-	}
+	}, nil
 }
 
 func operatorNamespace() (string, error) {
@@ -55,11 +55,11 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	if spec == nil {
 		return nil, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
 	}
-	token, err := secretValue(ctx, kc, namespace, spec.CredentialsSecretRef)
+	token, err := secretValue(ctx, kc, namespace, "credentialsSecretRef", spec.CredentialsSecretRef)
 	if err != nil {
 		return nil, err
 	}
-	userData, err := secretValue(ctx, kc, namespace, spec.CloudInitSecretRef)
+	userData, err := secretValue(ctx, kc, namespace, "cloudInitSecretRef", spec.CloudInitSecretRef)
 	if err != nil {
 		return nil, err
 	}
@@ -83,9 +83,9 @@ func imageSelector(selector map[string]string) (label, value string, err error) 
 	return keys[0], selector[keys[0]], nil
 }
 
-func secretValue(ctx context.Context, kc kubernetes.Interface, namespace string, ref corev1.SecretKeySelector) (string, error) {
+func secretValue(ctx context.Context, kc kubernetes.Interface, namespace, field string, ref corev1.SecretKeySelector) (string, error) {
 	if ref.Name == "" || ref.Key == "" {
-		return "", fmt.Errorf("secret reference needs both a name and a key")
+		return "", fmt.Errorf("%s needs both a name and a key", field)
 	}
 	secret, err := kc.CoreV1().Secrets(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	if err != nil {
