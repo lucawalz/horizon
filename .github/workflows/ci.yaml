@@ -46,6 +46,16 @@ jobs:
       - uses: azure/setup-helm@v5
       - name: crds match the generated manifests
         run: diff -r config/crd/bases charts/horizon/crds
+      - name: default image tag resolves to the chart appVersion
+        run: |
+          set -euo pipefail
+          app_version="$(awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2; exit }' charts/horizon/Chart.yaml)"
+          repository="$(awk '$1 == "repository:" { print $2; exit }' charts/horizon/values.yaml)"
+          resolved="$(helm template horizon charts/horizon | awk '$1 == "image:" { print $2; exit }')"
+          if [ "$resolved" != "${repository}:${app_version}" ]; then
+            echo "chart resolves $resolved but appVersion declares ${repository}:${app_version}" >&2
+            exit 1
+          fi
       - run: helm lint charts/horizon
       - run: helm template horizon charts/horizon --include-crds
       - run: helm template horizon charts/horizon --set ui.enabled=false
