@@ -16,8 +16,6 @@ import (
 
 const orphanControllerName = "orphan"
 
-const LeaseUIDLabelKey = "horizon.dev/lease-uid"
-
 const (
 	orphanSweepInterval = time.Minute
 	orphanExpiryGrace   = 5 * time.Minute

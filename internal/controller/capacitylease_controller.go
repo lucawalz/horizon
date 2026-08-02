@@ -23,7 +23,7 @@ const (
 	capacityLeaseFinalizer      = "horizon.dev/capacity-lease"
 
 	LeaseNameLabelKey = "horizon.dev/lease"
-	LeaseUIDLabelKey  = "horizon.dev/lease-uid"
+	LeaseUIDLabelKey  = provider.LeaseUIDLabelKey
 
 	leasePollInterval = 30 * time.Second
 	stepRequeue       = 250 * time.Millisecond

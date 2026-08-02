@@ -13,6 +13,8 @@ const (
 	ManagedByLabelKey = "horizon.dev/managed-by"
 	ManagedByValue    = "horizon"
 	ExpiresAtLabelKey = "horizon.dev/expires-at"
+
+	LeaseUIDLabelKey = "horizon.dev/lease-uid"
 )
 
 var ErrNotFound = errors.New("provider: instance not found")
