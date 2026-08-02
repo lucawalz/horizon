@@ -138,9 +138,9 @@ pools:
 	}
 }
 
-func TestThemeDefaultsToAuto(t *testing.T) {
+func TestSaveRoundTripsEditedFields(t *testing.T) {
 	dir := t.TempDir()
-	content := "kubeconfig: \"\"\n"
+	content := "cluster: prod\n"
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -150,39 +150,7 @@ func TestThemeDefaultsToAuto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if cfg.Theme != config.ThemeAuto {
-		t.Errorf("Theme: got %q, want %q", cfg.Theme, config.ThemeAuto)
-	}
-}
-
-func TestThemeInvalidRejected(t *testing.T) {
-	dir := t.TempDir()
-	content := "theme: neon\n"
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	if _, err := config.Load(); err == nil {
-		t.Fatal("expected error for invalid theme, got nil")
-	}
-}
-
-func TestSaveRoundTripsTheme(t *testing.T) {
-	dir := t.TempDir()
-	content := "cluster: prod\ntheme: dark\n"
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HORIZON_CONFIG_DIR", dir)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load() error: %v", err)
-	}
-	if err := cfg.SetTheme(config.ThemeLight); err != nil {
-		t.Fatalf("SetTheme: %v", err)
-	}
+	cfg.Context = "homelab"
 	if err := cfg.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -191,18 +159,11 @@ func TestSaveRoundTripsTheme(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload error: %v", err)
 	}
-	if reloaded.Theme != config.ThemeLight {
-		t.Errorf("Theme after reload: got %q, want %q", reloaded.Theme, config.ThemeLight)
+	if reloaded.Context != "homelab" {
+		t.Errorf("Context after reload: got %q, want homelab", reloaded.Context)
 	}
 	if reloaded.Cluster != "prod" {
 		t.Errorf("Cluster after reload: got %q, want prod", reloaded.Cluster)
-	}
-}
-
-func TestSetThemeRejectsInvalid(t *testing.T) {
-	cfg := &config.Config{}
-	if err := cfg.SetTheme("neon"); err == nil {
-		t.Fatal("expected error for invalid theme")
 	}
 }
 
@@ -284,9 +245,6 @@ func TestDefaultSaveRoundTrip(t *testing.T) {
 	}
 	if reloaded.Cluster != "" {
 		t.Errorf("Cluster: got %q, want empty (no provider default)", reloaded.Cluster)
-	}
-	if reloaded.Theme != config.ThemeAuto {
-		t.Errorf("Theme: got %q, want %q", reloaded.Theme, config.ThemeAuto)
 	}
 }
 

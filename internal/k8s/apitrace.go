@@ -1,48 +1,38 @@
 package k8s
 
 import (
-	"fmt"
 	"net/http"
-	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 )
 
-var apiTraceSink atomic.Pointer[func(string)]
-
-func SetAPITrace(sink func(string)) (restore func()) {
-	prev := apiTraceSink.Load()
-	apiTraceSink.Store(&sink)
-	return func() { apiTraceSink.Store(prev) }
-}
+const apiTraceVerbosity = 4
 
 type traceRoundTripper struct {
-	rt http.RoundTripper
+	rt  http.RoundTripper
+	log logr.Logger
 }
 
 func (t traceRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	sinkPtr := apiTraceSink.Load()
-	if sinkPtr == nil {
-		return t.rt.RoundTrip(req)
-	}
-	sink := *sinkPtr
-	if sink == nil {
+	if !t.log.Enabled() {
 		return t.rt.RoundTrip(req)
 	}
 	start := time.Now()
 	resp, err := t.rt.RoundTrip(req)
-	dur := time.Since(start).Round(time.Millisecond)
+	elapsed := time.Since(start).Round(time.Millisecond)
 	if err != nil {
-		sink(fmt.Sprintf("%s %s → error: %v (%s)", req.Method, req.URL.Path, err, dur))
+		t.log.Error(err, "kubernetes api call", "method", req.Method, "path", req.URL.Path, "duration", elapsed)
 		return resp, err
 	}
-	sink(fmt.Sprintf("%s %s → %d (%s)", req.Method, req.URL.Path, resp.StatusCode, dur))
+	t.log.Info("kubernetes api call", "method", req.Method, "path", req.URL.Path, "status", resp.StatusCode, "duration", elapsed)
 	return resp, err
 }
 
 func WrapAPITrace(cfg *rest.Config) {
 	cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
-		return traceRoundTripper{rt: rt}
+		return traceRoundTripper{rt: rt, log: klog.Background().V(apiTraceVerbosity)}
 	})
 }

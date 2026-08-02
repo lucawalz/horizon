@@ -28,9 +28,6 @@ func Burst(ctx context.Context, prov provider.Provider, kc kubernetes.Interface,
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if p.Target.PoolType == ElasticPoolType {
-		return ElasticAutoscalerErr()
-	}
 
 	prior, err := prov.ListReservedServers(ctx)
 	if err != nil {

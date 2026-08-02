@@ -5,8 +5,6 @@ kubeconfig: ""
 
 cluster: burst
 
-# theme: auto
-
 pools:
   # namespace where the CAPI provider's MachineDeployments live; set to the chosen provider's namespace
   namespace: caph-system

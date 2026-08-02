@@ -5,6 +5,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 )
 
 type fakeRoundTripper struct {
@@ -20,11 +23,12 @@ func newReq() *http.Request {
 	return &http.Request{Method: http.MethodGet, URL: &url.URL{Path: "/api/v1/nodes"}}
 }
 
-func TestTraceRoundTripperNoSink(t *testing.T) {
+func TestTraceRoundTripperStaysSilentBelowVerbosity(t *testing.T) {
 	fake := &fakeRoundTripper{}
-	rt := traceRoundTripper{rt: fake}
-
 	var got []string
+	sink := funcr.New(func(_, args string) { got = append(got, args) }, funcr.Options{})
+	rt := traceRoundTripper{rt: fake, log: sink.V(apiTraceVerbosity)}
+
 	if _, err := rt.RoundTrip(newReq()); err != nil {
 		t.Fatalf("round trip: %v", err)
 	}
@@ -32,16 +36,15 @@ func TestTraceRoundTripperNoSink(t *testing.T) {
 		t.Fatalf("delegate calls = %d, want 1", fake.calls)
 	}
 	if len(got) != 0 {
-		t.Fatalf("no sink should emit nothing, got %v", got)
+		t.Fatalf("a disabled logger must emit nothing, got %v", got)
 	}
 }
 
-func TestTraceRoundTripperEmitsAndRestores(t *testing.T) {
+func TestTraceRoundTripperLogsMethodAndPath(t *testing.T) {
 	fake := &fakeRoundTripper{}
-	rt := traceRoundTripper{rt: fake}
-
 	var got []string
-	restore := SetAPITrace(func(line string) { got = append(got, line) })
+	sink := funcr.New(func(_, args string) { got = append(got, args) }, funcr.Options{Verbosity: apiTraceVerbosity})
+	rt := traceRoundTripper{rt: fake, log: sink.V(apiTraceVerbosity)}
 
 	if _, err := rt.RoundTrip(newReq()); err != nil {
 		t.Fatalf("round trip: %v", err)
@@ -52,12 +55,16 @@ func TestTraceRoundTripperEmitsAndRestores(t *testing.T) {
 	if !strings.Contains(got[0], http.MethodGet) || !strings.Contains(got[0], "/api/v1/nodes") {
 		t.Fatalf("line missing method or path: %q", got[0])
 	}
+}
 
-	restore()
+func TestTraceRoundTripperDiscardLoggerPassesThrough(t *testing.T) {
+	fake := &fakeRoundTripper{}
+	rt := traceRoundTripper{rt: fake, log: logr.Discard()}
+
 	if _, err := rt.RoundTrip(newReq()); err != nil {
-		t.Fatalf("round trip after restore: %v", err)
+		t.Fatalf("round trip: %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("restore should stop emission, got %v", got)
+	if fake.calls != 1 {
+		t.Fatalf("delegate calls = %d, want 1", fake.calls)
 	}
 }

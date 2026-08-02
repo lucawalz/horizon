@@ -107,7 +107,6 @@ type Config struct {
 	Cluster    string       `mapstructure:"cluster" yaml:"cluster"`
 	Kubeconfig string       `mapstructure:"kubeconfig" yaml:"kubeconfig"`
 	Context    string       `mapstructure:"context" yaml:"context"`
-	Theme      string       `mapstructure:"theme" yaml:"theme"`
 	Pools      PoolDefaults `mapstructure:"pools" yaml:"pools"`
 	Reserved   Reserved     `mapstructure:"reserved" yaml:"reserved"`
 
@@ -120,10 +119,6 @@ const (
 	defaultPoolType  = "reserved"
 	reservedPoolType = "reserved"
 	reservedPoolName = "reserved-workers"
-
-	ThemeAuto  = "auto"
-	ThemeLight = "light"
-	ThemeDark  = "dark"
 )
 
 func DefaultConfigPath() string {
@@ -163,7 +158,7 @@ func Load() (*Config, error) {
 	if err := v.ReadInConfig(); err != nil {
 		var nf viper.ConfigFileNotFoundError
 		if errors.As(err, &nf) {
-			return nil, fmt.Errorf("%w: run `horizon init`", ErrNotConfigured)
+			return nil, fmt.Errorf("%w: no config file at %s", ErrNotConfigured, DefaultConfigPath())
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
@@ -175,9 +170,6 @@ func Load() (*Config, error) {
 	cfg.path = v.ConfigFileUsed()
 
 	applyDefaults(&cfg)
-	if err := validateTheme(cfg.Theme); err != nil {
-		return nil, err
-	}
 
 	return &cfg, nil
 }
@@ -194,32 +186,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Cluster == "" {
 		cfg.Cluster = cfg.Pools.Cluster
 	}
-	if cfg.Theme == "" {
-		cfg.Theme = ThemeAuto
-	}
 }
 
 func Default(path string) *Config {
 	cfg := &Config{path: path}
 	applyDefaults(cfg)
 	return cfg
-}
-
-func validateTheme(theme string) error {
-	switch theme {
-	case ThemeAuto, ThemeLight, ThemeDark:
-		return nil
-	default:
-		return fmt.Errorf("theme %q invalid (want %s|%s|%s)", theme, ThemeLight, ThemeDark, ThemeAuto)
-	}
-}
-
-func (c *Config) SetTheme(theme string) error {
-	if err := validateTheme(theme); err != nil {
-		return err
-	}
-	c.Theme = theme
-	return nil
 }
 
 func (c *Config) Save() error {

@@ -2,7 +2,6 @@ package core_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/core"
@@ -61,18 +60,6 @@ func TestBurstScalesAndMigrates(t *testing.T) {
 	req := a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
 	if req.Key != k8s.PoolLabelKey || req.Values[0] != "reserved" {
 		t.Errorf("affinity = %s=%v, want %s=[reserved]", req.Key, req.Values, k8s.PoolLabelKey)
-	}
-}
-
-func TestBurstRefusesElastic(t *testing.T) {
-	p := newFakeProvider()
-	kc := fake.NewSimpleClientset()
-
-	target := core.PoolTarget{PoolType: core.ElasticPoolType, Replicas: 1}
-	params := core.BurstParams{Target: target, Workload: "sentio-systems", PoolNode: "elastic"}
-	err := core.Burst(context.Background(), p, kc, params, core.Progress{})
-	if err == nil || !strings.Contains(err.Error(), "elastic") {
-		t.Fatalf("expected elastic refusal, got %v", err)
 	}
 }
 

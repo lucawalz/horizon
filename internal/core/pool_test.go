@@ -28,16 +28,6 @@ func TestScaleUpCreatesReservedServers(t *testing.T) {
 	}
 }
 
-func TestScaleUpRefusesElastic(t *testing.T) {
-	p := newFakeProvider()
-
-	target := core.PoolTarget{PoolType: core.ElasticPoolType, Replicas: 2}
-	err := core.ScaleUp(context.Background(), p, target, false, core.Progress{})
-	if err == nil || !strings.Contains(err.Error(), "elastic") {
-		t.Fatalf("expected elastic refusal, got %v", err)
-	}
-}
-
 func TestScaleUpNoOpWhenAlreadyAtTarget(t *testing.T) {
 	p := newFakeProvider(reservedServer(1, "reserved-a"), reservedServer(2, "reserved-b"))
 
@@ -76,16 +66,6 @@ func TestScaleDownDeletesAllReservedServers(t *testing.T) {
 	}
 	if len(p.servers) != 0 {
 		t.Errorf("servers after scale-down = %d, want 0", len(p.servers))
-	}
-}
-
-func TestScaleDownRefusesElastic(t *testing.T) {
-	p := newFakeProvider()
-
-	target := core.PoolTarget{PoolType: core.ElasticPoolType}
-	err := core.ScaleDown(context.Background(), p, target, false, core.Progress{})
-	if err == nil || !strings.Contains(err.Error(), "elastic") {
-		t.Fatalf("expected elastic refusal, got %v", err)
 	}
 }
 

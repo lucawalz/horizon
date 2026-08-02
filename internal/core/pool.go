@@ -7,8 +7,6 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-const ElasticPoolType = "elastic"
-
 type Progress struct {
 	emit  func(string)
 	debug func(string)
@@ -38,16 +36,9 @@ type PoolTarget struct {
 	Replicas  int32
 }
 
-func ElasticAutoscalerErr() error {
-	return fmt.Errorf("the cluster-autoscaler owns the elastic pool; horizon does not provision elastic nodes")
-}
-
 func ScaleUp(ctx context.Context, prov provider.Provider, target PoolTarget, dryRun bool, progress Progress) error {
 	if ctx == nil {
 		ctx = context.Background()
-	}
-	if target.PoolType == ElasticPoolType {
-		return ElasticAutoscalerErr()
 	}
 
 	current, err := prov.ListReservedServers(ctx)
@@ -78,9 +69,6 @@ func ScaleUp(ctx context.Context, prov provider.Provider, target PoolTarget, dry
 func ScaleDown(ctx context.Context, prov provider.Provider, target PoolTarget, dryRun bool, progress Progress) error {
 	if ctx == nil {
 		ctx = context.Background()
-	}
-	if target.PoolType == ElasticPoolType {
-		return ElasticAutoscalerErr()
 	}
 
 	current, err := prov.ListReservedServers(ctx)
