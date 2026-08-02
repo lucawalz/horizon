@@ -2,7 +2,9 @@
 
 Installs the horizon controller, which leases on-demand cloud capacity for a Kubernetes cluster and destroys it when the lease expires.
 
-The chart templates a Deployment, a ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service, an optional Ingress for the web interface, and the two `horizon.dev` custom resource definitions.
+The chart templates a Deployment, a ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service carrying the metrics port, and the two `horizon.dev` custom resource definitions.
+
+The web interface described in ADR 0019 is not served by this release. The chart templates nothing for it, so no port, Service entry or Ingress advertises an endpoint the binary does not answer. The values keys return alongside the interface itself.
 
 ## Installing
 
@@ -54,30 +56,17 @@ kubectl apply -f charts/horizon/crds/
 | `terminationGracePeriodSeconds` | `30` | Grace period for the controller to finish an in-flight reconcile. |
 | `priorityClassName` | `""` | Priority class for the controller pod. |
 
-### Web interface
-
-| Key | Default | Description |
-| --- | --- | --- |
-| `ui.enabled` | `true` | Serve the web interface from the pod and add its port to the Service. |
-| `ui.ingress.enabled` | `false` | Create an Ingress for the web interface. |
-| `ui.ingress.className` | `""` | Ingress class name. |
-| `ui.ingress.annotations` | `{}` | Ingress annotations, which is where forward authentication is normally wired in. |
-| `ui.ingress.hosts` | one host, `horizon.local`, path `/` with `pathType: Prefix` | Host and path rules. |
-| `ui.ingress.tls` | `[]` | TLS blocks passed through to the Ingress. |
-
-The web interface creates leases, and a lease provisions billable machines. ADR 0019 states three requirements for exposing it in-cluster, none of which this chart templates: forward authentication in front of the interface, a network policy restricting the Service to the proxy, and an access review for the authenticated user before every mutation. Exposing `ui.ingress` without the first two publishes an endpoint that spends money.
-
 ### Networking
 
 | Key | Default | Description |
 | --- | --- | --- |
 | `ports.metrics` | `8080` | Port the controller binds for metrics. |
 | `ports.health` | `8081` | Port the controller binds for the liveness and readiness probes. |
-| `ports.ui` | `8082` | Port the controller binds for the web interface. |
 | `service.type` | `ClusterIP` | Service type. |
 | `service.annotations` | `{}` | Service annotations. |
-| `service.uiPort` | `80` | Service port mapped to the web interface. Present only when `ui.enabled` is true. |
 | `service.metricsPort` | `8080` | Service port mapped to the metrics endpoint. |
+
+The Service port is named `metrics`, and a ServiceMonitor scraping the controller selects it by that name.
 
 ### Permissions
 

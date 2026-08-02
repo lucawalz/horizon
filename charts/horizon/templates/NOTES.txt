@@ -8,23 +8,6 @@ Leases:
 
   kubectl get capacityleases
 
-{{ if .Values.ui.enabled -}}
-{{ if .Values.ui.ingress.enabled -}}
-The web interface is reachable at:
-{{ range .Values.ui.ingress.hosts }}
-{{- range .paths }}
-  http{{ if $.Values.ui.ingress.tls }}s{{ end }}://{{ .host }}{{ .path }}
-{{- end }}
-{{- end }}
-
-The interface creates leases, and a lease provisions billable machines. ADR 0019 requires forward authentication in front of it, a network policy restricting the service to the proxy, and an access review before every mutation. None of the three is templated by this chart.
-{{- else -}}
-The web interface is served in the pod but has no ingress. Forward a local port to reach it:
-
-  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "horizon.fullname" . }} 8080:{{ .Values.service.uiPort }}
-{{- end }}
-{{- else -}}
-The web interface is disabled. Set ui.enabled to true to serve it from the pod.
-{{- end }}
+Metrics are served on the {{ include "horizon.fullname" . }} service, port {{ .Values.service.metricsPort }}, named metrics.
 
 Uninstalling the release leaves the horizon.dev custom resource definitions in place, because removing them would cascade-delete every lease and strand the provider instances those leases own.

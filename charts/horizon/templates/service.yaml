@@ -18,9 +18,3 @@ spec:
       port: {{ .Values.service.metricsPort }}
       targetPort: metrics
       protocol: TCP
-    {{- if .Values.ui.enabled }}
-    - name: http
-      port: {{ .Values.service.uiPort }}
-      targetPort: http
-      protocol: TCP
-    {{- end }}

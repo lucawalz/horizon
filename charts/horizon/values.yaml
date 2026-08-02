@@ -25,26 +25,11 @@ leaderElection:
 ports:
   metrics: 8080
   health: 8081
-  ui: 8082
 
 service:
   type: ClusterIP
   annotations: {}
-  uiPort: 80
   metricsPort: 8080
-
-ui:
-  enabled: true
-  ingress:
-    enabled: false
-    className: ""
-    annotations: {}
-    hosts:
-      - host: horizon.local
-        paths:
-          - path: /
-            pathType: Prefix
-    tls: []
 
 extraArgs: []
 extraEnv: []

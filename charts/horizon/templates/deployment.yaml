@@ -45,9 +45,6 @@ spec:
             - --leader-elect={{ .Values.leaderElection.enabled }}
             - --metrics-bind-address=:{{ .Values.ports.metrics }}
             - --health-probe-bind-address=:{{ .Values.ports.health }}
-            {{- if .Values.ui.enabled }}
-            - --ui-bind-address=:{{ .Values.ports.ui }}
-            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -62,11 +59,6 @@ spec:
             - name: health
               containerPort: {{ .Values.ports.health }}
               protocol: TCP
-            {{- if .Values.ui.enabled }}
-            - name: http
-              containerPort: {{ .Values.ports.ui }}
-              protocol: TCP
-            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
