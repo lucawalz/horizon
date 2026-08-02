@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -44,12 +45,13 @@ func makeDSPod(name, ns, node string) *corev1.Pod {
 }
 
 const (
-	poolValue = "burst"
-	testNS    = "sentio-systems"
+	poolValue          = "burst"
+	testNS             = "sentio-systems"
+	emptyPlacementJSON = "{}"
 )
 
-func patchBodies(kc *fake.Clientset, resource, name string) []string {
-	var bodies []string
+func patchCount(kc *fake.Clientset, resource, name string) int {
+	count := 0
 	for _, a := range kc.Actions() {
 		if a.GetVerb() != "patch" || a.GetResource().Resource != resource {
 			continue
@@ -58,9 +60,9 @@ func patchBodies(kc *fake.Clientset, resource, name string) []string {
 		if !ok || (name != "" && pa.GetName() != name) {
 			continue
 		}
-		bodies = append(bodies, string(pa.GetPatch()))
+		count++
 	}
-	return bodies
+	return count
 }
 
 func patchTypes(kc *fake.Clientset, resource string) []types.PatchType {
@@ -85,8 +87,37 @@ func getDeployment(t *testing.T, kc *fake.Clientset, name string) *appsv1.Deploy
 	return dep
 }
 
-func tolerationKeyJSON(key string) string {
-	return `"key":"` + key + `"`
+func getStatefulSet(t *testing.T, kc *fake.Clientset, name string) *appsv1.StatefulSet {
+	t.Helper()
+	sts, err := kc.AppsV1().StatefulSets(testNS).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get statefulset %q: %v", name, err)
+	}
+	return sts
+}
+
+func burstNodeAffinity() *corev1.Affinity {
+	return &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key:      k8s.PoolLabelKey,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{poolValue},
+					}},
+				}},
+			},
+		},
+	}
+}
+
+func burstToleration() corev1.Toleration {
+	return corev1.Toleration{
+		Key:      k8s.BurstTaintKey,
+		Operator: corev1.TolerationOpExists,
+		Effect:   corev1.TaintEffectNoSchedule,
+	}
 }
 
 func burstSelector() string {
@@ -206,20 +237,28 @@ func TestMigrateAffinityPatch(t *testing.T) {
 		t.Errorf("migrated = %v, want [deployment/dep1 statefulset/sts1]", migrated)
 	}
 
-	for _, resource := range []string{"deployments", "statefulsets"} {
-		kinds := patchTypes(kc, resource)
+	cases := []struct {
+		resource string
+		podSpec  func() corev1.PodSpec
+	}{
+		{"deployments", func() corev1.PodSpec { return getDeployment(t, kc, "dep1").Spec.Template.Spec }},
+		{"statefulsets", func() corev1.PodSpec { return getStatefulSet(t, kc, "sts1").Spec.Template.Spec }},
+	}
+	for _, c := range cases {
+		kinds := patchTypes(kc, c.resource)
 		if len(kinds) != 1 {
-			t.Errorf("%s patch count = %d, want 1", resource, len(kinds))
+			t.Errorf("%s patch count = %d, want 1", c.resource, len(kinds))
 			continue
 		}
 		if kinds[0] != types.StrategicMergePatchType {
-			t.Errorf("%s patch type = %v, want StrategicMergePatchType", resource, kinds[0])
+			t.Errorf("%s patch type = %v, want StrategicMergePatchType", c.resource, kinds[0])
 		}
-		body := patchBodies(kc, resource, "")[0]
-		for _, want := range []string{k8s.PoolLabelKey, poolValue, k8s.BurstTaintKey} {
-			if !strings.Contains(body, want) {
-				t.Errorf("%s patch missing %q: %s", resource, want, body)
-			}
+		spec := c.podSpec()
+		if !reflect.DeepEqual(spec.Affinity, burstNodeAffinity()) {
+			t.Errorf("%s affinity = %+v, want %+v", c.resource, spec.Affinity, burstNodeAffinity())
+		}
+		if !reflect.DeepEqual(spec.Tolerations, []corev1.Toleration{burstToleration()}) {
+			t.Errorf("%s tolerations = %+v, want only the burst toleration", c.resource, spec.Tolerations)
 		}
 	}
 }
@@ -234,18 +273,19 @@ func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	bodies := patchBodies(kc, "deployments", "dep1")
-	if len(bodies) != 1 {
-		t.Fatalf("dep1 patch count = %d, want 1: the record must ride the affinity rewrite", len(bodies))
+	if got := patchCount(kc, "deployments", "dep1"); got != 1 {
+		t.Fatalf("dep1 patch count = %d, want 1: the record must ride the affinity rewrite", got)
 	}
-	if !strings.Contains(bodies[0], k8s.PrePlacementAnnotationKey) {
-		t.Errorf("patch missing the placement annotation: %s", bodies[0])
+
+	stored := getDeployment(t, kc, "dep1")
+	if got := stored.Annotations[k8s.PrePlacementAnnotationKey]; got != emptyPlacementJSON {
+		t.Errorf("placement annotation = %q, want %q", got, emptyPlacementJSON)
 	}
-	if !strings.Contains(bodies[0], k8s.BurstPlacementLabelKey) {
-		t.Errorf("patch missing the placement label: %s", bodies[0])
+	if got := stored.Labels[k8s.BurstPlacementLabelKey]; got != k8s.BurstPlacementLabelValue {
+		t.Errorf("placement label = %q, want %q", got, k8s.BurstPlacementLabelValue)
 	}
-	if !strings.Contains(bodies[0], "nodeAffinity") {
-		t.Errorf("patch missing the affinity rewrite: %s", bodies[0])
+	if got := stored.Spec.Template.Spec.Affinity; !reflect.DeepEqual(got, burstNodeAffinity()) {
+		t.Errorf("affinity = %+v, want %+v", got, burstNodeAffinity())
 	}
 }
 
@@ -308,7 +348,7 @@ func TestMigrateSkipsAlreadyMigratedWorkload(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "dep1",
 			Namespace:   testNS,
-			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: `{}`},
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
 			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
 		},
 	}
@@ -322,10 +362,10 @@ func TestMigrateSkipsAlreadyMigratedWorkload(t *testing.T) {
 	if len(migrated) != 0 {
 		t.Errorf("migrated = %v, want none: the placement record is already written", migrated)
 	}
-	if bodies := patchBodies(kc, "deployments", "dep1"); len(bodies) != 0 {
-		t.Errorf("dep1 patched again, which would overwrite the saved placement: %v", bodies)
+	if got := patchCount(kc, "deployments", "dep1"); got != 0 {
+		t.Errorf("dep1 patched %d times, which would overwrite the saved placement", got)
 	}
-	if got := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]; got != `{}` {
+	if got := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]; got != emptyPlacementJSON {
 		t.Errorf("placement annotation = %q, want it left untouched", got)
 	}
 }
@@ -368,27 +408,22 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
-	dep1Body := patchBodies(kc, "deployments", "dep1")
-	if len(dep1Body) != 1 {
-		t.Fatalf("dep1 restore patch count = %d, want 1", len(dep1Body))
-	}
-	if !strings.Contains(dep1Body[0], "podAntiAffinity") || strings.Contains(dep1Body[0], "nodeAffinity") {
-		t.Errorf("dep1 restore patch missing original podAntiAffinity or still contains nodeAffinity: %s", dep1Body[0])
-	}
-	dep2Body := patchBodies(kc, "deployments", "dep2")
-	if len(dep2Body) != 1 {
-		t.Fatalf("dep2 restore patch count = %d, want 1", len(dep2Body))
-	}
-	if !strings.Contains(dep2Body[0], `"affinity":null`) {
-		t.Errorf("dep2 restore patch does not set affinity to null: %s", dep2Body[0])
+	for _, name := range []string{"dep1", "dep2"} {
+		if got := patchCount(kc, "deployments", name); got != 1 {
+			t.Fatalf("%s restore patch count = %d, want 1", name, got)
+		}
 	}
 
 	restored := getDeployment(t, kc, "dep1")
-	if restored.Spec.Template.Spec.Affinity == nil || restored.Spec.Template.Spec.Affinity.NodeAffinity != nil {
-		t.Errorf("restored affinity = %+v, want the original podAntiAffinity and no burst pin", restored.Spec.Template.Spec.Affinity)
+	if got := restored.Spec.Template.Spec.Affinity; !reflect.DeepEqual(got, originalAffinity) {
+		t.Errorf("dep1 affinity = %+v, want exactly the original %+v", got, originalAffinity)
 	}
-	if cleared := getDeployment(t, kc, "dep2"); cleared.Spec.Template.Spec.Affinity != nil {
-		t.Errorf("dep2 affinity = %+v, want nil", cleared.Spec.Template.Spec.Affinity)
+	if got := restored.Spec.Template.Spec.Tolerations; len(got) != 0 {
+		t.Errorf("dep1 tolerations = %+v, want none: the burst toleration must go", got)
+	}
+	cleared := getDeployment(t, kc, "dep2")
+	if got := cleared.Spec.Template.Spec.Affinity; got != nil {
+		t.Errorf("dep2 affinity = %+v, want nil", got)
 	}
 	if _, ok := restored.Annotations[k8s.PrePlacementAnnotationKey]; ok {
 		t.Error("restore must remove the placement annotation")
@@ -486,12 +521,13 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	migrateBody := patchBodies(kc, "deployments", "dep1")[0]
-	if !strings.Contains(migrateBody, tolerationKeyJSON(k8s.BurstTaintKey)) {
-		t.Errorf("migrate dep1 patch missing burst toleration: %s", migrateBody)
+	migrated := getDeployment(t, kc, "dep1").Spec.Template.Spec
+	wantMigrated := []corev1.Toleration{existingToleration, burstToleration()}
+	if !reflect.DeepEqual(migrated.Tolerations, wantMigrated) {
+		t.Errorf("migrated tolerations = %+v, want %+v", migrated.Tolerations, wantMigrated)
 	}
-	if !strings.Contains(migrateBody, "workload") {
-		t.Errorf("migrate dep1 patch dropped the original toleration: %s", migrateBody)
+	if !reflect.DeepEqual(migrated.Affinity, burstNodeAffinity()) {
+		t.Errorf("migrated affinity = %+v, want %+v", migrated.Affinity, burstNodeAffinity())
 	}
 	kc.ClearActions()
 
@@ -504,17 +540,17 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 			t.Errorf("restore must not patch nodes: %v", a)
 		}
 	}
-	rollbackBody := patchBodies(kc, "deployments", "dep1")[0]
-	if strings.Contains(rollbackBody, tolerationKeyJSON(k8s.BurstTaintKey)) {
-		t.Errorf("restore dep1 patch must not retain burst toleration: %s", rollbackBody)
-	}
-	if !strings.Contains(rollbackBody, "workload") {
-		t.Errorf("restore dep1 patch must restore original toleration: %s", rollbackBody)
+	if got := patchCount(kc, "deployments", "dep1"); got != 1 {
+		t.Fatalf("dep1 restore patch count = %d, want 1", got)
 	}
 
-	tolerations := getDeployment(t, kc, "dep1").Spec.Template.Spec.Tolerations
-	if len(tolerations) != 1 || tolerations[0].Key != "workload" {
-		t.Errorf("restored tolerations = %+v, want the original toleration only", tolerations)
+	rolledBack := getDeployment(t, kc, "dep1").Spec.Template.Spec
+	wantRolledBack := []corev1.Toleration{existingToleration}
+	if !reflect.DeepEqual(rolledBack.Tolerations, wantRolledBack) {
+		t.Errorf("restored tolerations = %+v, want %+v", rolledBack.Tolerations, wantRolledBack)
+	}
+	if rolledBack.Affinity != nil {
+		t.Errorf("restored affinity = %+v, want nil: the burst pin must go", rolledBack.Affinity)
 	}
 
 	n, err := kc.CoreV1().Nodes().Get(context.Background(), "burst-1", metav1.GetOptions{})
