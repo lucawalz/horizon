@@ -1,0 +1,12 @@
+.git
+.github
+.golangci.yml
+.goreleaser.yaml
+charts
+config
+dist
+docs
+horizon
+*.md
+config.yaml
+.env

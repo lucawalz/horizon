@@ -16,6 +16,9 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
       - -s -w -X github.com/lucawalz/horizon/internal/version.version={{.Version}}
 
