@@ -22,7 +22,7 @@ const podNamespaceEnvVar = "POD_NAMESPACE"
 var serviceAccountNSPath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 func NewProviderFactory(kc kubernetes.Interface) ProviderFactory {
-	namespace, namespaceErr := OperatorNamespace()
+	namespace, namespaceErr := operatorNamespace()
 	return func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error) {
 		if namespaceErr != nil {
 			return nil, namespaceErr
@@ -36,7 +36,7 @@ func NewProviderFactory(kc kubernetes.Interface) ProviderFactory {
 	}
 }
 
-func OperatorNamespace() (string, error) {
+func operatorNamespace() (string, error) {
 	if namespace := os.Getenv(podNamespaceEnvVar); namespace != "" {
 		return namespace, nil
 	}
