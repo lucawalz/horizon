@@ -95,7 +95,7 @@ func (h *harness) createProviderConfig() {
 			},
 			Watchdog: v1alpha1.WatchdogPolicy{
 				RenewInterval: metav1.Duration{Duration: time.Minute},
-				Slack:         metav1.Duration{Duration: time.Minute},
+				Slack:         metav1.Duration{Duration: 2 * time.Minute},
 				MaxLifetime:   metav1.Duration{Duration: time.Hour},
 			},
 		},

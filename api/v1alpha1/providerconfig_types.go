@@ -25,11 +25,16 @@ type HetznerProviderSpec struct {
 	CloudInitSecretRef corev1.SecretKeySelector `json:"cloudInitSecretRef"`
 }
 
+// +kubebuilder:validation:XValidation:rule="duration(self.slack) > duration(self.renewInterval)",message="slack must be greater than renewInterval"
+// +kubebuilder:validation:XValidation:rule="duration(self.renewInterval) + duration(self.slack) <= duration('1h')",message="renewInterval plus slack must not exceed 1h"
+// +kubebuilder:validation:XValidation:rule="duration(self.maxLifetime) > duration(self.renewInterval) + duration(self.slack)",message="maxLifetime must be greater than renewInterval plus slack"
 type WatchdogPolicy struct {
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('10s')",message="renewInterval must be at least 10s"
 	RenewInterval metav1.Duration `json:"renewInterval"`
 
 	Slack metav1.Duration `json:"slack"`
 
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('5m') && duration(self) <= duration('24h')",message="maxLifetime must be between 5m and 24h"
 	MaxLifetime metav1.Duration `json:"maxLifetime"`
 }
 
