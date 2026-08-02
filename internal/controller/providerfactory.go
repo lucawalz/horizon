@@ -17,10 +17,9 @@ import (
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 )
 
-const (
-	podNamespaceEnvVar   = "POD_NAMESPACE"
-	serviceAccountNSPath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-)
+const podNamespaceEnvVar = "POD_NAMESPACE"
+
+var serviceAccountNSPath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 func NewProviderFactory(kc kubernetes.Interface) ProviderFactory {
 	namespace, namespaceErr := OperatorNamespace()
