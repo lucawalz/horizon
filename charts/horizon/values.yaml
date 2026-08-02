@@ -1,0 +1,86 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/lucawalz/horizon
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+
+leaderElection:
+  enabled: true
+
+ports:
+  metrics: 8080
+  health: 8081
+  ui: 8082
+
+service:
+  type: ClusterIP
+  annotations: {}
+  uiPort: 80
+  metricsPort: 8080
+
+ui:
+  enabled: true
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: horizon.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+extraArgs: []
+extraEnv: []
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    # No cpu limit: throttling the reconcile loop delays teardown of billable capacity.
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+podAnnotations: {}
+podLabels: {}
+
+priorityClassName: ""
+
+terminationGracePeriodSeconds: 30
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []

@@ -1,0 +1,68 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "horizon.fullname" . }}
+  labels:
+    {{- include "horizon.labels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - horizon.dev
+    resources:
+      - capacityleases
+      - capacityleases/status
+      - capacityleases/finalizers
+      - providerconfigs
+      - providerconfigs/status
+      - providerconfigs/finalizers
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods/eviction
+    verbs:
+      - create
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - patch
+      - watch
+{{- end }}

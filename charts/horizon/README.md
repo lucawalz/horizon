@@ -1,0 +1,129 @@
+# horizon
+
+Installs the horizon controller, which leases on-demand cloud capacity for a Kubernetes cluster and destroys it when the lease expires.
+
+The chart templates a Deployment, a ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service, an optional Ingress for the web interface, and the two `horizon.dev` custom resource definitions.
+
+## Installing
+
+The chart is published as an OCI artifact:
+
+```
+helm install horizon oci://ghcr.io/lucawalz/charts/horizon \
+  --namespace horizon-system --create-namespace
+```
+
+Installing from a checkout of the repository:
+
+```
+helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
+```
+
+## Custom resource definitions
+
+The `CapacityLease` and `ProviderConfig` definitions live in `crds/` rather than `templates/`. Helm installs them on first install and never removes them on uninstall. That is deliberate: deleting a custom resource definition cascade-deletes every lease derived from it, and a lease that disappears before its controller has finished teardown strands the provider instances it owns, which keep billing.
+
+Upgrades do not update the definitions either, because Helm leaves `crds/` alone after the initial install. A chart upgrade that carries a schema change needs the new definitions applied directly:
+
+```
+kubectl apply -f charts/horizon/crds/
+```
+
+`make manifests` regenerates the definitions from the Go types and copies them into `crds/`, and CI fails when the two copies diverge.
+
+## Values
+
+### Image
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `image.repository` | `ghcr.io/lucawalz/horizon` | Image repository. |
+| `image.tag` | `""` | Image tag; falls back to the chart `appVersion`. The tag `latest` is rejected at template time because immutable tags are required by cluster admission policy. |
+| `image.digest` | `""` | Image digest such as `sha256:...`. Takes precedence over `image.tag` when set. |
+| `image.pullPolicy` | `IfNotPresent` | Image pull policy. |
+| `imagePullSecrets` | `[]` | Pull secrets for a private registry. |
+
+### Controller
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `replicaCount` | `1` | Number of controller replicas. Values above 1 require `leaderElection.enabled`, and the chart refuses to render otherwise. |
+| `leaderElection.enabled` | `true` | Run leader election so only one replica reconciles a lease. Adds the namespaced Lease permissions. |
+| `extraArgs` | `[]` | Additional command line arguments appended to the container. |
+| `extraEnv` | `[]` | Additional environment variables, in the Kubernetes `env` list form. |
+| `terminationGracePeriodSeconds` | `30` | Grace period for the controller to finish an in-flight reconcile. |
+| `priorityClassName` | `""` | Priority class for the controller pod. |
+
+### Web interface
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `ui.enabled` | `true` | Serve the web interface from the pod and add its port to the Service. |
+| `ui.ingress.enabled` | `false` | Create an Ingress for the web interface. |
+| `ui.ingress.className` | `""` | Ingress class name. |
+| `ui.ingress.annotations` | `{}` | Ingress annotations, which is where forward authentication is normally wired in. |
+| `ui.ingress.hosts` | one host, `horizon.local`, path `/` with `pathType: Prefix` | Host and path rules. |
+| `ui.ingress.tls` | `[]` | TLS blocks passed through to the Ingress. |
+
+The web interface creates leases, and a lease provisions billable machines. ADR 0019 states three requirements for exposing it in-cluster, none of which this chart templates: forward authentication in front of the interface, a network policy restricting the Service to the proxy, and an access review for the authenticated user before every mutation. Exposing `ui.ingress` without the first two publishes an endpoint that spends money.
+
+### Networking
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `ports.metrics` | `8080` | Port the controller binds for metrics. |
+| `ports.health` | `8081` | Port the controller binds for the liveness and readiness probes. |
+| `ports.ui` | `8082` | Port the controller binds for the web interface. |
+| `service.type` | `ClusterIP` | Service type. |
+| `service.annotations` | `{}` | Service annotations. |
+| `service.uiPort` | `80` | Service port mapped to the web interface. Present only when `ui.enabled` is true. |
+| `service.metricsPort` | `8080` | Service port mapped to the metrics endpoint. |
+
+### Permissions
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `rbac.create` | `true` | Create the ClusterRole, Role, and their bindings. |
+| `serviceAccount.create` | `true` | Create the ServiceAccount. |
+| `serviceAccount.name` | `""` | ServiceAccount name; defaults to the release full name. |
+| `serviceAccount.annotations` | `{}` | ServiceAccount annotations. |
+
+The ClusterRole grants full access to `capacityleases` and `providerconfigs` including their status and finalizer subresources; get, list, watch, patch, update, and delete on nodes; get, list, and watch on pods; create on pod evictions; create and patch on events; and get, list, watch, and patch on Deployments and StatefulSets. The namespaced Role grants read access to Secrets and, when leader election is on, the Lease permissions it needs.
+
+### Scheduling and resources
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `resources.requests.cpu` | `25m` | CPU request. |
+| `resources.requests.memory` | `64Mi` | Memory request. |
+| `resources.limits.memory` | `128Mi` | Memory limit. No CPU limit is set, because throttling the reconcile loop delays teardown of billable capacity. |
+| `nodeSelector` | `{}` | Node selector for the controller pod. |
+| `tolerations` | `[]` | Tolerations for the controller pod. |
+| `affinity` | `{}` | Affinity rules for the controller pod. |
+| `topologySpreadConstraints` | `[]` | Topology spread constraints for the controller pod. |
+| `podAnnotations` | `{}` | Annotations on the controller pod. |
+| `podLabels` | `{}` | Extra labels on the controller pod. |
+
+### Security context
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `podSecurityContext.runAsNonRoot` | `true` | Refuse to start as root. |
+| `podSecurityContext.runAsUser` | `65532` | Numeric user, matching the distroless nonroot user baked into the image. |
+| `podSecurityContext.runAsGroup` | `65532` | Numeric group. |
+| `podSecurityContext.seccompProfile.type` | `RuntimeDefault` | Seccomp profile. |
+| `securityContext.runAsNonRoot` | `true` | Container level repeat of the pod setting. |
+| `securityContext.runAsUser` | `65532` | Container level numeric user. |
+| `securityContext.allowPrivilegeEscalation` | `false` | Block privilege escalation. |
+| `securityContext.readOnlyRootFilesystem` | `true` | Read-only root filesystem. An `emptyDir` is mounted at `/tmp`. |
+| `securityContext.capabilities.drop` | `[ALL]` | Drop every capability. |
+
+These defaults satisfy the Pod Security `restricted` profile and the Kyverno policies enforced on the bedrock cluster without further configuration.
+
+## Uninstalling
+
+```
+helm uninstall horizon --namespace horizon-system
+```
+
+The custom resource definitions and any leases still held survive the uninstall. Removing them is a deliberate second step, and it should follow the deletion of every lease, so that the controller tears down the provider instances before it loses the resources that describe them.

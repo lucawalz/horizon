@@ -1,0 +1,18 @@
+apiVersion: v2
+name: horizon
+description: Leases on-demand cloud capacity for a Kubernetes cluster and destroys it when the lease expires
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"
+home: https://github.com/lucawalz/horizon
+sources:
+  - https://github.com/lucawalz/horizon
+keywords:
+  - capacity
+  - autoscaling
+  - hetzner
+  - operator
+maintainers:
+  - name: Luca Walz
+    url: https://github.com/lucawalz
