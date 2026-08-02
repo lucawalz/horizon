@@ -132,7 +132,9 @@ Key fields:
 
 ## Releases
 
-Pushing a `v*` tag triggers the release workflow. GoReleaser builds the darwin and linux binaries and publishes a GitHub release with the archives attached. The same workflow then builds the linux amd64 and arm64 container image from the repository `Dockerfile` and pushes it to `ghcr.io/lucawalz/horizon`, and packages the Helm chart at the tag version and pushes it to `ghcr.io/lucawalz/charts/horizon`.
+`charts/horizon/Chart.yaml` is the single source of truth for the released version. Bumping its `version` and `appVersion` is a deliberate commit that precedes the tag, and the workflow refuses to publish anything when the tag does not match the declared chart version.
+
+Pushing a `v*` tag triggers the release workflow, which can also be dispatched manually against an existing tag when a run needs repeating. It builds the linux amd64 and arm64 container image from the repository `Dockerfile` and pushes it to `ghcr.io/lucawalz/horizon`, packages the Helm chart and pushes it to `ghcr.io/lucawalz/charts/horizon`, and only then has GoReleaser build the darwin and linux binaries and publish the GitHub release with the archives attached. The release is created last so that a published release always advertises an image and a chart that exist. See [0020](docs/adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) for the full contract.
 
 The image is built from source in a `golang` stage and shipped on `gcr.io/distroless/static-debian12:nonroot`, so it carries no shell and no package manager and runs as uid 65532. Both the archive binaries and the image binary are built with `-trimpath` and identical linker flags, so the two are byte-identical for a given platform.
 
