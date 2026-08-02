@@ -4,10 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
   packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   IMAGE: ghcr.io/lucawalz/horizon
@@ -20,22 +25,31 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
-        with:
-          go-version: stable
+      - id: chart
+        name: tag matches the chart version
+        run: |
+          set -euo pipefail
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *)
+              echo "release runs only on a v-prefixed tag ref, got $GITHUB_REF" >&2
+              exit 1
+              ;;
+          esac
+          tag_version="${GITHUB_REF_NAME#v}"
+          chart_version="$(awk '$1 == "version:" { print $2; exit }' charts/horizon/Chart.yaml)"
+          if [ "$tag_version" != "$chart_version" ]; then
+            echo "tag $GITHUB_REF_NAME wants $tag_version but charts/horizon/Chart.yaml declares $chart_version" >&2
+            exit 1
+          fi
+          echo "version=$chart_version" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -59,12 +73,21 @@ jobs:
       - uses: azure/setup-helm@v5
       - name: publish chart
         env:
-          VERSION: ${{ github.ref_name }}
+          CHART_VERSION: ${{ steps.chart.outputs.version }}
           REGISTRY_USER: ${{ github.actor }}
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          semver="${VERSION#v}"
           helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin <<<"$REGISTRY_TOKEN"
-          helm package charts/horizon --version "$semver" --app-version "$semver"
-          helm push "horizon-${semver}.tgz" "$CHART_REGISTRY"
+          helm package charts/horizon
+          helm push "horizon-${CHART_VERSION}.tgz" "$CHART_REGISTRY"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
