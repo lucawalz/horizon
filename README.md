@@ -143,26 +143,14 @@ cmd/horizon/        main entry point
 internal/cli/       cobra root and version command
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
-<<<<<<< HEAD
-internal/provider/  provider interface and node-label constants
-internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
-internal/k8s/       cluster client, drain, workload migration, Flux status, API tracer
-api/v1alpha1/       CapacityLease and ProviderConfig types
-config/crd/bases/   generated custom resource definitions
-charts/horizon/     Helm chart for the in-cluster controller
-||||||| parent of fafd97d (refactor(provider): redraw the provider seam around instance lifecycle)
-internal/capi/      Cluster API client for pool-type detection and Flux status
-internal/provider/  provider interface and node-label constants
-internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
-internal/k8s/       cluster client, drain, workload migration, API tracer
-=======
-internal/capi/      Cluster API client for pool-type detection and Flux status
 internal/provider/  instance lifecycle interface, capabilities, label constants
                     hetzner/ Hetzner Cloud implementation
                     conformance/ contract suite every implementation must pass
                     fake/ in-memory implementation with a create and delete ledger
-internal/k8s/       cluster client, drain, workload migration, API tracer
->>>>>>> fafd97d (refactor(provider): redraw the provider seam around instance lifecycle)
+internal/k8s/       cluster client, drain, workload migration, Flux status, API tracer
+api/v1alpha1/       CapacityLease and ProviderConfig types
+config/crd/bases/   generated custom resource definitions
+charts/horizon/     Helm chart for the in-cluster controller
 docs/adr/           architecture decision records
 ```
 
