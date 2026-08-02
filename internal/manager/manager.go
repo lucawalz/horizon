@@ -91,13 +91,23 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		return nil, fmt.Errorf("build kubernetes clientset: %w", err)
 	}
 
-	reconciler := &controller.CapacityLeaseReconciler{
+	providers := controller.NewProviderFactory(kube)
+
+	leases := &controller.CapacityLeaseReconciler{
 		Client:   mgr.GetClient(),
 		Kube:     kube,
-		Provider: controller.NewProviderFactory(kube),
+		Provider: providers,
 	}
-	if err := reconciler.SetupWithManager(mgr); err != nil {
+	if err := leases.SetupWithManager(mgr); err != nil {
 		return nil, fmt.Errorf("set up capacity lease controller: %w", err)
+	}
+
+	orphans := &controller.OrphanReconciler{
+		Client:   mgr.GetClient(),
+		Provider: providers,
+	}
+	if err := orphans.SetupWithManager(mgr); err != nil {
+		return nil, fmt.Errorf("set up orphan controller: %w", err)
 	}
 
 	return mgr, nil
