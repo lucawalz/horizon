@@ -4,11 +4,13 @@ PREFIX ?= $(HOME)/.local/bin
 CONTROLLER_GEN := go tool controller-gen
 API_PATHS := ./api/...
 CRD_DIR := config/crd/bases
+CHART_DIR := charts/horizon
+IMAGE ?= ghcr.io/lucawalz/horizon
 
-.PHONY: build test vet fmt install uninstall manifests generate
+.PHONY: build test vet fmt install uninstall manifests generate image chart-lint
 
 build:
-	go build -ldflags "$(LDFLAGS)" -o horizon ./cmd/horizon
+	go build -trimpath -ldflags "$(LDFLAGS)" -o horizon ./cmd/horizon
 
 test:
 	go test ./...
@@ -21,9 +23,18 @@ fmt:
 
 manifests:
 	$(CONTROLLER_GEN) crd paths=$(API_PATHS) output:crd:artifacts:config=$(CRD_DIR)
+	cp $(CRD_DIR)/*.yaml $(CHART_DIR)/crds/
 
 generate:
 	$(CONTROLLER_GEN) object paths=$(API_PATHS)
+
+image:
+	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
+
+chart-lint:
+	diff -r $(CRD_DIR) $(CHART_DIR)/crds
+	helm lint $(CHART_DIR)
+	helm template horizon $(CHART_DIR) --include-crds >/dev/null
 
 install: build
 	mkdir -p $(PREFIX)
