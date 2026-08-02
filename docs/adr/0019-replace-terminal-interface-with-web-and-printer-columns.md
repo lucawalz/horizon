@@ -7,7 +7,7 @@ date: 2026-08-02
 
 ## Context
 
-[0009](0009-interactive-tui-as-primary-interface.md) made an interactive terminal application the primary interface, and [0011](0011-first-run-setup-wizard.md) added a first-run wizard to it. Together they are roughly 2,900 lines, the largest layer in the project, of which the wizard alone is 747.
+[0009](0009-interactive-tui-as-primary-interface.md) made an interactive terminal application the primary interface, and [0011](0011-first-run-setup-wizard.md) added a first-run wizard to it. Together they are 3,816 lines across 27 files including tests, the largest layer in the project, of which the wizard alone is 747.
 
 [0017](0017-capacity-lease-controller-over-cli-saga.md) removes the ground both stand on. Once a burst is a custom resource, an imperative prompt that mutates infrastructure contradicts the declarative model, and a wizard that writes local configuration is configuring state that now lives in a custom resource and a Secret.
 
@@ -46,7 +46,7 @@ In-cluster serving makes authentication mandatory rather than optional, because 
 
 ## Consequences
 
-Roughly 2,900 lines are removed and roughly 950 added, so the project shrinks while gaining a web interface and better terminal ergonomics than the terminal application provided. Weight was not the reason: only 16 of 816 packages in the dependency tree are terminal libraries, and a stripped binary is 54 MB of which the Kubernetes client libraries are the bulk.
+The removal takes out 3,816 lines of terminal code and, with the wizard's configuration fields, the retired pool type and their tests, 5,473 lines in total against 184 added. Roughly 950 lines return as the replacement surfaces, so the project shrinks substantially while gaining a web interface and better terminal ergonomics than the terminal application provided. Weight was not the reason: only 16 of 816 packages in the dependency tree are terminal libraries, and a stripped binary is 54 MB of which the Kubernetes client libraries are the bulk.
 
 The dependency set shrinks in both directions. The web interface is built on the standard library, `html/template` and `net/http` with method-based routing, plus embedded assets and a vendored copy of htmx, so it adds no Go dependency at all. A template library with a code generation step was rejected for the build step it imposes, a client-side reactivity library for its known synchronisation problems alongside htmx, and a newer alternative for having too small an ecosystem to lean on under time pressure. Four terminal libraries and the Cluster API module leave as direct dependencies.
 
