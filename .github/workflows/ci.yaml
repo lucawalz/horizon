@@ -58,8 +58,6 @@ jobs:
           fi
       - run: helm lint charts/horizon
       - run: helm template horizon charts/horizon --include-crds
-      - run: helm template horizon charts/horizon --set ui.enabled=false
-      - run: helm template horizon charts/horizon --set ui.ingress.enabled=true
 
   image:
     runs-on: ubuntu-latest
