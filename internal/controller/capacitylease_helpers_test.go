@@ -2,12 +2,14 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -285,20 +287,36 @@ func (h *harness) instanceStatus(name string) v1alpha1.InstanceStatus {
 	return *entry
 }
 
+func (h *harness) condition(name string) *metav1.Condition {
+	h.t.Helper()
+	return meta.FindStatusCondition(h.lease().Status.Conditions, name)
+}
+
 func (h *harness) assertCondition(condition string, want metav1.ConditionStatus) {
 	h.t.Helper()
-	lease := h.lease()
-	for _, c := range lease.Status.Conditions {
-		if c.Type != condition {
-			continue
-		}
-		if c.Status != want {
-			h.t.Errorf("condition %s is %s, want %s (%s: %s)", condition, c.Status, want, c.Reason, c.Message)
+	current := h.condition(condition)
+	if current == nil {
+		if want != metav1.ConditionUnknown {
+			h.t.Errorf("lease carries no %s condition, want %s", condition, want)
 		}
 		return
 	}
-	if want != metav1.ConditionUnknown {
-		h.t.Errorf("lease carries no %s condition, want %s", condition, want)
+	if current.Status != want {
+		h.t.Errorf("condition %s is %s, want %s (%s: %s)", condition, current.Status, want, current.Reason, current.Message)
+	}
+}
+
+func (h *harness) assertConditionDetail(condition, wantReason, wantMessage string) {
+	h.t.Helper()
+	current := h.condition(condition)
+	if current == nil {
+		h.t.Fatalf("lease carries no %s condition", condition)
+	}
+	if current.Reason != wantReason {
+		h.t.Errorf("condition %s reports reason %q, want %q", condition, current.Reason, wantReason)
+	}
+	if !strings.Contains(current.Message, wantMessage) {
+		h.t.Errorf("condition %s reports message %q, want it to mention %q", condition, current.Message, wantMessage)
 	}
 }
 
@@ -355,6 +373,24 @@ func (h *harness) deploymentAnnotations() map[string]string {
 		h.t.Fatalf("get deployment: %v", err)
 	}
 	return deployment.Annotations
+}
+
+type statusWriteFailure struct {
+	client.Client
+	err error
+}
+
+func (c statusWriteFailure) Status() client.SubResourceWriter {
+	return failingSubResourceWriter{err: c.err}
+}
+
+type failingSubResourceWriter struct {
+	client.SubResourceWriter
+	err error
+}
+
+func (w failingSubResourceWriter) Update(context.Context, client.Object, ...client.SubResourceUpdateOption) error {
+	return w.err
 }
 
 func newKubeClient(objects ...runtime.Object) *k8sfake.Clientset {

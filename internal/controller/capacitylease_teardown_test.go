@@ -182,6 +182,60 @@ func TestADeletedLeaseIsReleasedEvenWithoutItsProviderConfig(t *testing.T) {
 	}
 }
 
+func TestAProviderLostWhileTheLeaseExpiresDegradesAndHoldsTheFinalizer(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	revoked := errors.New("credentials secret was revoked")
+	h.providerErr = revoked
+	h.deleteLease()
+
+	_, err := h.reconcile()
+	if !errors.Is(err, revoked) {
+		t.Fatalf("teardown returned %v, want the provider failure", err)
+	}
+	if !h.hasFinalizer() {
+		t.Error("the finalizer was dropped while the capacity was still held")
+	}
+	h.assertCondition(v1alpha1.ConditionDegraded, metav1.ConditionTrue)
+	h.assertConditionDetail(v1alpha1.ConditionDegraded, reasonProviderUnavailable, revoked.Error())
+	h.assertCondition(v1alpha1.ConditionReleased, metav1.ConditionFalse)
+	h.assertConditionDetail(v1alpha1.ConditionReleased, reasonProviderUnavailable, "capacity is still held")
+	if got := h.lease().Status.Phase; got != v1alpha1.LeasePhaseDegraded {
+		t.Errorf("lease phase is %q, want %q", got, v1alpha1.LeasePhaseDegraded)
+	}
+	if got := len(h.providerInstances()); got != 1 {
+		t.Errorf("provider holds %d instances, want the unreleased one to remain", got)
+	}
+
+	h.providerErr = nil
+	h.settle()
+
+	h.assertProviderEmpty()
+	if !h.leaseGone() {
+		t.Error("the lease survived a release that finally reached its provider")
+	}
+}
+
+func TestDegradeKeepsTheCauseWhenTheStatusWriteAlsoFails(t *testing.T) {
+	cause := errors.New("credentials secret was revoked")
+	unwritable := errors.New("apiserver rejected the status update")
+	lease := &v1alpha1.CapacityLease{ObjectMeta: metav1.ObjectMeta{Name: objectName(t)}}
+	r := &CapacityLeaseReconciler{Client: statusWriteFailure{err: unwritable}}
+
+	_, err := r.degrade(t.Context(), lease, reasonProviderUnavailable, cause)
+
+	if !errors.Is(err, cause) {
+		t.Errorf("returned error %v drops the provider failure", err)
+	}
+	if !errors.Is(err, unwritable) {
+		t.Errorf("returned error %v drops the status write failure", err)
+	}
+}
+
 func TestAZeroTeardownGraceSkipsTheDrainWindow(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: 0}
