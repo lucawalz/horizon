@@ -34,8 +34,6 @@ func newControllerCmd() *cobra.Command {
 		"Address the metrics endpoint binds to")
 	flags.StringVar(&opts.HealthAddress, "health-probe-bind-address", defaultHealthAddress,
 		"Address the health and readiness endpoints bind to")
-	flags.StringVar(&opts.UIAddress, "ui-bind-address", "",
-		"Address the user interface binds to, once one is served")
 
 	return cmd
 }

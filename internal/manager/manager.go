@@ -32,7 +32,6 @@ const LeaderElectionID = "horizon-operator.horizon.dev"
 type Options struct {
 	MetricsAddress string
 	HealthAddress  string
-	UIAddress      string
 	LeaderElection bool
 }
 
@@ -123,8 +122,7 @@ func cacheSyncChecker(mgr ctrl.Manager) healthz.Checker {
 }
 
 func Run(ctx context.Context, opts Options) error {
-	log := klog.Background()
-	ctrl.SetLogger(log)
+	ctrl.SetLogger(klog.Background())
 
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
@@ -134,10 +132,6 @@ func Run(ctx context.Context, opts Options) error {
 	mgr, err := New(restConfig, opts)
 	if err != nil {
 		return err
-	}
-
-	if opts.UIAddress != "" {
-		log.Info("ui bind address ignored, no user interface is served yet", "address", opts.UIAddress)
 	}
 
 	if err := mgr.Start(ctx); err != nil {

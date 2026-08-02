@@ -30,7 +30,7 @@ Implemented:
 
 Not implemented:
 
-- the web interface. The chart carries a `ui.enabled` value and the binary accepts `--ui-bind-address`, but nothing is served and the controller logs that the address is ignored.
+- the web interface. Nothing is served, the binary has no flag for it, and the chart carries no values, port, or ingress for it.
 - the watch command and the lease verbs on the command line. Lease state is read with `kubectl get capacityleases`, which the printer columns make readable.
 - the watchdog policy. `ProviderConfig.spec.watchdog` is required by the schema and validated, but no controller reads it and `CapacityLease.status.watchdogDeadline` is never written.
 - `ProviderConfig` status conditions. The subresource exists and stays empty.
@@ -202,14 +202,13 @@ horizon controller   Run the in-cluster capacity lease controller
 horizon version      Print the build stamp
 ```
 
-`horizon` with no subcommand prints help. `horizon controller` takes four flags:
+`horizon` with no subcommand prints help. `horizon controller` takes three flags:
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--leader-elect` | `true` | Hold a leader election lease so only one replica reconciles. |
 | `--metrics-bind-address` | `:8080` | Address the metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the liveness and readiness endpoints bind to. |
-| `--ui-bind-address` | empty | Reserved for the web interface. Setting it logs that it was ignored. |
 
 ## Releases
 
