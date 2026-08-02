@@ -47,7 +47,7 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 **Format**: `<type>[optional scope]: <description>`
 
 - Description: brief, imperative, lowercase, 7–12 words
-- Scope: component name (`tui`, `core`, `capi`, `k8s`, `config`, …)
+- Scope: component name (`cli`, `core`, `capi`, `k8s`, `config`, and so on)
 - No period at end of subject line
 - Subject line only, no body, no bullet points
 

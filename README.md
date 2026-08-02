@@ -4,92 +4,93 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 
-An operator CLI and terminal dashboard for adding on-demand reserved capacity to a homelab Kubernetes cluster.
+Leases on-demand cloud capacity for a Kubernetes cluster and guarantees the capacity is destroyed when the lease expires.
 
 ## Description
 
-horizon is a command-line operator and Bubble Tea dashboard for a small Kubernetes cluster. It observes cluster pressure, drives on-demand reserved capacity, and migrates a workload onto that capacity and back. It is optional and never load-bearing: routine scale-out happens without it, and the cluster keeps running when it is closed.
+horizon adds temporary worker capacity to a cluster that already exists, for a bounded period, and takes it away again. A lease states how much capacity, from which provider and region, for how long, and for which workload. The teardown is the point: the value of the tool is the promise that nothing is still billing after the deadline, not the provisioning itself.
 
-The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for the permanent cluster and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity. bedrock has since retired its in-cluster cluster-autoscaler (ADR 0062), so no elastic burst pool is provisioned any more and reserved capacity is the only on-demand path. horizon reads cluster state through a kubeconfig context and provisions reserved servers through the Hetzner Cloud API directly. bedrock defines the cluster; horizon adds and removes temporary reserved capacity on top of it.
+The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: Cluster API with the Hetzner provider (CAPH) for the permanent cluster and cluster-api-k3s for bootstrap and control planes, managed by Rancher Turtles, with Tailscale for connectivity. bedrock defines the cluster; horizon adds and removes temporary capacity on top of it. horizon is optional and never load-bearing: routine scale-out happens without it and the cluster keeps running when it is gone.
 
-### What horizon does and does not do
+## Status
 
-Reserved capacity is the only on-demand scaling path. A second, elastic path is retired but still visible in the tool.
+horizon is being rebuilt around an in-cluster controller, and parts of that work are not finished. Two records set the direction.
 
-- Reserved capacity is owned by horizon. Reserved servers are operator-pinned: horizon provisions them on demand against the Hetzner Cloud API and removes them when asked. It is the default and only provisionable pool type.
-- Elastic capacity was owned by an in-cluster cluster-autoscaler that bedrock has retired (ADR 0062). No elastic pool is provisioned any more; horizon never provisioned elastic servers, and its scale actions still refuse the elastic pool type outright.
+[ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) moves orchestration out of the command line and into a `CapacityLease` custom resource reconciled by a controller. A linear command-line sequence cleans up only if the process survives to clean up, which was measured to leak a rented server on every kill; a level-triggered loop runs again after a crash by construction.
 
-horizon enforces reserved ownership in code. It labels each server it creates `horizon.dev/managed-by=horizon` and `horizon.dev/pool=reserved`, and only ever lists or deletes servers carrying the managed-by label. A server that also carries an `hcloud/node-group` marker, the label the retired autoscaler used, is refused outright, so horizon never touches a machine it did not create.
+[ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md) replaces the terminal interface with a web interface, printer columns on the custom resource, and a non-interactive watch command. The terminal dashboard and the first-run setup wizard that earlier versions shipped are removed.
 
-### Pool model
+What works today:
 
-horizon recognizes three categories of capacity.
+- reserved server provisioning against the Hetzner Cloud API, with ownership labels that stop horizon touching a machine it did not create
+- workload migration onto and off the provisioned nodes, and node drain
+- cluster queries for nodes, pools, workloads, Cluster API MachineDeployments, and Flux status
+- `horizon version`
 
-- Elastic: a retired pool, once autoscaled by bedrock's cluster-autoscaler (removed in ADR 0062). No elastic node is created any more. horizon still recognizes the `horizon.dev/pool=elastic` label and the `horizon.dev/burst=true:NoSchedule` contract but refuses to provision the pool.
-- Reserved: operator-pinned through horizon. A reserved server boots from the shared pool-node image and joins the cluster with the reserved cloud-init from horizon's config, identical to an autoscaler node apart from its pool label. A reserved burst needs no manual workload setup, since horizon's migration rewrites the affinity and adds the burst toleration on each migrated Deployment and StatefulSet.
-- The home cluster's permanent nodes, defined entirely in bedrock.
+What is still to come:
 
-horizon carries the Hetzner API token and the node cloud-init in its own config, each resolved from an inline value, a file path, or an environment variable, so it reads no cluster secret to provision.
+- the `CapacityLease` custom resource and the controller that reconciles it
+- the web interface, served on loopback locally or from the pod in-cluster
+- the watch command and the lease verbs on the command line
+
+Running `horizon` with no subcommand prints help. Until the surfaces above land, the capacity actions are reachable as library calls in `internal/core` rather than as commands.
+
+## Interfaces
+
+The two records above set out four surfaces. None of them is built yet; this is the shape the work is heading for.
+
+The custom resource is the API. A lease is applied with `kubectl`, committed to a git tree, and reconciled by Flux like anything else in the estate, which is also what makes it scriptable and testable.
+
+A web interface is how people use horizon. It is one server-rendered implementation with two serving modes rather than two implementations: bound to loopback by a local command, or listening in the pod when the chart enables it. It also takes over the wizard's job of supplying provider credentials and machine settings, writing them to a Secret instead of asking for a hand-written resource, and it refuses to edit a configuration that carries the ownership labels of a git reconciler.
+
+The command line is a thin bridge. It serves the interface, prints lease state as scrolling output with no terminal framework, and offers lease verbs that are sugar over applying a resource. It stays small because the declarative path has to work and because a tool with no scriptable surface cannot be tested.
+
+Printer columns on the custom resource carry the remaining time and the lease state, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client.
+
+## Capacity model
+
+Reserved capacity is the only on-demand path. A reserved server is operator-pinned: horizon provisions it on demand against the Hetzner Cloud API and removes it when the lease ends. It boots from the shared pool-node image and joins the cluster with the reserved cloud-init from horizon's configuration.
+
+Ownership is enforced in code. horizon labels each server it creates `horizon.dev/managed-by=horizon` and `horizon.dev/pool=reserved`, and only ever lists or deletes servers carrying the managed-by label. A server that also carries an `hcloud/node-group` marker is refused outright, so a machine belonging to an autoscaler is never touched.
+
+Workload placement is a contract. A pool node labels itself `horizon.dev/pool=<type>` when it joins, and horizon rewrites workload affinity to match the targeted pool and adds the `horizon.dev/burst=true:NoSchedule` toleration on each migrated Deployment and StatefulSet.
+
+horizon carries the Hetzner API token and the node cloud-init in its own configuration, each resolved from an inline value, a file path, an environment variable, or a reference to a single key in a cluster Secret.
 
 ## Architecture
 
 The code follows a hexagonal layout: a presentation-free core of queries and actions surrounded by adapters.
 
-- `internal/core` holds the query surface and action functions and depends on no terminal code.
-- `internal/tui` renders the Bubble Tea dashboard and translates the command line into core calls.
+- `internal/core` holds the query surface and the action functions and depends on no presentation code.
 - `internal/capi` reads Cluster API MachineDeployments for pool-type detection and Flux Kustomization and HelmRelease status.
-- `internal/hcloud` provisions, lists, and deletes reserved servers and reads the in-cluster Hetzner secrets.
-- `internal/k8s` holds the cluster client, node drain, and workload migration.
-
-A burst composes these adapters: it provisions reserved servers through the Hetzner Cloud API, waits for the new nodes to become ready, rewrites the workload's node affinity onto the reserved pool and adds the burst toleration, and waits for the workload to land. A failed migration restores the saved affinity and a failed scale returns the reserved pool to its prior server count.
+- `internal/hcloud` provisions, lists, and deletes reserved servers.
+- `internal/k8s` holds the cluster client, node drain, workload migration, and the Kubernetes API tracer.
+- `internal/provider` declares the provider interface and the node-label constants.
+- `internal/config` loads and validates the configuration file.
+- `internal/cli` holds the cobra root and the version command.
 
 ```mermaid
 flowchart LR
-  horizon[horizon CLI / TUI] -->|up / down / burst reserved| hcloud[Hetzner Cloud API]
-  hcloud --> reserved[(Reserved servers)]
-  horizon -->|observe + migrate| cluster[(Home cluster)]
+  lease[CapacityLease resource] --> controller[horizon controller]
+  controller -->|create and destroy| hcloud[Hetzner Cloud API]
+  hcloud --> servers[(Reserved servers)]
+  controller -->|migrate and restore| cluster[(Home cluster)]
+  web[Web interface] --> lease
 ```
 
 ## Requirements
 
-horizon reads cluster state through a kubeconfig and provisions reserved servers through the Hetzner Cloud API.
-
 Hard requirements:
 
 - A Kubernetes cluster and a kubeconfig with a context that reaches it.
-- For reserved capacity: a Hetzner Cloud token and the reserved node cloud-init, both supplied through the `reserved` config block as a value, a file path, or an environment variable. The shared pool-node image must be present in the Hetzner project.
+- A Hetzner Cloud token and the reserved node cloud-init, both supplied through the `reserved` configuration block as a value, a file path, an environment variable, or a Secret reference. The shared pool-node image must be present in the Hetzner project.
 
-Optional, each gating one feature:
+Optional:
 
-- metrics-server for the dashboard CPU and memory pressure header.
-- cluster-autoscaler for the autoscaler status line, read from the `cluster-autoscaler-status` ConfigMap; bedrock no longer runs one, so this line stays empty there.
-- Flux for the GitOps status line.
-
-### Minimal configuration
-
-A minimal `config.yaml` names the kubeconfig and the target cluster. The pool layout and reserved secret coordinates fall back to the bedrock defaults.
-
-```yaml
-kubeconfig: ""
-cluster: burst
-theme: auto
-
-pools:
-  namespace: caph-system
-  default_type: reserved
-  types:
-    reserved: reserved-workers
-```
-
-The full template is in [`config.example.yaml`](config.example.yaml); the `reserved` block is optional and falls back to the defaults below.
+- metrics-server for the cluster CPU and memory pressure figures.
+- Flux for the GitOps status.
 
 ## Installation
-
-Homebrew is the recommended path once a release is published:
-
-```
-brew install lucawalz/tap/horizon
-```
 
 Building from source needs Go 1.26 or newer:
 
@@ -97,7 +98,7 @@ Building from source needs Go 1.26 or newer:
 go build -o horizon ./cmd/horizon
 ```
 
-Or install it into the Go bin directory:
+Install it into the Go bin directory:
 
 ```
 go install github.com/lucawalz/horizon/cmd/horizon@latest
@@ -105,88 +106,35 @@ go install github.com/lucawalz/horizon/cmd/horizon@latest
 
 `make install` builds and installs the binary into `~/.local/bin`, re-signing it on macOS. Override the destination with `PREFIX`, and remove it with `make uninstall`.
 
-### First run
-
-`horizon init` launches a guided setup that detects the kubeconfig context, queries the cluster to prefill the pool layout, and writes `config.yaml` to the configured path. Running `horizon` with no configuration offers the same setup before opening the dashboard. Prefill needs the cluster reachable; the chosen context is recorded so later runs reuse it.
-
-## Usage
-
-Configuration is read from `$HORIZON_CONFIG_DIR/config.yaml`, then `$XDG_CONFIG_HOME/horizon/config.yaml`, falling back to `~/.config/horizon/config.yaml`.
-
-Running `horizon` with no subcommand launches the interactive command centre, a Bubble Tea dashboard that both observes the cluster and drives every action. Two launch flags scope it: `--context` selects the kubeconfig context, and `--cluster` selects the target cluster.
-
-```
-horizon
-horizon --context homelab --cluster burst
-```
-
-Two subcommands run outside the dashboard. `horizon version` prints the build version and exits, and `horizon init` runs the setup wizard.
-
-### The dashboard
-
-The command centre opens on a split view. A banner names the active context and cluster, a pressure header shows cluster CPU and memory with fixed usage bands and the count of pending pods, and panels on the left list the nodes and the pools with their type and replica state. A command log fills the right, recording each command and its output. The dashboard refreshes on its own as long as it is open, so the figures track the cluster without a manual reload.
-
-The pool panel groups nodes by their `horizon.dev/pool` label and, for the reserved pool, overlays the servers horizon has provisioned but not yet joined, alongside desired and ready counts and per-node state.
-
-### Actions
-
-The dashboard is driven by a command line. Pressing `:` focuses a prompt at the bottom and the output streams into the command log on the right. The dashboard refreshes when a command changes cluster state. Destructive commands ask for confirmation first, and long operations such as a burst stream their progress.
-
-The available commands are:
-
-- `up [--type elastic|reserved] [--replicas N] [<replicas>]` scales the reserved pool up to the requested server count, defaulting to one server.
-- `down [--type elastic|reserved] [--delete]` scales the reserved pool to zero, removing every server horizon provisioned.
-- `burst <namespace> [--type ...] [--replicas n]` provisions reserved servers and migrates the workload onto the new nodes.
-- `drain <node>` cordons a node and evicts its pods.
-- `theme [light|dark|auto]` sets the theme directly, or opens a live picker with no argument. The choice persists to the config file.
-
-The scale and burst actions target a pool type, defaulting to the configured `default_type` (`reserved`). Passing `--type elastic` returns an error, since horizon does not provision elastic capacity and bedrock's autoscaler that once did has been retired. The `--namespace` and `--pool` flags on `up`, `down`, and `burst` override the resolved MachineDeployment namespace and name.
-
-Any command accepts a trailing `--debug` flag. It streams a curated step trace of the action alongside the raw Kubernetes API calls into the command log, dimmed and prefixed for separation, and pauses the periodic refresh for the duration so the trace stays focused on the action. The flag is per-command and off by default.
-
-Navigation is keyboard-only; the mouse is disabled so native terminal text selection works as usual. Outside the command line the arrow keys and pgup/pgdn scroll the log, `r` refreshes, `?` toggles help, and `q` quits. Type `help` at the prompt for the full list of commands.
+Tagged releases publish darwin and linux archives for amd64 and arm64 on the GitHub releases page. No container image and no Homebrew formula are published.
 
 ## Configuration
 
-The config file sets the kubeconfig, the target cluster, the pool layout, and the reserved server coordinates. A template is in [`config.example.yaml`](config.example.yaml).
+Configuration is read from `$HORIZON_CONFIG_DIR/config.yaml`, then `$XDG_CONFIG_HOME/horizon/config.yaml`, falling back to `~/.config/horizon/config.yaml`. A template is in [`config.example.yaml`](config.example.yaml).
 
 Key fields:
 
 - `kubeconfig`: path to the kubeconfig; empty uses the default loading rules.
-- `context`: target kubeconfig context; the `--context` flag overrides it, and the setup wizard records the chosen context here.
+- `context`: target kubeconfig context.
 - `cluster`: default cluster name; falls back to the pool cluster when unset.
-- `theme`: dashboard theme, one of `auto`, `light`, or `dark`; the `theme` picker writes this field. Defaults to `auto`.
-- `pools`: the default `namespace` (`caph-system`), `cluster` (`burst`), `default_type` (`reserved`), and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`). Set `namespace` to the namespace where the provider's MachineDeployments live.
-- `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `cloud_init` are credential sources, each set through one of `value` (inline), `path` (a file read from disk), or `env` (an environment variable name); the cloud-init must already carry the `horizon.dev/pool=reserved` node label. `location` (`hel1`) and `server_type` (`cpx22`) set the server shape. `image.label` (`caph-image-name`) and `image.value` select the boot image by label selector; `image.value` has no default and is required before a reserved server can be provisioned. `ssh_keys` defaults to empty; names are resolved to Hetzner key ids at create time.
+- `pools`: the `namespace` where the provider's MachineDeployments live, the `cluster` name, the `default_type` (`reserved`), and a `types` map from pool type to MachineDeployment name (`reserved` to `reserved-workers`).
+- `reserved`: the Hetzner coordinates for reserved provisioning. `token` and `cloud_init` are credential sources, each set through one of `value` (inline), `path` (a file read from disk), `env` (an environment variable name), or `secret` (a namespace, name, and key in a cluster Secret); the cloud-init must already carry the `horizon.dev/pool=reserved` node label. `location` and `server_type` set the server shape. `image.label` and `image.value` select the boot image by label selector; `image.value` has no default and is required before a reserved server can be provisioned. `ssh_keys` defaults to empty; names are resolved to Hetzner key ids at create time.
 
 ## Releases
 
-Pushing a `v*` tag triggers the GoReleaser workflow, which builds the darwin and linux binaries, publishes a GitHub release, and updates the Homebrew formula in the tap.
-
-The tap requires a one-time operator setup that cannot be automated from this repository:
-
-1. Create a public `lucawalz/homebrew-tap` repository to hold the generated formula.
-2. Add a `HOMEBREW_TAP_GITHUB_TOKEN` repository secret to this repository, holding a personal access token with `contents:write` on the tap.
-
-## How it works
-
-- On-demand capacity is horizon's alone: it provisions and deletes reserved servers directly through the Hetzner Cloud API. bedrock's cluster-autoscaler that once owned an elastic pool has been retired (ADR 0062), so reserved is the only on-demand path; horizon still refuses the elastic type outright.
-- Reserved ownership is enforced in code: horizon only ever lists or deletes servers carrying `horizon.dev/managed-by=horizon`, and refuses any server that also carries an `hcloud/node-group` marker from the retired autoscaler.
-- A burst rolls back on failure: a failed migration restores the saved affinity and a failed scale returns the reserved pool to its prior server count.
-- Workload placement is a contract: a pool node labels itself `horizon.dev/pool=<type>` at join, and horizon rewrites workload affinity to match the targeted pool type.
+Pushing a `v*` tag triggers the GoReleaser workflow, which builds the darwin and linux binaries and publishes a GitHub release with the archives attached.
 
 ## Repository layout
 
 ```
 cmd/horizon/        main entry point
-internal/cli/       cobra root, version, and init commands
-internal/tui/       Bubble Tea command centre, command line, and panels
+internal/cli/       cobra root and version command
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
 internal/capi/      Cluster API client for pool-type detection and Flux status
-internal/provider/  reserved-pool provider interface and node-label constants
+internal/provider/  provider interface and node-label constants
 internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
-internal/k8s/       cluster client, drain, workload migration
+internal/k8s/       cluster client, drain, workload migration, API tracer
 docs/adr/           architecture decision records
 ```
 
@@ -194,13 +142,17 @@ docs/adr/           architecture decision records
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build, test, branch, and commit conventions. In short: `go build ./...`, `go test ./...`, and `golangci-lint run`, then open a PR against `main`; CI runs the same checks.
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the supported versions and how to report a vulnerability.
+
 ## Support
 
 Open an issue on the [GitHub repository](https://github.com/lucawalz/horizon/issues).
 
 ## Authors and acknowledgment
 
-Built and maintained by Luca Walz. It builds on cobra, viper, Bubble Tea, controller-runtime, client-go, the Cluster API libraries, and the Hetzner Cloud SDK.
+Built and maintained by Luca Walz. It builds on cobra, viper, controller-runtime, client-go, the Cluster API libraries, and the Hetzner Cloud SDK.
 
 ## License
 
@@ -209,5 +161,3 @@ Released under the MIT License. See [LICENSE](LICENSE).
 ## Project status
 
 Actively developed alongside the bedrock homelab.
-</content>
-</invoke>
