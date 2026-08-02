@@ -72,6 +72,30 @@ func TestCapacityLeaseDurationBounds(t *testing.T) {
 	}
 }
 
+func TestCapacityLeaseTeardownGraceBounds(t *testing.T) {
+	tests := []struct {
+		name         string
+		grace        time.Duration
+		wantRejected bool
+	}{
+		{"zero", 0, false},
+		{"two minutes", 2 * time.Minute, false},
+		{"fifteen minutes", 15 * time.Minute, false},
+		{"just over fifteen minutes", 15*time.Minute + time.Millisecond, true},
+		{"one hour", time.Hour, true},
+		{"negative", -time.Second, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := apiServerClient(t)
+			lease := validLease(t)
+			lease.Spec.TeardownGrace = &metav1.Duration{Duration: tc.grace}
+			assertCreate(t, c, lease, tc.wantRejected)
+		})
+	}
+}
+
 func TestCapacityLeaseRejectsEmptyStringFields(t *testing.T) {
 	tests := []struct {
 		name  string

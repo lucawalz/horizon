@@ -81,6 +81,9 @@ spec:
               teardownGrace:
                 default: 2m
                 type: string
+                x-kubernetes-validations:
+                - message: teardownGrace must be between 0s and 15m
+                  rule: duration(self) >= duration('0s') && duration(self) <= duration('15m')
               workload:
                 properties:
                   namespace:

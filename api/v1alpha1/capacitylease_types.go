@@ -59,6 +59,7 @@ type CapacityLeaseSpec struct {
 	Workload *WorkloadRef `json:"workload,omitempty"`
 
 	// +kubebuilder:default="2m"
+	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s') && duration(self) <= duration('15m')",message="teardownGrace must be between 0s and 15m"
 	// +optional
 	TeardownGrace *metav1.Duration `json:"teardownGrace,omitempty"`
 }
