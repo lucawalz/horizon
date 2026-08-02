@@ -5,6 +5,8 @@ date: 2026-08-02
 
 # 0019. Replace the terminal interface with a web interface and printer columns
 
+Unimplemented in part as of the first release: no web interface is served, and the chart ships no plumbing for one, so the decision below that the chart enables the in-cluster mode by default describes an intent rather than the shipped behaviour. The decision stands and is re-established when the interface lands.
+
 ## Context
 
 [0009](0009-interactive-tui-as-primary-interface.md) made an interactive terminal application the primary interface, and [0011](0011-first-run-setup-wizard.md) added a first-run wizard to it. Together they are 3,816 lines across 27 files including tests, the largest layer in the project, of which the wizard alone is 747.
