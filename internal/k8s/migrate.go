@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"time"
 
 	"github.com/lucawalz/horizon/internal/provider"
 	corev1 "k8s.io/api/core/v1"
@@ -16,22 +15,17 @@ import (
 )
 
 const (
-	PoolLabelKey     = provider.PoolLabelKey
-	BurstTaintKey    = "horizon.dev/burst"
-	burstTaintEffect = corev1.TaintEffectNoSchedule
+	PoolLabelKey              = provider.PoolLabelKey
+	BurstTaintKey             = "horizon.dev/burst"
+	PrePlacementAnnotationKey = "horizon.dev/pre-burst-placement"
+	BurstPlacementLabelKey    = "horizon.dev/burst-placement"
+	BurstPlacementLabelValue  = "true"
+	burstTaintEffect          = corev1.TaintEffectNoSchedule
+	kindDeployment            = "deployment"
+	kindStatefulSet           = "statefulset"
+	strategicPatchDirective   = "$patch"
+	strategicPatchReplace     = "replace"
 )
-
-type savedSpec struct {
-	name               string
-	originalAffinity   []byte
-	originalToleration []byte
-}
-
-type SavedState struct {
-	deployments  []savedSpec
-	statefulSets []savedSpec
-	namespace    string
-}
 
 var namespaceNameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
@@ -45,22 +39,65 @@ func ValidateNamespace(ns string) error {
 	return nil
 }
 
-type podSpecPatch struct {
-	Spec struct {
+type savedPlacement struct {
+	Affinity    *corev1.Affinity    `json:"affinity,omitempty"`
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+}
+
+type metadataPatch struct {
+	Annotations map[string]*string `json:"annotations"`
+	Labels      map[string]*string `json:"labels"`
+}
+
+type placementPatch struct {
+	Metadata metadataPatch `json:"metadata"`
+	Spec     struct {
 		Template struct {
 			Spec struct {
-				Affinity    *corev1.Affinity    `json:"affinity"`
+				Affinity    any                 `json:"affinity"`
 				Tolerations []corev1.Toleration `json:"tolerations"`
 			} `json:"spec"`
 		} `json:"template"`
 	} `json:"spec"`
 }
 
-func buildPodSpecPatch(a *corev1.Affinity, tolerations []corev1.Toleration) ([]byte, error) {
-	p := podSpecPatch{}
-	p.Spec.Template.Spec.Affinity = a
+func buildPlacementPatch(meta metadataPatch, affinity any, tolerations []corev1.Toleration) ([]byte, error) {
+	p := placementPatch{Metadata: meta}
+	p.Spec.Template.Spec.Affinity = affinity
 	p.Spec.Template.Spec.Tolerations = tolerations
 	return json.Marshal(p)
+}
+
+// Merging would leave the burst nodeAffinity in place beside the restored rules.
+func replacingAffinity(a *corev1.Affinity, kind, name string) (map[string]any, error) {
+	if a == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(a)
+	if err != nil {
+		return nil, fmt.Errorf("restore-placement: marshal affinity for %s %q: %w", kind, name, err)
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, fmt.Errorf("restore-placement: decode affinity for %s %q: %w", kind, name, err)
+	}
+	fields[strategicPatchDirective] = strategicPatchReplace
+	return fields, nil
+}
+
+func savedPlacementMarkers(placement string) metadataPatch {
+	value := BurstPlacementLabelValue
+	return metadataPatch{
+		Annotations: map[string]*string{PrePlacementAnnotationKey: &placement},
+		Labels:      map[string]*string{BurstPlacementLabelKey: &value},
+	}
+}
+
+func clearedPlacementMarkers() metadataPatch {
+	return metadataPatch{
+		Annotations: map[string]*string{PrePlacementAnnotationKey: nil},
+		Labels:      map[string]*string{BurstPlacementLabelKey: nil},
+	}
 }
 
 func burstToleration() corev1.Toleration {
@@ -87,7 +124,84 @@ func poolNodeAffinity(poolLabelValue string) *corev1.Affinity {
 	}
 }
 
-func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelValue string) (*SavedState, error) {
+type workloadTarget struct {
+	name        string
+	annotations map[string]string
+	podSpec     *corev1.PodSpec
+}
+
+type workloadClient struct {
+	kind      string
+	namespace string
+	list      func(ctx context.Context) ([]workloadTarget, error)
+	patch     func(ctx context.Context, name string, data []byte) error
+}
+
+func (wc workloadClient) plural() string {
+	return wc.kind + "s"
+}
+
+func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient {
+	api := kc.AppsV1().Deployments(namespace)
+	return workloadClient{
+		kind:      kindDeployment,
+		namespace: namespace,
+		list: func(ctx context.Context) ([]workloadTarget, error) {
+			list, err := api.List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return nil, err
+			}
+			targets := make([]workloadTarget, 0, len(list.Items))
+			for i := range list.Items {
+				item := &list.Items[i]
+				targets = append(targets, workloadTarget{
+					name:        item.Name,
+					annotations: item.Annotations,
+					podSpec:     &item.Spec.Template.Spec,
+				})
+			}
+			return targets, nil
+		},
+		patch: func(ctx context.Context, name string, data []byte) error {
+			_, err := api.Patch(ctx, name, types.StrategicMergePatchType, data, metav1.PatchOptions{})
+			return err
+		},
+	}
+}
+
+func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient {
+	api := kc.AppsV1().StatefulSets(namespace)
+	return workloadClient{
+		kind:      kindStatefulSet,
+		namespace: namespace,
+		list: func(ctx context.Context) ([]workloadTarget, error) {
+			list, err := api.List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return nil, err
+			}
+			targets := make([]workloadTarget, 0, len(list.Items))
+			for i := range list.Items {
+				item := &list.Items[i]
+				targets = append(targets, workloadTarget{
+					name:        item.Name,
+					annotations: item.Annotations,
+					podSpec:     &item.Spec.Template.Spec,
+				})
+			}
+			return targets, nil
+		},
+		patch: func(ctx context.Context, name string, data []byte) error {
+			_, err := api.Patch(ctx, name, types.StrategicMergePatchType, data, metav1.PatchOptions{})
+			return err
+		},
+	}
+}
+
+func workloadClients(kc kubernetes.Interface, namespace string) []workloadClient {
+	return []workloadClient{deploymentClient(kc, namespace), statefulSetClient(kc, namespace)}
+}
+
+func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelValue string) ([]string, error) {
 	if err := ValidateNamespace(namespace); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -105,71 +219,55 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelV
 
 	targetAffinity := poolNodeAffinity(poolLabelValue)
 
-	state := &SavedState{namespace: namespace}
-	if err := migrateDeployments(ctx, kc, namespace, targetAffinity, state); err != nil {
-		return state, err
-	}
-	if err := migrateStatefulSets(ctx, kc, namespace, targetAffinity, state); err != nil {
-		return state, err
-	}
-	if err := evictNonDaemonSetPods(ctx, kc, namespace, "migrate"); err != nil {
-		return state, err
-	}
-	return state, nil
-}
-
-func migrateDeployments(ctx context.Context, kc kubernetes.Interface, namespace string, affinity *corev1.Affinity, state *SavedState) error {
-	deps, err := kc.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("migrate: list deployments in %q: %w", namespace, err)
-	}
-	for i := range deps.Items {
-		d := deps.Items[i]
-		saved, patchData, err := buildMigratePatch(d.Name, &d.Spec.Template.Spec, affinity)
+	var patched []string
+	for _, wc := range workloadClients(kc, namespace) {
+		names, err := migrateWorkloads(ctx, wc, targetAffinity)
+		patched = append(patched, names...)
 		if err != nil {
-			return err
-		}
-		state.deployments = append(state.deployments, saved)
-		if _, err := kc.AppsV1().Deployments(namespace).Patch(ctx, d.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			return fmt.Errorf("migrate: patch deployment %q: %w", d.Name, err)
+			return patched, err
 		}
 	}
-	return nil
+	if len(patched) == 0 {
+		return patched, nil
+	}
+	if err := evictNonDaemonSetPods(ctx, kc, namespace); err != nil {
+		return patched, err
+	}
+	return patched, nil
 }
 
-func migrateStatefulSets(ctx context.Context, kc kubernetes.Interface, namespace string, affinity *corev1.Affinity, state *SavedState) error {
-	stss, err := kc.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+func migrateWorkloads(ctx context.Context, wc workloadClient, affinity *corev1.Affinity) ([]string, error) {
+	targets, err := wc.list(ctx)
 	if err != nil {
-		return fmt.Errorf("migrate: list statefulsets in %q: %w", namespace, err)
+		return nil, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
 	}
-	for i := range stss.Items {
-		s := stss.Items[i]
-		saved, patchData, err := buildMigratePatch(s.Name, &s.Spec.Template.Spec, affinity)
+	var patched []string
+	for _, t := range targets {
+		if _, ok := t.annotations[PrePlacementAnnotationKey]; ok {
+			continue
+		}
+		patchData, err := buildMigratePatch(t, affinity)
 		if err != nil {
-			return err
+			return patched, err
 		}
-		state.statefulSets = append(state.statefulSets, saved)
-		if _, err := kc.AppsV1().StatefulSets(namespace).Patch(ctx, s.Name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			return fmt.Errorf("migrate: patch statefulset %q: %w", s.Name, err)
+		if err := wc.patch(ctx, t.name, patchData); err != nil {
+			return patched, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
 		}
+		patched = append(patched, wc.kind+"/"+t.name)
 	}
-	return nil
+	return patched, nil
 }
 
-func buildMigratePatch(name string, podSpec *corev1.PodSpec, affinity *corev1.Affinity) (savedSpec, []byte, error) {
-	origAffinity, err := marshalAffinity(podSpec.Affinity, name)
+func buildMigratePatch(t workloadTarget, affinity *corev1.Affinity) ([]byte, error) {
+	placement, err := marshalPlacement(t.podSpec, t.name)
 	if err != nil {
-		return savedSpec{}, nil, err
+		return nil, err
 	}
-	origTolerations, err := marshalTolerations(podSpec.Tolerations, name)
+	patchData, err := buildPlacementPatch(savedPlacementMarkers(placement), affinity, withBurstToleration(t.podSpec.Tolerations))
 	if err != nil {
-		return savedSpec{}, nil, err
+		return nil, fmt.Errorf("migrate: marshal patch for %q: %w", t.name, err)
 	}
-	patchData, err := buildPodSpecPatch(affinity, withBurstToleration(podSpec.Tolerations))
-	if err != nil {
-		return savedSpec{}, nil, fmt.Errorf("migrate: marshal patch for %q: %w", name, err)
-	}
-	return savedSpec{name: name, originalAffinity: origAffinity, originalToleration: origTolerations}, patchData, nil
+	return patchData, nil
 }
 
 func withBurstToleration(existing []corev1.Toleration) []corev1.Toleration {
@@ -181,32 +279,18 @@ func withBurstToleration(existing []corev1.Toleration) []corev1.Toleration {
 	return append(append([]corev1.Toleration{}, existing...), burstToleration())
 }
 
-func marshalAffinity(a *corev1.Affinity, name string) ([]byte, error) {
-	if a == nil {
-		return nil, nil
-	}
-	orig, err := json.Marshal(a)
+func marshalPlacement(podSpec *corev1.PodSpec, name string) (string, error) {
+	data, err := json.Marshal(savedPlacement{Affinity: podSpec.Affinity, Tolerations: podSpec.Tolerations})
 	if err != nil {
-		return nil, fmt.Errorf("migrate: marshal affinity for %q: %w", name, err)
+		return "", fmt.Errorf("migrate: marshal placement for %q: %w", name, err)
 	}
-	return orig, nil
+	return string(data), nil
 }
 
-func marshalTolerations(t []corev1.Toleration, name string) ([]byte, error) {
-	if t == nil {
-		return nil, nil
-	}
-	orig, err := json.Marshal(t)
-	if err != nil {
-		return nil, fmt.Errorf("migrate: marshal tolerations for %q: %w", name, err)
-	}
-	return orig, nil
-}
-
-func evictNonDaemonSetPods(ctx context.Context, kc kubernetes.Interface, namespace, op string) error {
+func evictNonDaemonSetPods(ctx context.Context, kc kubernetes.Interface, namespace string) error {
 	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("%s: list pods in %q: %w", op, namespace, err)
+		return fmt.Errorf("migrate: list pods in %q: %w", namespace, err)
 	}
 	for i := range pods.Items {
 		pod := pods.Items[i]
@@ -215,29 +299,24 @@ func evictNonDaemonSetPods(ctx context.Context, kc kubernetes.Interface, namespa
 		}
 		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
 		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			return fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err)
+			return fmt.Errorf("migrate: evict %s/%s: %w", pod.Namespace, pod.Name, err)
 		}
 	}
 	return nil
 }
 
-func restoreSpecPatch(ss savedSpec, kind string) ([]byte, error) {
-	var affinity *corev1.Affinity
-	if ss.originalAffinity != nil {
-		affinity = &corev1.Affinity{}
-		if err := json.Unmarshal(ss.originalAffinity, affinity); err != nil {
-			return nil, fmt.Errorf("rollback-migrate: unmarshal affinity for %s %q: %w", kind, ss.name, err)
-		}
+func buildRestorePatch(kind, name, placement string) ([]byte, error) {
+	var saved savedPlacement
+	if err := json.Unmarshal([]byte(placement), &saved); err != nil {
+		return nil, fmt.Errorf("restore-placement: unmarshal placement for %s %q: %w", kind, name, err)
 	}
-	var tolerations []corev1.Toleration
-	if ss.originalToleration != nil {
-		if err := json.Unmarshal(ss.originalToleration, &tolerations); err != nil {
-			return nil, fmt.Errorf("rollback-migrate: unmarshal tolerations for %s %q: %w", kind, ss.name, err)
-		}
-	}
-	patchData, err := buildPodSpecPatch(affinity, tolerations)
+	affinity, err := replacingAffinity(saved.Affinity, kind, name)
 	if err != nil {
-		return nil, fmt.Errorf("rollback-migrate: marshal patch for %s %q: %w", kind, ss.name, err)
+		return nil, err
+	}
+	patchData, err := buildPlacementPatch(clearedPlacementMarkers(), affinity, saved.Tolerations)
+	if err != nil {
+		return nil, fmt.Errorf("restore-placement: marshal patch for %s %q: %w", kind, name, err)
 	}
 	return patchData, nil
 }
@@ -248,43 +327,55 @@ func recordFirst(firstErr *error, err error) {
 	}
 }
 
-func RollbackMigrate(ctx context.Context, kc kubernetes.Interface, state *SavedState) error {
-	if state == nil {
-		return nil
+func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace string) ([]string, error) {
+	if err := ValidateNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("restore-placement: %w", err)
 	}
 
+	var restored []string
 	var firstErr error
+	for _, wc := range workloadClients(kc, namespace) {
+		names, err := restoreWorkloads(ctx, wc)
+		restored = append(restored, names...)
+		recordFirst(&firstErr, err)
+	}
+	if len(restored) == 0 {
+		return nil, firstErr
+	}
+	recordFirst(&firstErr, evictNonDaemonSetPodsBestEffort(ctx, kc, namespace))
+	return restored, firstErr
+}
 
-	for _, ss := range state.deployments {
-		patchData, err := restoreSpecPatch(ss, "deployment")
+func restoreWorkloads(ctx context.Context, wc workloadClient) ([]string, error) {
+	targets, err := wc.list(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("restore-placement: list %s in %q: %w", wc.plural(), wc.namespace, err)
+	}
+	var restored []string
+	var firstErr error
+	for _, t := range targets {
+		placement, ok := t.annotations[PrePlacementAnnotationKey]
+		if !ok {
+			continue
+		}
+		patchData, err := buildRestorePatch(wc.kind, t.name, placement)
 		if err != nil {
 			recordFirst(&firstErr, err)
 			continue
 		}
-		if _, err := kc.AppsV1().Deployments(state.namespace).Patch(ctx, ss.name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			recordFirst(&firstErr, fmt.Errorf("rollback-migrate: patch deployment %q: %w", ss.name, err))
-		}
-	}
-
-	for _, ss := range state.statefulSets {
-		patchData, err := restoreSpecPatch(ss, "statefulset")
-		if err != nil {
-			recordFirst(&firstErr, err)
+		if err := wc.patch(ctx, t.name, patchData); err != nil {
+			recordFirst(&firstErr, fmt.Errorf("restore-placement: patch %s %q: %w", wc.kind, t.name, err))
 			continue
 		}
-		if _, err := kc.AppsV1().StatefulSets(state.namespace).Patch(ctx, ss.name, types.StrategicMergePatchType, patchData, metav1.PatchOptions{}); err != nil {
-			recordFirst(&firstErr, fmt.Errorf("rollback-migrate: patch statefulset %q: %w", ss.name, err))
-		}
+		restored = append(restored, wc.kind+"/"+t.name)
 	}
-
-	recordFirst(&firstErr, evictNonDaemonSetPodsBestEffort(ctx, kc, state.namespace))
-	return firstErr
+	return restored, firstErr
 }
 
 func evictNonDaemonSetPodsBestEffort(ctx context.Context, kc kubernetes.Interface, namespace string) error {
 	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("rollback-migrate: list pods in %q: %w", namespace, err)
+		return fmt.Errorf("restore-placement: list pods in %q: %w", namespace, err)
 	}
 	var firstErr error
 	for i := range pods.Items {
@@ -294,7 +385,7 @@ func evictNonDaemonSetPodsBestEffort(ctx context.Context, kc kubernetes.Interfac
 		}
 		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
 		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			recordFirst(&firstErr, fmt.Errorf("rollback-migrate: evict %s/%s: %w", pod.Namespace, pod.Name, err))
+			recordFirst(&firstErr, fmt.Errorf("restore-placement: evict %s/%s: %w", pod.Namespace, pod.Name, err))
 		}
 	}
 	return firstErr
@@ -322,52 +413,30 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 	return false
 }
 
-func WaitWorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, poll, timeout time.Duration) error {
+func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string) (bool, error) {
 	if namespace == "" {
-		return fmt.Errorf("wait-pods: namespace must not be empty")
+		return false, fmt.Errorf("workload-on-burst-nodes: namespace must not be empty")
 	}
-	pollCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	ticker := time.NewTicker(poll)
-	defer ticker.Stop()
-	for {
-		if burstNodes, err := poolNodes(pollCtx, kc); err == nil {
-			if ready, perr := workloadSpreadReady(pollCtx, kc, namespace, burstNodes); perr == nil && ready {
-				return nil
-			}
-		}
-		select {
-		case <-pollCtx.Done():
-			if ctx.Err() != nil {
-				return fmt.Errorf("wait-pods: %w", ctx.Err())
-			}
-			return fmt.Errorf("wait-pods: timeout after %s", timeout)
-		case <-ticker.C:
-		}
+	burstNodes, err := poolNodes(ctx, kc)
+	if err != nil {
+		return false, fmt.Errorf("workload-on-burst-nodes: list nodes: %w", err)
 	}
+	spread, err := workloadSpreadReady(ctx, kc, namespace, burstNodes)
+	if err != nil {
+		return false, fmt.Errorf("workload-on-burst-nodes: list pods in %q: %w", namespace, err)
+	}
+	return spread, nil
 }
 
-func WaitReservedNodesReady(ctx context.Context, kc kubernetes.Interface, poolValue string, want int, poll, timeout time.Duration) error {
+func ReservedNodesReady(ctx context.Context, kc kubernetes.Interface, poolValue string, want int) (bool, error) {
 	if poolValue == "" {
-		return fmt.Errorf("wait-nodes: pool label value must not be empty")
+		return false, fmt.Errorf("reserved-nodes-ready: pool label value must not be empty")
 	}
-	pollCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	ticker := time.NewTicker(poll)
-	defer ticker.Stop()
-	for {
-		if ready, err := readyPoolNodeCount(pollCtx, kc, poolValue); err == nil && ready >= want {
-			return nil
-		}
-		select {
-		case <-pollCtx.Done():
-			if ctx.Err() != nil {
-				return fmt.Errorf("wait-nodes: %w", ctx.Err())
-			}
-			return fmt.Errorf("wait-nodes: timeout after %s waiting for %d ready %s=%s nodes", timeout, want, PoolLabelKey, poolValue)
-		case <-ticker.C:
-		}
+	ready, err := readyPoolNodeCount(ctx, kc, poolValue)
+	if err != nil {
+		return false, fmt.Errorf("reserved-nodes-ready: list nodes: %w", err)
 	}
+	return ready >= want, nil
 }
 
 func readyPoolNodeCount(ctx context.Context, kc kubernetes.Interface, poolValue string) (int, error) {
