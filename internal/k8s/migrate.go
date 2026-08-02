@@ -427,44 +427,6 @@ func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespac
 	return spread, nil
 }
 
-func ReservedNodesReady(ctx context.Context, kc kubernetes.Interface, poolValue string, want int) (bool, error) {
-	if poolValue == "" {
-		return false, fmt.Errorf("reserved-nodes-ready: pool label value must not be empty")
-	}
-	ready, err := readyPoolNodeCount(ctx, kc, poolValue)
-	if err != nil {
-		return false, fmt.Errorf("reserved-nodes-ready: list nodes: %w", err)
-	}
-	return ready >= want, nil
-}
-
-func readyPoolNodeCount(ctx context.Context, kc kubernetes.Interface, poolValue string) (int, error) {
-	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return 0, err
-	}
-	ready := 0
-	for i := range nodes.Items {
-		n := nodes.Items[i]
-		if n.Labels[PoolLabelKey] != poolValue {
-			continue
-		}
-		if nodeReady(&n) {
-			ready++
-		}
-	}
-	return ready, nil
-}
-
-func nodeReady(node *corev1.Node) bool {
-	for _, c := range node.Status.Conditions {
-		if c.Type == corev1.NodeReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
-}
-
 func poolNodes(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
