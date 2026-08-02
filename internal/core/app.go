@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider"
@@ -18,7 +17,7 @@ type App struct {
 	Config        *config.Config
 	KubeClient    kubernetes.Interface
 	MetricsClient metricsclient.Interface
-	CapiClient    *capi.Client
+	FluxClient    *k8s.FluxClient
 	Cluster       string
 	Context       string
 	NewReserved   ReservedProviderFunc
@@ -45,9 +44,9 @@ func NewApp(contextName, clusterName string, reserved ReservedProviderFunc) (*Ap
 		return nil, fmt.Errorf("metrics client: %w", err)
 	}
 
-	cc, err := capi.NewClientForContext(cfg.Kubeconfig, effectiveContext)
+	fc, err := k8s.NewFluxClient(cfg.Kubeconfig, effectiveContext)
 	if err != nil {
-		return nil, fmt.Errorf("capi client: %w", err)
+		return nil, fmt.Errorf("flux client: %w", err)
 	}
 
 	cluster := clusterName
@@ -59,7 +58,7 @@ func NewApp(contextName, clusterName string, reserved ReservedProviderFunc) (*Ap
 		Config:        cfg,
 		KubeClient:    kc,
 		MetricsClient: mc,
-		CapiClient:    cc,
+		FluxClient:    fc,
 		Cluster:       cluster,
 		Context:       effectiveContext,
 		NewReserved:   reserved,

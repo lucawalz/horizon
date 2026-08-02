@@ -4,17 +4,13 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/core"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func fluxResource(apiVersion, kind, name string, ready bool) *unstructured.Unstructured {
@@ -30,24 +26,6 @@ func fluxResource(apiVersion, kind, name string, ready bool) *unstructured.Unstr
 			"conditions": []any{map[string]any{"type": "Ready", "status": status}},
 		},
 	}}
-}
-
-func fluxCapiClient(t *testing.T, objs ...client.Object) *capi.Client {
-	t.Helper()
-	s, err := capi.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme: %v", err)
-	}
-	kinds := map[schema.GroupVersion]string{
-		{Group: "kustomize.toolkit.fluxcd.io", Version: "v1"}: "Kustomization",
-		{Group: "helm.toolkit.fluxcd.io", Version: "v2"}:      "HelmRelease",
-	}
-	for gv, kind := range kinds {
-		s.AddKnownTypeWithName(gv.WithKind(kind), &unstructured.Unstructured{})
-		s.AddKnownTypeWithName(gv.WithKind(kind+"List"), &unstructured.UnstructuredList{})
-	}
-	cl := crfake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
-	return capi.NewClientWithCRClient(cl)
 }
 
 func podWithPhase(name string, phase corev1.PodPhase) *corev1.Pod {
@@ -98,7 +76,6 @@ func TestBuildSnapshotWorkloadCounts(t *testing.T) {
 		deployment("web", 3, 2),
 		deployment("api", 2, 2),
 	)
-	app.CapiClient = burstCapiClient(t)
 
 	snap := core.BuildSnapshot(context.Background(), app)
 	w := snap.Workload
@@ -127,7 +104,6 @@ func TestBuildSnapshotNodeHealthHeadroom(t *testing.T) {
 		podWithRequests("p1", "1", "2Gi"),
 		podWithRequests("p2", "1", "2Gi"),
 	)
-	app.CapiClient = burstCapiClient(t)
 
 	snap := core.BuildSnapshot(context.Background(), app)
 	h := snap.NodeHealth
@@ -148,7 +124,7 @@ func TestBuildSnapshotNodeHealthHeadroom(t *testing.T) {
 func TestFluxKindReadyCounts(t *testing.T) {
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset()
-	app.CapiClient = fluxCapiClient(t,
+	app.FluxClient = fluxClient(
 		fluxResource("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "infra", true),
 		fluxResource("kustomize.toolkit.fluxcd.io/v1", "Kustomization", "apps", false),
 		fluxResource("helm.toolkit.fluxcd.io/v2", "HelmRelease", "traefik", true),

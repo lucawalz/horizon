@@ -5,18 +5,18 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lucawalz/horizon/internal/capi"
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/core"
+	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
-	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	crfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 type fakeProvider struct {
@@ -72,6 +72,7 @@ func newTestApp() *core.App {
 	return &core.App{
 		Cluster:       "burst",
 		MetricsClient: metricsfake.NewSimpleClientset(),
+		FluxClient:    fluxClient(),
 		Config: &config.Config{
 			Cluster: "burst",
 			Pools:   testPoolDefaults(),
@@ -125,47 +126,13 @@ func readyNode(name string) *corev1.Node {
 	}
 }
 
-func capiScheme(t *testing.T) *crfake.ClientBuilder {
-	t.Helper()
-	s, err := capi.NewScheme()
-	if err != nil {
-		t.Fatalf("NewScheme: %v", err)
+func fluxClient(objs ...runtime.Object) *k8s.FluxClient {
+	listKinds := map[schema.GroupVersionResource]string{
+		{Group: "kustomize.toolkit.fluxcd.io", Version: "v1", Resource: "kustomizations"}: "KustomizationList",
+		{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"}:        "HelmReleaseList",
 	}
-	return crfake.NewClientBuilder().WithScheme(s)
-}
-
-func machineDeployment(namespace, name, cluster string, replicas int32) *clusterv1.MachineDeployment {
-	return &clusterv1.MachineDeployment{
-		ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name},
-		Spec: clusterv1.MachineDeploymentSpec{
-			ClusterName: cluster,
-			Replicas:    &replicas,
-		},
-	}
-}
-
-func mdWithType(namespace, name, cluster, poolType string, desired, ready int32) *clusterv1.MachineDeployment {
-	md := machineDeployment(namespace, name, cluster, desired)
-	md.Labels = map[string]string{
-		"horizon.dev/managed-by":   "horizon",
-		clusterv1.ClusterNameLabel: cluster,
-	}
-	if poolType != "" {
-		md.Labels["horizon.dev/pool-type"] = poolType
-	}
-	md.Status.ReadyReplicas = &ready
-	return md
-}
-
-func burstCapiClient(t *testing.T, objs ...client.Object) *capi.Client {
-	t.Helper()
-	cl := capiScheme(t).WithObjects(objs...).Build()
-	return capi.NewClientWithCRClient(cl)
-}
-
-func noCapiClient(t *testing.T) *capi.Client {
-	t.Helper()
-	return capi.NewClientWithCRClient(crfake.NewClientBuilder().Build())
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds, objs...)
+	return k8s.NewFluxClientWithDynamic(dyn)
 }
 
 func collectProgress(msgs *[]string) core.Progress {

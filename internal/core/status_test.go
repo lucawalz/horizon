@@ -174,7 +174,6 @@ func TestBuildSnapshotAssemblesSections(t *testing.T) {
 	app := newTestApp()
 	app.KubeClient = fake.NewSimpleClientset(worker, reserved)
 	app.MetricsClient = metricsClient(t, nodeMetrics("worker-1", "1", "2Gi"))
-	app.CapiClient = burstCapiClient(t)
 
 	snap := core.BuildSnapshot(context.Background(), app)
 	if snap.NodesErr != nil || len(snap.Nodes) != 2 {

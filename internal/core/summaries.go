@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 
-	"github.com/lucawalz/horizon/internal/capi"
+	"github.com/lucawalz/horizon/internal/k8s"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -142,7 +142,7 @@ func nodePressure(node *corev1.Node) NodePressure {
 	return p
 }
 
-func fluxKind(resources []capi.FluxResource) FluxKind {
+func fluxKind(resources []k8s.FluxResource) FluxKind {
 	k := FluxKind{Total: len(resources)}
 	for _, r := range resources {
 		if r.Ready {
@@ -156,13 +156,13 @@ func fluxKind(resources []capi.FluxResource) FluxKind {
 
 func fluxSummary(ctx context.Context, app *App) FluxSummary {
 	var s FluxSummary
-	kustomizations, kErr := app.CapiClient.ListKustomizations(ctx)
+	kustomizations, kErr := app.FluxClient.ListKustomizations(ctx)
 	if kErr != nil {
 		s.KustomizationsErr = kErr
 	} else {
 		s.Kustomizations = fluxKind(kustomizations)
 	}
-	helmReleases, hErr := app.CapiClient.ListHelmReleases(ctx)
+	helmReleases, hErr := app.FluxClient.ListHelmReleases(ctx)
 	if hErr != nil {
 		s.HelmReleasesErr = hErr
 	} else {

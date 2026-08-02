@@ -47,7 +47,7 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 **Format**: `<type>[optional scope]: <description>`
 
 - Description: brief, imperative, lowercase, 7–12 words
-- Scope: component name (`cli`, `core`, `capi`, `k8s`, `config`, and so on)
+- Scope: component name (`cli`, `core`, `hcloud`, `k8s`, `config`, and so on)
 - No period at end of subject line
 - Subject line only, no body, no bullet points
 
@@ -56,7 +56,7 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 **Examples**:
 
 ```
-feat(capi): apply machinedeployment for reserved pool
+feat(hcloud): reuse the cached image lookup for reserved servers
 fix(core): log rollback errors to stderr instead of discarding
 chore: bump k8s client-go to v0.35
 ```

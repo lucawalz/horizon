@@ -24,7 +24,7 @@ What works today:
 
 - reserved server provisioning against the Hetzner Cloud API, with ownership labels that stop horizon touching a machine it did not create
 - workload migration onto and off the provisioned nodes, and node drain
-- cluster queries for nodes, pools, workloads, Cluster API MachineDeployments, and Flux status
+- cluster queries for nodes, pools, workloads, and Flux status
 - `horizon version`
 
 What is still to come:
@@ -62,9 +62,8 @@ horizon carries the Hetzner API token and the node cloud-init in its own configu
 The code follows a hexagonal layout: a presentation-free core of queries and actions surrounded by adapters.
 
 - `internal/core` holds the query surface and the action functions and depends on no presentation code.
-- `internal/capi` reads Cluster API MachineDeployments for pool-type detection and Flux Kustomization and HelmRelease status.
 - `internal/hcloud` provisions, lists, and deletes reserved servers.
-- `internal/k8s` holds the cluster client, node drain, workload migration, and the Kubernetes API tracer.
+- `internal/k8s` holds the cluster client, node drain, workload migration, Flux Kustomization and HelmRelease status, and the Kubernetes API tracer.
 - `internal/provider` declares the provider interface and the node-label constants.
 - `internal/config` loads and validates the configuration file.
 - `internal/cli` holds the cobra root and the version command.
@@ -131,10 +130,9 @@ cmd/horizon/        main entry point
 internal/cli/       cobra root and version command
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
-internal/capi/      Cluster API client for pool-type detection and Flux status
 internal/provider/  provider interface and node-label constants
 internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
-internal/k8s/       cluster client, drain, workload migration, API tracer
+internal/k8s/       cluster client, drain, workload migration, Flux status, API tracer
 docs/adr/           architecture decision records
 ```
 
