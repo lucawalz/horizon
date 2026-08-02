@@ -63,7 +63,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 		}
 	}
 	if joined < want {
-		return r.requeueAfter(lease, leasePollInterval), nil
+		return r.nextPoll(lease), nil
 	}
 	return ctrl.Result{}, nil
 }

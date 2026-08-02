@@ -105,7 +105,7 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return res, err
 	}
 
-	return r.requeueAfter(lease, leasePollInterval), nil
+	return r.nextPoll(lease), nil
 }
 
 func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -168,7 +168,8 @@ func (r *CapacityLeaseReconciler) expire(ctx context.Context, lease *v1alpha1.Ca
 	return r.teardown(ctx, lease)
 }
 
-func (r *CapacityLeaseReconciler) requeueAfter(lease *v1alpha1.CapacityLease, after time.Duration) ctrl.Result {
+func (r *CapacityLeaseReconciler) nextPoll(lease *v1alpha1.CapacityLease) ctrl.Result {
+	after := leasePollInterval
 	if lease.Status.ExpiresAt != nil {
 		if remaining := lease.Status.ExpiresAt.Sub(r.now()); remaining > 0 && remaining < after {
 			after = remaining
