@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -85,7 +86,16 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		return nil, fmt.Errorf("add readiness check: %w", err)
 	}
 
-	reconciler := &controller.CapacityLeaseReconciler{Client: mgr.GetClient()}
+	kube, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("build kubernetes clientset: %w", err)
+	}
+
+	reconciler := &controller.CapacityLeaseReconciler{
+		Client:   mgr.GetClient(),
+		Kube:     kube,
+		Provider: controller.NewProviderFactory(kube),
+	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return nil, fmt.Errorf("set up capacity lease controller: %w", err)
 	}
