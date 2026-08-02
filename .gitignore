@@ -1,13 +1,14 @@
 # Binary
-horizon
+/horizon
 
 # Build output
 dist/
 *.exe
 *.test
+*.tgz
 
 # Config — contains API keys, never commit
-config.yaml
+/config.yaml
 
 # Environment
 .env
