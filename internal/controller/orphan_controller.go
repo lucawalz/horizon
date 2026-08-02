@@ -59,7 +59,7 @@ func (r *OrphanReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 }
 
 func (r *OrphanReconciler) nodeIsStranded(ctx context.Context, node *corev1.Node, leaseUID string) (bool, error) {
-	if nodeReportsReady(node) {
+	if nodeReady(node) {
 		return false, nil
 	}
 
@@ -241,13 +241,4 @@ func (r *OrphanReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return err
 	}
 	return mgr.Add(r)
-}
-
-func nodeReportsReady(node *corev1.Node) bool {
-	for _, cond := range node.Status.Conditions {
-		if cond.Type == corev1.NodeReady {
-			return cond.Status == corev1.ConditionTrue
-		}
-	}
-	return false
 }
