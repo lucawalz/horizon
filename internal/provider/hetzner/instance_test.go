@@ -407,7 +407,7 @@ func TestCreateFailsFastOnEmptyImageValue(t *testing.T) {
 	c, _ := newFake(spec, poolImage())
 
 	_, err := c.Create(context.Background(), reservedRequest("reserved-abc"))
-	if err == nil || !strings.Contains(err.Error(), "reserved.image.value is required") {
+	if err == nil || !strings.Contains(err.Error(), "spec.hetzner.imageSelector needs a label value") {
 		t.Fatalf("expected image value error, got %v", err)
 	}
 }
@@ -418,7 +418,7 @@ func TestCreateFailsFastOnEmptyImageLabel(t *testing.T) {
 	c, _ := newFake(spec, poolImage())
 
 	_, err := c.Create(context.Background(), reservedRequest("reserved-abc"))
-	if err == nil || !strings.Contains(err.Error(), "reserved.image.label is required") {
+	if err == nil || !strings.Contains(err.Error(), "spec.hetzner.imageSelector needs a label key") {
 		t.Fatalf("expected image label error, got %v", err)
 	}
 }

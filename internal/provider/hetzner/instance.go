@@ -163,10 +163,10 @@ func (c *Client) createOpts(ctx context.Context, req provider.CreateRequest) (hc
 		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: server location and type are required")
 	}
 	if c.spec.ImageLabel == "" {
-		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: reserved.image.label is required")
+		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: spec.hetzner.imageSelector needs a label key")
 	}
 	if c.spec.ImageValue == "" {
-		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: reserved.image.value is required")
+		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: spec.hetzner.imageSelector needs a label value")
 	}
 	if userData == "" {
 		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: server user-data is required")
