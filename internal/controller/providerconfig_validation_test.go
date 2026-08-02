@@ -24,10 +24,9 @@ func hetznerBlock() *v1alpha1.HetznerProviderSpec {
 	}
 }
 
-func validProviderConfig(t *testing.T) *v1alpha1.ProviderConfig {
-	t.Helper()
+func validProviderConfig(name string) *v1alpha1.ProviderConfig {
 	return &v1alpha1.ProviderConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: objectName(t)},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: v1alpha1.ProviderConfigSpec{
 			Type:    v1alpha1.ProviderTypeHetzner,
 			Hetzner: hetznerBlock(),
@@ -58,7 +57,7 @@ func TestProviderConfigProviderBlockMustMatchType(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			c := apiServerClient(t)
-			config := validProviderConfig(t)
+			config := validProviderConfig(objectName(t))
 			tc.mutate(&config.Spec)
 			assertCreate(t, c, config, tc.wantRejected)
 		})

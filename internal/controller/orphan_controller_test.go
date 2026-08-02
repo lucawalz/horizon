@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -192,7 +193,7 @@ func TestSweepDoesNotTrustASuccessfulDeleteCall(t *testing.T) {
 	lease := f.createLease("gone")
 	f.createInstance("surviving", string(lease.UID), f.instant.Add(-time.Hour))
 	f.deleteLease(lease)
-	f.reconciler.Provider = undeletingProvider{f.provider}
+	f.providers[f.config] = undeletingProvider{f.provider}
 
 	err := f.sweep()
 
@@ -204,6 +205,73 @@ func TestSweepDoesNotTrustASuccessfulDeleteCall(t *testing.T) {
 	}
 
 	f.deleteInstance("surviving")
+	f.assertNoLeaks()
+}
+
+func TestEveryProviderConfigIsSwept(t *testing.T) {
+	f := newOrphanFixture(t)
+	_, second := f.addProvider("second")
+	lease := f.createLease("gone")
+	f.createInstance("under-primary", string(lease.UID), f.instant.Add(-time.Hour))
+	f.createInstanceIn(second, "under-second", string(lease.UID), f.instant.Add(-time.Hour))
+	f.deleteLease(lease)
+
+	f.mustSweep()
+
+	f.assertInstancePresent("under-primary", false)
+	f.assertInstancePresentIn(second, "under-second", false)
+	f.assertNoLeaks()
+}
+
+func TestSweepContinuesPastAProviderThatCannotBeBuilt(t *testing.T) {
+	f := newOrphanFixture(t)
+	f.createProviderConfig("broken")
+	lease := f.createLease("gone")
+	f.createInstance("expired", string(lease.UID), f.instant.Add(-time.Hour))
+	f.deleteLease(lease)
+
+	err := f.sweep()
+
+	if err == nil {
+		t.Fatal("sweep hid a provider config it could not build")
+	}
+	if !errors.Is(err, errProviderUnbuildable) {
+		t.Errorf("error %q does not report the unbuildable provider config", err)
+	}
+	f.assertInstancePresent("expired", false)
+	f.assertNoLeaks()
+}
+
+func TestNodeIsRetainedWhileAnotherProviderStillHoldsItsInstance(t *testing.T) {
+	f := newOrphanFixture(t)
+	_, second := f.addProvider("second")
+	lease := f.createLease("gone")
+	node := f.createNode("elsewhere", string(lease.UID), corev1.ConditionFalse)
+	f.createInstanceIn(second, node.Name, string(lease.UID), f.instant.Add(time.Hour))
+	f.deleteLease(lease)
+
+	result := f.reconcileNode(node)
+
+	f.assertNodePresent(node, true)
+	if result.RequeueAfter != orphanSweepInterval {
+		t.Errorf("requeue after %s, want %s", result.RequeueAfter, orphanSweepInterval)
+	}
+	f.assertNoLeaks()
+}
+
+func TestNodeIsRetainedWhileAProviderCannotBeBuilt(t *testing.T) {
+	f := newOrphanFixture(t)
+	f.createProviderConfig("broken")
+	lease := f.createLease("gone")
+	node := f.createNode("unverifiable", string(lease.UID), corev1.ConditionFalse)
+	f.deleteLease(lease)
+
+	_, err := f.tryReconcileNode(node)
+
+	if err == nil {
+		t.Fatal("node deleted without absence proven against every provider config")
+	}
+	f.assertNodePresent(node, true)
 	f.assertNoLeaks()
 }
 

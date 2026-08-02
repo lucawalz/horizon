@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -23,11 +24,13 @@ const (
 	orphanTestFinalizer = "horizon.dev/test-teardown"
 	orphanWaitTimeout   = 5 * time.Second
 	orphanPollInterval  = 10 * time.Millisecond
+	primaryProviderName = "primary"
 )
 
 var (
 	registerNodeType       sync.Once
 	errProviderUnavailable = errors.New("fake: provider unavailable")
+	errProviderUnbuildable = errors.New("fake: provider cannot be built")
 )
 
 func instanceOutsideAnyLease(name string) provider.Instance {
@@ -43,7 +46,10 @@ func instanceOutsideAnyLease(name string) provider.Instance {
 type orphanFixture struct {
 	t          *testing.T
 	client     client.Client
+	config     string
 	provider   *fake.Provider
+	providers  map[string]provider.Provider
+	ledgers    []*fake.Provider
 	reconciler *OrphanReconciler
 	instant    time.Time
 }
@@ -54,14 +60,48 @@ func newOrphanFixture(t *testing.T) *orphanFixture {
 	c := apiServerClient(t)
 	registerNodeType.Do(func() { utilruntime.Must(corev1.AddToScheme(c.Scheme())) })
 
-	f := &orphanFixture{t: t, client: c, instant: time.Now().UTC()}
-	f.provider = fake.NewWithClock(f.clock)
-	f.reconciler = &OrphanReconciler{Client: c, Provider: f.provider, Clock: f.clock}
+	f := &orphanFixture{
+		t:         t,
+		client:    c,
+		providers: map[string]provider.Provider{},
+		instant:   time.Now().UTC(),
+	}
+	f.config, f.provider = f.addProvider(primaryProviderName)
+	f.reconciler = &OrphanReconciler{Client: c, Provider: f.buildProvider, Clock: f.clock}
 	return f
 }
 
 func (f *orphanFixture) clock() time.Time {
 	return f.instant
+}
+
+func (f *orphanFixture) buildProvider(_ context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error) {
+	prov, registered := f.providers[cfg.Name]
+	if !registered {
+		return nil, fmt.Errorf("%w: %s", errProviderUnbuildable, cfg.Name)
+	}
+	return prov, nil
+}
+
+func (f *orphanFixture) createProviderConfig(suffix string) string {
+	f.t.Helper()
+
+	cfg := validProviderConfig(objectName(f.t) + "-" + suffix)
+	if err := f.client.Create(f.t.Context(), cfg); err != nil {
+		f.t.Fatalf("create providerconfig: %v", err)
+	}
+	f.t.Cleanup(func() { _ = f.client.Delete(context.Background(), cfg) })
+	return cfg.Name
+}
+
+func (f *orphanFixture) addProvider(suffix string) (string, *fake.Provider) {
+	f.t.Helper()
+
+	name := f.createProviderConfig(suffix)
+	prov := fake.NewWithClock(f.clock)
+	f.providers[name] = prov
+	f.ledgers = append(f.ledgers, prov)
+	return name, prov
 }
 
 func (f *orphanFixture) createLease(suffix string) *v1alpha1.CapacityLease {
@@ -141,6 +181,11 @@ func (f *orphanFixture) createNode(suffix, leaseUID string, ready corev1.Conditi
 
 func (f *orphanFixture) createInstance(name, leaseUID string, expiry time.Time) {
 	f.t.Helper()
+	f.createInstanceIn(f.provider, name, leaseUID, expiry)
+}
+
+func (f *orphanFixture) createInstanceIn(prov *fake.Provider, name, leaseUID string, expiry time.Time) {
+	f.t.Helper()
 
 	labels := map[string]string{provider.PoolLabelKey: provider.ReservedPoolValue}
 	if leaseUID != "" {
@@ -149,7 +194,7 @@ func (f *orphanFixture) createInstance(name, leaseUID string, expiry time.Time) 
 	if !expiry.IsZero() {
 		labels[provider.ExpiresAtLabelKey] = provider.FormatExpiry(expiry)
 	}
-	if _, err := f.provider.Create(f.t.Context(), provider.CreateRequest{Name: name, Labels: labels}); err != nil {
+	if _, err := prov.Create(f.t.Context(), provider.CreateRequest{Name: name, Labels: labels}); err != nil {
 		f.t.Fatalf("create instance: %v", err)
 	}
 }
@@ -164,11 +209,16 @@ func (f *orphanFixture) deleteInstance(name string) {
 func (f *orphanFixture) reconcileNode(node *corev1.Node) ctrl.Result {
 	f.t.Helper()
 
-	result, err := f.reconciler.Reconcile(f.t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Name: node.Name}})
+	result, err := f.tryReconcileNode(node)
 	if err != nil {
 		f.t.Fatalf("reconcile node %s: %v", node.Name, err)
 	}
 	return result
+}
+
+func (f *orphanFixture) tryReconcileNode(node *corev1.Node) (ctrl.Result, error) {
+	f.t.Helper()
+	return f.reconciler.Reconcile(f.t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Name: node.Name}})
 }
 
 func (f *orphanFixture) sweep() error {
@@ -197,8 +247,13 @@ func (f *orphanFixture) assertNodePresent(node *corev1.Node, want bool) {
 
 func (f *orphanFixture) instanceExists(name string) bool {
 	f.t.Helper()
+	return f.instanceExistsIn(f.provider, name)
+}
 
-	_, err := f.provider.Get(context.Background(), name)
+func (f *orphanFixture) instanceExistsIn(prov *fake.Provider, name string) bool {
+	f.t.Helper()
+
+	_, err := prov.Get(context.Background(), name)
 	switch {
 	case err == nil:
 		return true
@@ -212,8 +267,13 @@ func (f *orphanFixture) instanceExists(name string) bool {
 
 func (f *orphanFixture) assertInstancePresent(name string, want bool) {
 	f.t.Helper()
+	f.assertInstancePresentIn(f.provider, name, want)
+}
 
-	if got := f.instanceExists(name); got != want {
+func (f *orphanFixture) assertInstancePresentIn(prov *fake.Provider, name string, want bool) {
+	f.t.Helper()
+
+	if got := f.instanceExistsIn(prov, name); got != want {
 		f.t.Errorf("instance %s present is %t, want %t", name, got, want)
 	}
 }
@@ -234,8 +294,10 @@ func (f *orphanFixture) waitUntil(condition func() bool, description string) {
 func (f *orphanFixture) assertNoLeaks() {
 	f.t.Helper()
 
-	for _, leak := range f.provider.Ledger.Leaks() {
-		f.t.Errorf("leaked instance: %s", leak)
+	for _, prov := range f.ledgers {
+		for _, leak := range prov.Ledger.Leaks() {
+			f.t.Errorf("leaked instance: %s", leak)
+		}
 	}
 }
 

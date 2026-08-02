@@ -23,8 +23,13 @@ const (
 
 type OrphanReconciler struct {
 	Client   client.Client
-	Provider provider.Provider
+	Provider ProviderFactory
 	Clock    func() time.Time
+}
+
+type configuredProvider struct {
+	provider.Provider
+	config string
 }
 
 func (r *OrphanReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -66,7 +71,25 @@ func (r *OrphanReconciler) nodeIsStranded(ctx context.Context, node *corev1.Node
 		return false, nil
 	}
 
-	return r.instanceIsAbsent(ctx, node.Name)
+	return r.instanceIsAbsentEverywhere(ctx, node.Name)
+}
+
+func (r *OrphanReconciler) instanceIsAbsentEverywhere(ctx context.Context, name string) (bool, error) {
+	provs, err := r.providers(ctx)
+	if err != nil {
+		return false, err
+	}
+	if len(provs) == 0 {
+		return false, nil
+	}
+
+	for _, prov := range provs {
+		absent, err := instanceIsAbsent(ctx, prov, name)
+		if err != nil || !absent {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (r *OrphanReconciler) Start(ctx context.Context) error {
@@ -90,9 +113,19 @@ func (r *OrphanReconciler) NeedLeaderElection() bool {
 }
 
 func (r *OrphanReconciler) sweep(ctx context.Context) error {
-	instances, err := r.Provider.List(ctx, map[string]string{provider.ManagedByLabelKey: provider.ManagedByValue})
+	provs, buildErr := r.providers(ctx)
+
+	failures := []error{buildErr}
+	for _, prov := range provs {
+		failures = append(failures, r.sweepProvider(ctx, prov))
+	}
+	return errors.Join(failures...)
+}
+
+func (r *OrphanReconciler) sweepProvider(ctx context.Context, prov configuredProvider) error {
+	instances, err := prov.List(ctx, map[string]string{provider.ManagedByLabelKey: provider.ManagedByValue})
 	if err != nil {
-		return fmt.Errorf("orphan: list provider instances: %w", err)
+		return fmt.Errorf("orphan: list instances of %q: %w", prov.config, err)
 	}
 
 	live, err := r.liveLeaseUIDs(ctx)
@@ -105,12 +138,36 @@ func (r *OrphanReconciler) sweep(ctx context.Context) error {
 		if !r.instanceIsExpired(inst, live) {
 			continue
 		}
-		ctrl.LoggerFrom(ctx).Info("deleting expired instance", "instance", inst.Name)
-		if err := r.destroy(ctx, inst.Name); err != nil {
+		ctrl.LoggerFrom(ctx).Info("deleting expired instance", "instance", inst.Name, "providerConfig", prov.config)
+		if err := destroyInstance(ctx, prov, inst.Name); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func (r *OrphanReconciler) providers(ctx context.Context) ([]configuredProvider, error) {
+	if r.Provider == nil {
+		return nil, errors.New("orphan: no provider factory configured")
+	}
+
+	var configs v1alpha1.ProviderConfigList
+	if err := r.Client.List(ctx, &configs); err != nil {
+		return nil, fmt.Errorf("orphan: list provider configs: %w", err)
+	}
+
+	provs := make([]configuredProvider, 0, len(configs.Items))
+	var failures []error
+	for i := range configs.Items {
+		cfg := &configs.Items[i]
+		built, err := r.Provider(ctx, cfg)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("orphan: build provider from %q: %w", cfg.Name, err))
+			continue
+		}
+		provs = append(provs, configuredProvider{Provider: built, config: cfg.Name})
+	}
+	return provs, errors.Join(failures...)
 }
 
 func (r *OrphanReconciler) instanceIsExpired(inst provider.Instance, live map[string]bool) bool {
@@ -126,28 +183,28 @@ func (r *OrphanReconciler) instanceIsExpired(inst provider.Instance, live map[st
 	return !r.now().Before(deadline.Add(orphanExpiryGrace))
 }
 
-func (r *OrphanReconciler) destroy(ctx context.Context, name string) error {
-	if err := r.Provider.Delete(ctx, name); err != nil {
-		return fmt.Errorf("orphan: delete instance %q: %w", name, err)
+func destroyInstance(ctx context.Context, prov configuredProvider, name string) error {
+	if err := prov.Delete(ctx, name); err != nil {
+		return fmt.Errorf("orphan: delete instance %q of %q: %w", name, prov.config, err)
 	}
 
-	absent, err := r.instanceIsAbsent(ctx, name)
+	absent, err := instanceIsAbsent(ctx, prov, name)
 	if err != nil {
 		return err
 	}
 	if !absent {
-		return fmt.Errorf("orphan: instance %q still present after delete", name)
+		return fmt.Errorf("orphan: instance %q of %q still present after delete", name, prov.config)
 	}
 	return nil
 }
 
-func (r *OrphanReconciler) instanceIsAbsent(ctx context.Context, name string) (bool, error) {
-	_, err := r.Provider.Get(ctx, name)
+func instanceIsAbsent(ctx context.Context, prov configuredProvider, name string) (bool, error) {
+	_, err := prov.Get(ctx, name)
 	switch {
 	case errors.Is(err, provider.ErrNotFound):
 		return true, nil
 	case err != nil:
-		return false, fmt.Errorf("orphan: get instance %q: %w", name, err)
+		return false, fmt.Errorf("orphan: get instance %q of %q: %w", name, prov.config, err)
 	default:
 		return false, nil
 	}
@@ -175,7 +232,7 @@ func (r *OrphanReconciler) now() time.Time {
 
 func (r *OrphanReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Provider == nil {
-		return errors.New("orphan: provider is required")
+		return errors.New("orphan: provider factory is required")
 	}
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Node{}).
