@@ -105,7 +105,16 @@ go install github.com/lucawalz/horizon/cmd/horizon@latest
 
 `make install` builds and installs the binary into `~/.local/bin`, re-signing it on macOS. Override the destination with `PREFIX`, and remove it with `make uninstall`.
 
-Tagged releases publish darwin and linux archives for amd64 and arm64 on the GitHub releases page. No container image and no Homebrew formula are published.
+Tagged releases publish darwin and linux archives for amd64 and arm64 on the GitHub releases page, a multi-architecture container image at `ghcr.io/lucawalz/horizon`, and a Helm chart at `ghcr.io/lucawalz/charts/horizon`. No Homebrew formula is published.
+
+The in-cluster controller is installed with the chart:
+
+```
+helm install horizon oci://ghcr.io/lucawalz/charts/horizon \
+  --namespace horizon-system --create-namespace
+```
+
+The chart templates the controller Deployment, its RBAC, a Service, an optional Ingress for the web interface, and the custom resource definitions. See [`charts/horizon/README.md`](charts/horizon/README.md) for the values.
 
 ## Configuration
 
@@ -121,7 +130,9 @@ Key fields:
 
 ## Releases
 
-Pushing a `v*` tag triggers the GoReleaser workflow, which builds the darwin and linux binaries and publishes a GitHub release with the archives attached.
+Pushing a `v*` tag triggers the release workflow. GoReleaser builds the darwin and linux binaries and publishes a GitHub release with the archives attached. The same workflow then builds the linux amd64 and arm64 container image from the repository `Dockerfile` and pushes it to `ghcr.io/lucawalz/horizon`, and packages the Helm chart at the tag version and pushes it to `ghcr.io/lucawalz/charts/horizon`.
+
+The image is built from source in a `golang` stage and shipped on `gcr.io/distroless/static-debian12:nonroot`, so it carries no shell and no package manager and runs as uid 65532. Both the archive binaries and the image binary are built with `-trimpath` and identical linker flags, so the two are byte-identical for a given platform.
 
 ## Repository layout
 
@@ -133,6 +144,9 @@ internal/config/    configuration loading and schema
 internal/provider/  provider interface and node-label constants
 internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
 internal/k8s/       cluster client, drain, workload migration, Flux status, API tracer
+api/v1alpha1/       CapacityLease and ProviderConfig types
+config/crd/bases/   generated custom resource definitions
+charts/horizon/     Helm chart for the in-cluster controller
 docs/adr/           architecture decision records
 ```
 

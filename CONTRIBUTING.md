@@ -5,6 +5,7 @@
 - Go ≥ 1.26
 - `kubectl` configured against a Cluster API management cluster
 - `golangci-lint` for linting
+- `helm` for the chart, and a container runtime with buildx for the image, when changing either
 
 ## Setup
 
@@ -22,7 +23,12 @@ go test ./...
 
 # Linting
 golangci-lint run ./...
+
+# Chart, including the check that crds/ matches the generated manifests
+make chart-lint
 ```
+
+Changes to the API types need `make manifests`, which regenerates the custom resource definitions and copies them into the chart. CI fails when the two copies diverge.
 
 ## Branch naming
 
