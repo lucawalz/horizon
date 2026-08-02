@@ -10,9 +10,6 @@ dist/
 # Downloaded envtest control plane binaries
 /bin/
 
-# Config — contains API keys, never commit
-/config.yaml
-
 # Environment
 .env
 *.env.local
