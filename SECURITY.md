@@ -1,6 +1,6 @@
 # Security policy
 
-horizon holds cloud credentials and calls cloud provider APIs directly. A provider token is resolved at runtime from exactly one of an inline value, a file path, an environment variable, or a Kubernetes Secret, and is never written to the repository. Cluster access is through a kubeconfig whose path and context live in a local `config.yaml` that is gitignored.
+horizon holds cloud credentials and calls cloud provider APIs directly. A provider token is read at runtime from a single key in a Kubernetes Secret named by a `ProviderConfig` resource, and is never written to the repository. Cluster access is the controller's own in-cluster service account.
 
 A token with permission to create servers also has permission to delete them and to bill the account that owns it. Two consequences follow.
 
