@@ -17,9 +17,15 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: cache envtest control plane binaries
+        uses: actions/cache@v6
+        with:
+          path: bin/k8s
+          key: envtest-${{ runner.os }}-${{ hashFiles('Makefile') }}
       - run: go vet ./...
       - run: go build ./...
-      - run: go test ./...
+      - run: make test
+      - run: make test-race
 
   lint:
     runs-on: ubuntu-latest
