@@ -29,7 +29,7 @@ func Burst(ctx context.Context, prov provider.Provider, kc kubernetes.Interface,
 		ctx = context.Background()
 	}
 
-	prior, err := prov.ListReservedServers(ctx)
+	prior, err := listReserved(ctx, prov)
 	if err != nil {
 		return fmt.Errorf("list reserved servers: %w", err)
 	}
@@ -42,12 +42,12 @@ func Burst(ctx context.Context, prov provider.Provider, kc kubernetes.Interface,
 		}
 		rbCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
 		defer cancel()
-		_, _ = prov.ScaleReservedTo(rbCtx, priorCount)
+		_ = scaleReservedTo(rbCtx, prov, priorCount)
 	}()
 
 	want := int(p.Target.Replicas)
 	progress.Debug(fmt.Sprintf("phase scale: reserved servers -> %d", want))
-	if _, err := prov.ScaleReservedTo(ctx, want); err != nil {
+	if err := scaleReservedTo(ctx, prov, want); err != nil {
 		return fmt.Errorf("scale reserved: %w", err)
 	}
 	scaled = true

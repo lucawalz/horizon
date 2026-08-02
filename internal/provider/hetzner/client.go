@@ -1,18 +1,17 @@
-package hcloud
+package hetzner
 
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-const (
-	ManagedByLabelKey = "horizon.dev/managed-by"
-	ManagedByValue    = "horizon"
-	NodeGroupLabelKey = "hcloud/node-group"
-)
+const NodeGroupLabelKey = "hcloud/node-group"
+
+var locations = []string{"fsn1", "nbg1", "hel1", "ash", "hil", "sin"}
 
 type ServerAPI interface {
 	AllWithOpts(ctx context.Context, opts hcloudgo.ServerListOpts) ([]*hcloudgo.Server, error)
@@ -39,7 +38,7 @@ var _ provider.Provider = (*Client)(nil)
 
 func NewClient(token string, spec ServerSpec) (provider.Provider, error) {
 	if token == "" {
-		return nil, fmt.Errorf("hcloud: token must not be empty")
+		return nil, fmt.Errorf("hetzner: token must not be empty")
 	}
 	if _, err := buildUserData(spec.UserData); err != nil {
 		return nil, err
@@ -50,4 +49,13 @@ func NewClient(token string, spec ServerSpec) (provider.Provider, error) {
 
 func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, spec ServerSpec) *Client {
 	return &Client{servers: servers, images: images, sshKeys: sshKeys, spec: spec}
+}
+
+// Hetzner bills until the server object is deleted, so shutting down from inside the guest releases nothing.
+func (c *Client) Capabilities() provider.Capabilities {
+	return provider.Capabilities{
+		SelfTerminationStopsBilling: false,
+		SupportsResourceLabels:      true,
+		Regions:                     slices.Clone(locations),
+	}
 }

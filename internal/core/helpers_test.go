@@ -2,13 +2,13 @@ package core_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/config"
 	"github.com/lucawalz/horizon/internal/core"
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider"
+	"github.com/lucawalz/horizon/internal/provider/fake"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,44 +19,27 @@ import (
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 )
 
-type fakeProvider struct {
-	servers []provider.Server
-	nextID  int64
-}
-
-func newFakeProvider(seed ...provider.Server) *fakeProvider {
-	p := &fakeProvider{servers: append([]provider.Server(nil), seed...)}
-	for _, s := range seed {
-		if s.ID > p.nextID {
-			p.nextID = s.ID
-		}
+func newFakeProvider(reserved ...string) *fake.Provider {
+	p := fake.New()
+	for _, name := range reserved {
+		p.Seed(provider.Instance{
+			Name: name,
+			Labels: map[string]string{
+				provider.PoolLabelKey:      provider.ReservedPoolValue,
+				provider.ManagedByLabelKey: provider.ManagedByValue,
+			},
+		})
 	}
 	return p
 }
 
-func (p *fakeProvider) ListReservedServers(context.Context) ([]provider.Server, error) {
-	return append([]provider.Server(nil), p.servers...), nil
-}
-
-func (p *fakeProvider) ScaleReservedTo(_ context.Context, want int) (int, error) {
-	for len(p.servers) < want {
-		p.nextID++
-		p.servers = append(p.servers, provider.Server{ID: p.nextID, Name: fmt.Sprintf("reserved-%d", p.nextID)})
+func reservedCount(t *testing.T, p *fake.Provider) int {
+	t.Helper()
+	instances, err := p.List(context.Background(), map[string]string{provider.PoolLabelKey: provider.ReservedPoolValue})
+	if err != nil {
+		t.Fatalf("list reserved instances: %v", err)
 	}
-	if want < len(p.servers) {
-		p.servers = p.servers[:want]
-	}
-	return want, nil
-}
-
-func reservedServer(id int64, name string) provider.Server {
-	return provider.Server{
-		ID:   id,
-		Name: name,
-		Labels: map[string]string{
-			provider.PoolLabelKey: provider.ReservedPoolValue,
-		},
-	}
+	return len(instances)
 }
 
 func testPoolDefaults() config.PoolDefaults {

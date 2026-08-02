@@ -41,7 +41,7 @@ func ScaleUp(ctx context.Context, prov provider.Provider, target PoolTarget, dry
 		ctx = context.Background()
 	}
 
-	current, err := prov.ListReservedServers(ctx)
+	current, err := listReserved(ctx, prov)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func ScaleUp(ctx context.Context, prov provider.Provider, target PoolTarget, dry
 	}
 
 	progress.Debug(fmt.Sprintf("scaling reserved servers %d -> %d", have, target.Replicas))
-	if _, err := prov.ScaleReservedTo(ctx, int(target.Replicas)); err != nil {
+	if err := scaleReservedTo(ctx, prov, int(target.Replicas)); err != nil {
 		return err
 	}
 	progress.Emit(fmt.Sprintf("Scaled reserved pool: %d -> %d servers", have, target.Replicas))
@@ -71,7 +71,7 @@ func ScaleDown(ctx context.Context, prov provider.Provider, target PoolTarget, d
 		ctx = context.Background()
 	}
 
-	current, err := prov.ListReservedServers(ctx)
+	current, err := listReserved(ctx, prov)
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func ScaleDown(ctx context.Context, prov provider.Provider, target PoolTarget, d
 	}
 
 	progress.Debug("scaling reserved servers -> 0")
-	if _, err := prov.ScaleReservedTo(ctx, 0); err != nil {
+	if err := scaleReservedTo(ctx, prov, 0); err != nil {
 		return err
 	}
 	progress.Emit(fmt.Sprintf("Scaled reserved pool to 0 servers (was %d)", have))

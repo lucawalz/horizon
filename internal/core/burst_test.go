@@ -28,7 +28,7 @@ func poolNode(name, pool string) *corev1.Node {
 
 func TestBurstScalesAndMigrates(t *testing.T) {
 	hostname := "reserved-node-1"
-	p := newFakeProvider(reservedServer(1, hostname))
+	p := newFakeProvider(hostname)
 	kc := fake.NewSimpleClientset(
 		poolNode(hostname, "reserved"),
 		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "sentio-systems"}},
@@ -41,12 +41,8 @@ func TestBurstScalesAndMigrates(t *testing.T) {
 		t.Fatalf("Burst: %v", err)
 	}
 
-	servers, err := p.ListReservedServers(context.Background())
-	if err != nil {
-		t.Fatalf("ListReservedServers: %v", err)
-	}
-	if len(servers) != 1 {
-		t.Errorf("reserved servers = %d, want 1", len(servers))
+	if got := reservedCount(t, p); got != 1 {
+		t.Errorf("reserved instances = %d, want 1", got)
 	}
 
 	dep, err := kc.AppsV1().Deployments("sentio-systems").Get(context.Background(), "app", metav1.GetOptions{})
@@ -64,7 +60,7 @@ func TestBurstScalesAndMigrates(t *testing.T) {
 }
 
 func TestBurstRollsBackOnLaterStageFailure(t *testing.T) {
-	p := newFakeProvider(reservedServer(1, "reserved-node-1"), reservedServer(2, "reserved-node-2"))
+	p := newFakeProvider("reserved-node-1", "reserved-node-2")
 	kc := fake.NewSimpleClientset()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -77,7 +73,7 @@ func TestBurstRollsBackOnLaterStageFailure(t *testing.T) {
 		t.Fatal("expected error when the node wait is cancelled")
 	}
 
-	if len(p.servers) != 2 {
-		t.Errorf("reserved pool must roll back to prior 2 servers, got %d", len(p.servers))
+	if got := reservedCount(t, p); got != 2 {
+		t.Errorf("reserved pool must roll back to prior 2 servers, got %d", got)
 	}
 }

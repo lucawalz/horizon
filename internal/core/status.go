@@ -307,39 +307,39 @@ func groupNodesByPool(nodes []corev1.Node) map[string][]MachineRow {
 	return byPool
 }
 
-func listReservedServers(ctx context.Context, app *App) []provider.Server {
+func listReservedServers(ctx context.Context, app *App) []provider.Instance {
 	prov, err := app.ReservedProvider(ctx)
 	if err != nil {
 		return nil
 	}
-	servers, err := prov.ListReservedServers(ctx)
+	instances, err := listReserved(ctx, prov)
 	if err != nil {
 		return nil
 	}
-	return servers
+	return instances
 }
 
-func mergeReservedServers(byPool map[string][]MachineRow, servers []provider.Server) {
-	if len(servers) == 0 {
+func mergeReservedServers(byPool map[string][]MachineRow, instances []provider.Instance) {
+	if len(instances) == 0 {
 		return
 	}
 	joined := map[string]bool{}
 	for _, m := range byPool[provider.ReservedPoolValue] {
 		joined[m.Name] = true
 	}
-	for _, s := range servers {
-		if joined[s.Name] {
+	for _, inst := range instances {
+		if joined[inst.Name] {
 			for i := range byPool[provider.ReservedPoolValue] {
-				if byPool[provider.ReservedPoolValue][i].Name == s.Name {
-					byPool[provider.ReservedPoolValue][i].ProviderID = fmt.Sprintf("hcloud://%d", s.ID)
+				if byPool[provider.ReservedPoolValue][i].Name == inst.Name {
+					byPool[provider.ReservedPoolValue][i].ProviderID = inst.ProviderID
 				}
 			}
 			continue
 		}
 		byPool[provider.ReservedPoolValue] = append(byPool[provider.ReservedPoolValue], MachineRow{
-			Name:       s.Name,
-			Phase:      "Provisioning",
-			ProviderID: fmt.Sprintf("hcloud://%d", s.ID),
+			Name:       inst.Name,
+			Phase:      string(provider.Provisioning),
+			ProviderID: inst.ProviderID,
 		})
 	}
 }

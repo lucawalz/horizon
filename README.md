@@ -62,9 +62,11 @@ horizon carries the Hetzner API token and the node cloud-init in its own configu
 The code follows a hexagonal layout: a presentation-free core of queries and actions surrounded by adapters.
 
 - `internal/core` holds the query surface and the action functions and depends on no presentation code.
-- `internal/hcloud` provisions, lists, and deletes reserved servers.
 - `internal/k8s` holds the cluster client, node drain, workload migration, Flux Kustomization and HelmRelease status, and the Kubernetes API tracer.
-- `internal/provider` declares the provider interface and the node-label constants.
+- `internal/provider` declares the instance lifecycle interface, the capability report, and the label constants.
+- `internal/provider/hetzner` creates, gets, lists, and deletes Hetzner servers behind that interface.
+- `internal/provider/conformance` holds the contract suite every provider implementation must pass.
+- `internal/provider/fake` holds the in-memory provider and the create and delete ledger used in tests.
 - `internal/config` loads and validates the configuration file.
 - `internal/cli` holds the cobra root and the version command.
 
@@ -141,12 +143,26 @@ cmd/horizon/        main entry point
 internal/cli/       cobra root and version command
 internal/core/      presentation-free query surface and action functions
 internal/config/    configuration loading and schema
+<<<<<<< HEAD
 internal/provider/  provider interface and node-label constants
 internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
 internal/k8s/       cluster client, drain, workload migration, Flux status, API tracer
 api/v1alpha1/       CapacityLease and ProviderConfig types
 config/crd/bases/   generated custom resource definitions
 charts/horizon/     Helm chart for the in-cluster controller
+||||||| parent of fafd97d (refactor(provider): redraw the provider seam around instance lifecycle)
+internal/capi/      Cluster API client for pool-type detection and Flux status
+internal/provider/  provider interface and node-label constants
+internal/hcloud/    Hetzner Cloud provider implementation for reserved servers
+internal/k8s/       cluster client, drain, workload migration, API tracer
+=======
+internal/capi/      Cluster API client for pool-type detection and Flux status
+internal/provider/  instance lifecycle interface, capabilities, label constants
+                    hetzner/ Hetzner Cloud implementation
+                    conformance/ contract suite every implementation must pass
+                    fake/ in-memory implementation with a create and delete ledger
+internal/k8s/       cluster client, drain, workload migration, API tracer
+>>>>>>> fafd97d (refactor(provider): redraw the provider seam around instance lifecycle)
 docs/adr/           architecture decision records
 ```
 

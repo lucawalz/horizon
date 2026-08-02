@@ -16,20 +16,16 @@ func TestScaleUpCreatesReservedServers(t *testing.T) {
 		t.Fatalf("ScaleUp: %v", err)
 	}
 
-	got, err := p.ListReservedServers(context.Background())
-	if err != nil {
-		t.Fatalf("ListReservedServers: %v", err)
+	if got := reservedCount(t, p); got != 2 {
+		t.Errorf("reserved instances = %d, want 2", got)
 	}
-	if len(got) != 2 {
-		t.Errorf("reserved servers = %d, want 2", len(got))
-	}
-	if len(p.servers) != 2 {
-		t.Errorf("created servers = %d, want 2", len(p.servers))
+	if calls := p.CreateCalls(); len(calls) != 2 {
+		t.Errorf("create calls = %d, want 2", len(calls))
 	}
 }
 
 func TestScaleUpNoOpWhenAlreadyAtTarget(t *testing.T) {
-	p := newFakeProvider(reservedServer(1, "reserved-a"), reservedServer(2, "reserved-b"))
+	p := newFakeProvider("reserved-a", "reserved-b")
 
 	var msgs []string
 	target := reservedTarget(2)
@@ -52,25 +48,25 @@ func TestScaleUpDryRunDoesNotMutate(t *testing.T) {
 	if !strings.Contains(strings.Join(msgs, "\n"), "0 -> 3") {
 		t.Errorf("dry-run progress missing delta: %v", msgs)
 	}
-	if len(p.servers) != 0 {
-		t.Errorf("dry-run must not create servers, got %d", len(p.servers))
+	if got := reservedCount(t, p); got != 0 {
+		t.Errorf("dry-run must not create servers, got %d", got)
 	}
 }
 
 func TestScaleDownDeletesAllReservedServers(t *testing.T) {
-	p := newFakeProvider(reservedServer(1, "reserved-a"), reservedServer(2, "reserved-b"))
+	p := newFakeProvider("reserved-a", "reserved-b")
 
 	target := reservedTarget(0)
 	if err := core.ScaleDown(context.Background(), p, target, false, core.Progress{}); err != nil {
 		t.Fatalf("ScaleDown: %v", err)
 	}
-	if len(p.servers) != 0 {
-		t.Errorf("servers after scale-down = %d, want 0", len(p.servers))
+	if got := reservedCount(t, p); got != 0 {
+		t.Errorf("servers after scale-down = %d, want 0", got)
 	}
 }
 
 func TestScaleDownDryRunDoesNotMutate(t *testing.T) {
-	p := newFakeProvider(reservedServer(1, "reserved-a"))
+	p := newFakeProvider("reserved-a")
 
 	var msgs []string
 	target := reservedTarget(0)
@@ -80,7 +76,7 @@ func TestScaleDownDryRunDoesNotMutate(t *testing.T) {
 	if !strings.Contains(strings.Join(msgs, "\n"), "1 -> 0") {
 		t.Errorf("dry-run progress missing intent: %v", msgs)
 	}
-	if len(p.servers) != 1 {
-		t.Errorf("dry-run must not delete servers, got %d", len(p.servers))
+	if got := reservedCount(t, p); got != 1 {
+		t.Errorf("dry-run must not delete servers, got %d", got)
 	}
 }
