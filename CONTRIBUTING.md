@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go ≥ 1.26
+- Go 1.26 or newer
 - `kubectl` configured against a Kubernetes cluster, for exercising the operator outside the test suite
 - `golangci-lint` for linting
 - `helm` for the chart, and a container runtime with buildx for the image, when changing either
@@ -57,7 +57,7 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 
 **Format**: `<type>[optional scope]: <description>`
 
-- Description: brief, imperative, lowercase, 7–12 words
+- Description: brief, imperative, lowercase, 7 to 12 words
 - Scope: component name (`api`, `cli`, `controller`, `provider`, `hetzner`, `k8s`, `chart`, and so on)
 - No period at end of subject line
 - Subject line only, no body, no bullet points
