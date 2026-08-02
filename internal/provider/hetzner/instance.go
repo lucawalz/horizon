@@ -43,7 +43,6 @@ func managedSelector(selector map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
-// A powered-off server still holds its reserved capacity and still bills, so it counts as capacity on its way out.
 func instanceState(status hcloudgo.ServerStatus) provider.InstanceState {
 	switch status {
 	case hcloudgo.ServerStatusRunning:

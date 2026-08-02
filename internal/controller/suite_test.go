@@ -69,7 +69,6 @@ func testScheme() *runtime.Scheme {
 	return s
 }
 
-// An empty BinaryAssetsDirectory makes envtest fall back to KUBEBUILDER_ASSETS.
 func envtestBinaryDir() (string, bool) {
 	if os.Getenv(envtestAssetsVar) != "" {
 		return "", true

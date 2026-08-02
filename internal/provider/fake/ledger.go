@@ -48,7 +48,6 @@ func (l *Ledger) Events() []LedgerEvent {
 	return slices.Clone(l.events)
 }
 
-// Leaks treats a create without a deadline label as already expired, because nothing will ever retire it.
 func (l *Ledger) Leaks() []LedgerEvent {
 	now := l.now()
 

@@ -68,7 +68,6 @@ func buildPlacementPatch(meta metadataPatch, affinity any, tolerations []corev1.
 	return json.Marshal(p)
 }
 
-// Merging would leave the burst nodeAffinity in place beside the restored rules.
 func replacingAffinity(a *corev1.Affinity, kind, name string) (map[string]any, error) {
 	if a == nil {
 		return nil, nil

@@ -69,8 +69,7 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		Client: client.Options{
 			Cache: &client.CacheOptions{DisableFor: uncachedTypes()},
 		},
-		HealthProbeBindAddress: opts.HealthAddress,
-		// Not for availability: two reconcilers during a rolling update would double-create billable instances.
+		HealthProbeBindAddress:        opts.HealthAddress,
 		LeaderElection:                opts.LeaderElection,
 		LeaderElectionID:              LeaderElectionID,
 		LeaderElectionReleaseOnCancel: true,

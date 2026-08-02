@@ -48,21 +48,6 @@ type CreateRequest struct {
 	UserData string
 }
 
-// Provider is the lifecycle seam around a single cloud instance.
-//
-// Every implementation must satisfy the following contract, which the
-// conformance suite in internal/provider/conformance enforces:
-//
-//   - Create is idempotent on Name. A request naming an instance that already
-//     exists returns that instance rather than an error.
-//   - Create applies Labels in the same call that creates the instance, never as
-//     a later tagging step, so an instance is never unlabelled even momentarily.
-//   - Get returns ErrNotFound, and no other error, when the instance is absent.
-//   - Delete is idempotent and returns nil for an instance that is already
-//     absent. Deletion counts as complete only once a subsequent Get reports
-//     absence; a successful Delete call is not evidence on its own.
-//   - Delete refuses any instance that does not carry
-//     ManagedByLabelKey=ManagedByValue, and leaves it in place.
 type Provider interface {
 	Capabilities() Capabilities
 	Create(ctx context.Context, req CreateRequest) (Instance, error)
@@ -71,8 +56,6 @@ type Provider interface {
 	Delete(ctx context.Context, name string) error
 }
 
-// FormatExpiry encodes whole seconds because provider label values commonly
-// reject the colons and plus signs that RFC 3339 timestamps carry.
 func FormatExpiry(deadline time.Time) string {
 	return strconv.FormatInt(deadline.UTC().Unix(), 10)
 }

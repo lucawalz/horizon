@@ -27,7 +27,7 @@ Crash safety rests on four independent layers, taken from Karpenter rather than 
 
 The finalizer is added and persisted in its own reconcile pass before any provider call. Provider-side labels tying the instance to the lease are applied atomically in the create call, never as a subsequent tagging step, so an instance is never anonymous even for an instant. A garbage collector lists the provider on a slow tick and deletes anything whose owning lease is gone, skipping any instance whose `Node` still reports Ready, because the kubelet is a more reliable witness than an eventually consistent cloud API. Launch and registration timeouts bound the case where a machine boots and never joins.
 
-Instance identity is the provider's own identifier recorded in status, paired with the lease name written into a provider label, so the mapping can be recovered from either side. Names are not derived from the lease, and not from anything mutable.
+Instance identity is the provider's own identifier recorded in status, paired with the lease UID written into a provider label, so the mapping can be recovered from either side. The UID rather than the name, because a name can be reused by a recreated lease and the whole point of this record is that identity must not derive from anything mutable. Instance names are likewise not derived from anything that can change.
 
 Deletion is treated as complete only when the provider reports the instance absent. A successful delete call is not evidence.
 

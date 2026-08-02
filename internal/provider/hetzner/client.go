@@ -51,7 +51,6 @@ func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, sp
 	return &Client{servers: servers, images: images, sshKeys: sshKeys, spec: spec}
 }
 
-// Hetzner bills until the server object is deleted, so shutting down from inside the guest releases nothing.
 func (c *Client) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
 		SelfTerminationStopsBilling: false,

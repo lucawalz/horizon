@@ -15,7 +15,6 @@ const (
 	otherPool     = "conformance-other-pool"
 )
 
-// SeedUnmanaged reaches behind the interface because no implementation will create an instance without the management label.
 type Fixture struct {
 	Provider      provider.Provider
 	NewRequest    func(name string) provider.CreateRequest

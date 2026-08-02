@@ -6,7 +6,6 @@ import (
 	"github.com/lucawalz/horizon/internal/cli"
 )
 
-// The chart passes exactly these flags; a rename leaves the operator crash-looping on an unknown flag.
 func TestControllerCommandAcceptsTheChartFlags(t *testing.T) {
 	cmd := cli.NewControllerCmdForTest()
 

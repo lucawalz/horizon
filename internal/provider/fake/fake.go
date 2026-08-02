@@ -47,7 +47,6 @@ func NewWithClock(now func() time.Time) *Provider {
 	}
 }
 
-// Seed installs an instance without recording it in the ledger, so a test can start from capacity horizon did not create.
 func (p *Provider) Seed(inst provider.Instance) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
