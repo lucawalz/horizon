@@ -9,6 +9,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -60,6 +61,7 @@ type harness struct {
 	clock       *stubClock
 	name        string
 	providerErr error
+	wrapAPI     func(client.Client) client.Client
 }
 
 func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harness {
@@ -162,8 +164,12 @@ func (h *harness) assertNoLeaks() {
 }
 
 func (h *harness) reconciler() *CapacityLeaseReconciler {
+	api := h.api
+	if h.wrapAPI != nil {
+		api = h.wrapAPI(api)
+	}
 	return &CapacityLeaseReconciler{
-		Client: h.api,
+		Client: api,
 		Kube:   h.kube,
 		Clock:  h.clock.Now,
 		Provider: func(context.Context, *v1alpha1.ProviderConfig) (provider.Provider, error) {
@@ -403,6 +409,48 @@ type failingSubResourceWriter struct {
 
 func (w failingSubResourceWriter) Update(context.Context, client.Object, ...client.SubResourceUpdateOption) error {
 	return w.err
+}
+
+const raceAnnotationKey = "horizon.dev/test-concurrent-writer"
+
+type staleWriteRacer struct {
+	client.Client
+	key       client.ObjectKey
+	raced     bool
+	raceErr   error
+	conflicts int
+}
+
+func (c *staleWriteRacer) Status() client.SubResourceWriter {
+	return racingSubResourceWriter{SubResourceWriter: c.Client.Status(), racer: c}
+}
+
+func (c *staleWriteRacer) touchLeaseOnce(ctx context.Context) {
+	if c.raced {
+		return
+	}
+	c.raced = true
+	lease := &v1alpha1.CapacityLease{}
+	if err := c.Get(ctx, c.key, lease); err != nil {
+		c.raceErr = err
+		return
+	}
+	metav1.SetMetaDataAnnotation(&lease.ObjectMeta, raceAnnotationKey, "1")
+	c.raceErr = c.Update(ctx, lease)
+}
+
+type racingSubResourceWriter struct {
+	client.SubResourceWriter
+	racer *staleWriteRacer
+}
+
+func (w racingSubResourceWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	w.racer.touchLeaseOnce(ctx)
+	err := w.SubResourceWriter.Update(ctx, obj, opts...)
+	if apierrors.IsConflict(err) {
+		w.racer.conflicts++
+	}
+	return err
 }
 
 func newKubeClient(objects ...runtime.Object) *k8sfake.Clientset {

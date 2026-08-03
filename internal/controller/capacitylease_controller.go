@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -188,7 +190,20 @@ func (r *CapacityLeaseReconciler) nextPoll(lease *v1alpha1.CapacityLease, policy
 func (r *CapacityLeaseReconciler) writeStatus(ctx context.Context, lease *v1alpha1.CapacityLease) error {
 	lease.Status.Phase = derivePhase(lease)
 	lease.Status.ObservedGeneration = lease.Generation
-	if err := r.Client.Status().Update(ctx, lease); err != nil {
+
+	desired := lease.Status
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		updateErr := r.Client.Status().Update(ctx, lease)
+		if !apierrors.IsConflict(updateErr) {
+			return updateErr
+		}
+		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(lease), lease); err != nil {
+			return err
+		}
+		lease.Status = desired
+		return updateErr
+	})
+	if err != nil {
 		return fmt.Errorf("update status of lease %q: %w", lease.Name, err)
 	}
 	return nil

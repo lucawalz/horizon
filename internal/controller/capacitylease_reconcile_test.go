@@ -7,6 +7,7 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
@@ -62,6 +63,29 @@ func TestAcceptanceStartsTheClockOnceAndOnlyOnce(t *testing.T) {
 
 	if got := h.lease().Status.AcceptedAt; !got.Time.Equal(accepted.Time) {
 		t.Errorf("acceptance moved to %s on a later pass, want %s", got.Time, accepted.Time)
+	}
+}
+
+func TestAStatusWriteConvergesWhenTheLeaseChangedUnderneathIt(t *testing.T) {
+	h := newHarness(t)
+	racer := &staleWriteRacer{Client: h.api, key: client.ObjectKey{Name: h.name}}
+	h.wrapAPI = func(client.Client) client.Client { return racer }
+
+	h.settle()
+
+	if racer.raceErr != nil {
+		t.Fatalf("provoke a concurrent write: %v", racer.raceErr)
+	}
+	if racer.conflicts != 1 {
+		t.Fatalf("the status write saw %d conflicts, want exactly one to be exercised", racer.conflicts)
+	}
+
+	lease := h.lease()
+	if lease.Status.AcceptedAt == nil {
+		t.Error("the conflicting pass lost the acceptance it was writing")
+	}
+	if got := lease.Annotations[raceAnnotationKey]; got != "1" {
+		t.Errorf("the concurrent annotation is %q, want the retry to keep it", got)
 	}
 }
 
