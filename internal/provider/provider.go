@@ -15,6 +15,8 @@ const (
 	ManagedByValue    = "horizon"
 	ExpiresAtLabelKey = "horizon.dev/expires-at"
 
+	WatchdogDeadlineAnnotationKey = "horizon.dev/watchdog-deadline"
+
 	LeaseUIDLabelKey = "horizon.dev/lease-uid"
 )
 
@@ -76,10 +78,10 @@ func FormatExpiry(deadline time.Time) string {
 }
 
 func ParseExpiry(labels map[string]string) (time.Time, bool) {
-	raw, ok := labels[ExpiresAtLabelKey]
-	if !ok {
-		return time.Time{}, false
-	}
+	return ParseExpiryValue(labels[ExpiresAtLabelKey])
+}
+
+func ParseExpiryValue(raw string) (time.Time, bool) {
 	seconds, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return time.Time{}, false

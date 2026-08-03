@@ -83,3 +83,23 @@ func TestParseExpiryReportsUnreadableLabel(t *testing.T) {
 		t.Error("ParseExpiry must report absence when the deadline label cannot be read")
 	}
 }
+
+func TestParseExpiryValueReadsABareTimestamp(t *testing.T) {
+	deadline := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+
+	got, ok := provider.ParseExpiryValue(provider.FormatExpiry(deadline))
+	if !ok {
+		t.Fatal("ParseExpiryValue reported no deadline for a formatted timestamp")
+	}
+	if !got.Equal(deadline) {
+		t.Errorf("parsed deadline = %v, want %v", got, deadline)
+	}
+}
+
+func TestParseExpiryValueRejectsWhatIsNotATimestamp(t *testing.T) {
+	for _, raw := range []string{"", " ", "tomorrow", "1754136000.5", "0x10"} {
+		if _, ok := provider.ParseExpiryValue(raw); ok {
+			t.Errorf("ParseExpiryValue(%q) reported a deadline, want none", raw)
+		}
+	}
+}
