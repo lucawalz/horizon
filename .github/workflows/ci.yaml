@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - run: bash scripts/check-adr-index.sh
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
