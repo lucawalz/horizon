@@ -2,11 +2,14 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
@@ -14,13 +17,15 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy) (ctrl.Result, error) {
 	nodes, err := r.Kube.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list nodes: %w", err)
 	}
 
+	renewal := newWatchdogRenewal(lease, policy, r.now())
 	changed := false
+	renewed := false
 	joined := 0
 	for i := range lease.Status.Instances {
 		entry := &lease.Status.Instances[i]
@@ -35,9 +40,11 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 			entry.NodeName = node.Name
 			changed = true
 		}
-		if err := r.adoptNode(ctx, lease, node); err != nil {
+		fresh, err := r.adoptNode(ctx, lease, node, renewal)
+		if err != nil {
 			return ctrl.Result{}, err
 		}
+		renewed = renewed || fresh
 		if !nodeReady(node) {
 			continue
 		}
@@ -46,6 +53,10 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 			changed = true
 		}
 		joined++
+	}
+
+	if renewed {
+		changed = recordWatchdogDeadline(lease, renewal.deadline) || changed
 	}
 
 	want := int(lease.Spec.Replicas)
@@ -63,7 +74,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 		}
 	}
 	if joined < want {
-		return r.nextPoll(lease), nil
+		return r.nextPoll(lease, policy), nil
 	}
 	return ctrl.Result{}, nil
 }
@@ -93,22 +104,53 @@ func nodeReady(node *corev1.Node) bool {
 	return false
 }
 
-func (r *CapacityLeaseReconciler) adoptNode(ctx context.Context, lease *v1alpha1.CapacityLease, node *corev1.Node) error {
-	updated := node.DeepCopy()
-	if updated.Labels == nil {
-		updated.Labels = map[string]string{}
+func (r *CapacityLeaseReconciler) adoptNode(ctx context.Context, lease *v1alpha1.CapacityLease, node *corev1.Node, renewal watchdogRenewal) (bool, error) {
+	annotations, renewed := renewal.annotationsFor(node)
+	if err := r.patchNodeMarks(ctx, lease, node, annotations); err != nil {
+		return false, err
 	}
-	for key, value := range nodeLabels(lease) {
-		updated.Labels[key] = value
+	if err := r.ensureBurstTaint(ctx, lease, node); err != nil {
+		return false, err
 	}
-	if !hasBurstTaint(updated) {
-		updated.Spec.Taints = append(updated.Spec.Taints, burstTaint(lease))
-	}
-	if equalNodeMarks(node, updated) {
+	return renewed, nil
+}
+
+func (r *CapacityLeaseReconciler) patchNodeMarks(ctx context.Context, lease *v1alpha1.CapacityLease, node *corev1.Node, annotations map[string]string) error {
+	labels := nodeLabels(lease)
+	if containsAll(node.Labels, labels) && containsAll(node.Annotations, annotations) {
 		return nil
 	}
-	if _, err := r.Kube.CoreV1().Nodes().Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("label node %q for lease %q: %w", node.Name, lease.Name, err)
+	patch, err := json.Marshal(map[string]map[string]map[string]string{
+		"metadata": {"labels": labels, "annotations": annotations},
+	})
+	if err != nil {
+		return fmt.Errorf("build marks patch for node %q: %w", node.Name, err)
+	}
+	if _, err := r.Kube.CoreV1().Nodes().Patch(ctx, node.Name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("mark node %q for lease %q: %w", node.Name, lease.Name, err)
+	}
+	return nil
+}
+
+func (r *CapacityLeaseReconciler) ensureBurstTaint(ctx context.Context, lease *v1alpha1.CapacityLease, node *corev1.Node) error {
+	if hasBurstTaint(node) {
+		return nil
+	}
+	nodes := r.Kube.CoreV1().Nodes()
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current, err := nodes.Get(ctx, node.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if hasBurstTaint(current) {
+			return nil
+		}
+		current.Spec.Taints = append(current.Spec.Taints, burstTaint(lease))
+		_, err = nodes.Update(ctx, current, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("taint node %q for lease %q: %w", node.Name, lease.Name, err)
 	}
 	return nil
 }
@@ -134,12 +176,9 @@ func hasBurstTaint(node *corev1.Node) bool {
 	return false
 }
 
-func equalNodeMarks(current, updated *corev1.Node) bool {
-	if len(current.Spec.Taints) != len(updated.Spec.Taints) {
-		return false
-	}
-	for key, value := range updated.Labels {
-		if current.Labels[key] != value {
+func containsAll(current, desired map[string]string) bool {
+	for key, value := range desired {
+		if current[key] != value {
 			return false
 		}
 	}

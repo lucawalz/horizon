@@ -37,7 +37,7 @@ type stubClock struct {
 }
 
 func newStubClock() *stubClock {
-	return &stubClock{current: time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)}
+	return &stubClock{current: testInstant}
 }
 
 func (c *stubClock) Now() time.Time {
@@ -95,11 +95,7 @@ func (h *harness) createProviderConfig() {
 					Key:                  "user-data",
 				},
 			},
-			Watchdog: v1alpha1.WatchdogPolicy{
-				RenewInterval: metav1.Duration{Duration: time.Minute},
-				Slack:         metav1.Duration{Duration: 2 * time.Minute},
-				MaxLifetime:   metav1.Duration{Duration: time.Hour},
-			},
+			Watchdog: testPolicy(testRenewInterval, testSlack),
 		},
 	}
 	if err := h.api.Create(h.t.Context(), cfg); err != nil {

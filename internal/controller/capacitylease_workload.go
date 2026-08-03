@@ -13,12 +13,12 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy) (ctrl.Result, error) {
 	if lease.Spec.Workload == nil {
 		return ctrl.Result{}, nil
 	}
 	if !conditionTrue(lease, v1alpha1.ConditionInstancesReady) {
-		return r.nextPoll(lease), nil
+		return r.nextPoll(lease, policy), nil
 	}
 
 	namespace := lease.Spec.Workload.Namespace
@@ -31,7 +31,7 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 		return ctrl.Result{}, fmt.Errorf("check workload placement in %q: %w", namespace, err)
 	}
 	if !placed {
-		return r.nextPoll(lease), nil
+		return r.nextPoll(lease, policy), nil
 	}
 	return ctrl.Result{}, nil
 }

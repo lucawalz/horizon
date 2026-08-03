@@ -82,10 +82,11 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: stepRequeue}, nil
 	}
 
-	prov, err := r.providerFor(ctx, lease)
+	cfg, prov, err := r.providerFor(ctx, lease)
 	if err != nil {
 		return r.rejectLease(ctx, lease, err)
 	}
+	policy := cfg.Spec.Watchdog
 
 	if lease.Status.AcceptedAt == nil {
 		return r.acceptLease(ctx, lease)
@@ -98,14 +99,14 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if res, err := r.reconcileInstances(ctx, lease, prov); err != nil || !res.IsZero() {
 		return res, err
 	}
-	if res, err := r.reconcileNodes(ctx, lease); err != nil || !res.IsZero() {
+	if res, err := r.reconcileNodes(ctx, lease, policy); err != nil || !res.IsZero() {
 		return res, err
 	}
-	if res, err := r.reconcileWorkload(ctx, lease); err != nil || !res.IsZero() {
+	if res, err := r.reconcileWorkload(ctx, lease, policy); err != nil || !res.IsZero() {
 		return res, err
 	}
 
-	return r.nextPoll(lease), nil
+	return r.nextPoll(lease, policy), nil
 }
 
 func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -125,19 +126,19 @@ func (r *CapacityLeaseReconciler) ensureFinalizer(ctx context.Context, lease *v1
 	return true, nil
 }
 
-func (r *CapacityLeaseReconciler) providerFor(ctx context.Context, lease *v1alpha1.CapacityLease) (provider.Provider, error) {
+func (r *CapacityLeaseReconciler) providerFor(ctx context.Context, lease *v1alpha1.CapacityLease) (*v1alpha1.ProviderConfig, provider.Provider, error) {
 	if r.Provider == nil {
-		return nil, errors.New("no provider factory configured")
+		return nil, nil, errors.New("no provider factory configured")
 	}
 	cfg := &v1alpha1.ProviderConfig{}
 	if err := r.Client.Get(ctx, client.ObjectKey{Name: lease.Spec.ProviderRef}, cfg); err != nil {
-		return nil, fmt.Errorf("get providerconfig %q: %w", lease.Spec.ProviderRef, err)
+		return nil, nil, fmt.Errorf("get providerconfig %q: %w", lease.Spec.ProviderRef, err)
 	}
 	prov, err := r.Provider(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("build provider from %q: %w", cfg.Name, err)
+		return nil, nil, fmt.Errorf("build provider from %q: %w", cfg.Name, err)
 	}
-	return prov, nil
+	return cfg, prov, nil
 }
 
 func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alpha1.CapacityLease, cause error) (ctrl.Result, error) {
@@ -168,8 +169,11 @@ func (r *CapacityLeaseReconciler) expire(ctx context.Context, lease *v1alpha1.Ca
 	return r.teardown(ctx, lease)
 }
 
-func (r *CapacityLeaseReconciler) nextPoll(lease *v1alpha1.CapacityLease) ctrl.Result {
+func (r *CapacityLeaseReconciler) nextPoll(lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy) ctrl.Result {
 	after := leasePollInterval
+	if renew := policy.RenewInterval.Duration; renew > 0 && renew < after {
+		after = renew
+	}
 	if lease.Status.ExpiresAt != nil {
 		if remaining := lease.Status.ExpiresAt.Sub(r.now()); remaining > 0 && remaining < after {
 			after = remaining

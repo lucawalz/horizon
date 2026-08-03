@@ -24,7 +24,7 @@ func (r *CapacityLeaseReconciler) teardown(ctx context.Context, lease *v1alpha1.
 	}
 
 	if hasUnreleasedInstances(lease) {
-		prov, err := r.providerFor(ctx, lease)
+		_, prov, err := r.providerFor(ctx, lease)
 		if err != nil {
 			return r.degrade(ctx, lease, reasonProviderUnavailable, err)
 		}
