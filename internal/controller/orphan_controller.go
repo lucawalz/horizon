@@ -199,15 +199,11 @@ func destroyInstance(ctx context.Context, prov configuredProvider, name string) 
 }
 
 func instanceIsAbsent(ctx context.Context, prov configuredProvider, name string) (bool, error) {
-	_, err := prov.Get(ctx, name)
-	switch {
-	case errors.Is(err, provider.ErrNotFound):
-		return true, nil
-	case err != nil:
+	absent, err := provider.ConfirmAbsent(ctx, prov, name)
+	if err != nil {
 		return false, fmt.Errorf("orphan: get instance %q of %q: %w", name, prov.config, err)
-	default:
-		return false, nil
 	}
+	return absent, nil
 }
 
 func (r *OrphanReconciler) liveLeaseUIDs(ctx context.Context) (map[string]bool, error) {

@@ -9,7 +9,10 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-const NodeGroupLabelKey = "hcloud/node-group"
+const (
+	NodeGroupLabelKey = "hcloud/node-group"
+	ProviderIDPrefix  = "hcloud://"
+)
 
 var locations = []string{"fsn1", "nbg1", "hel1", "ash", "hil", "sin"}
 
@@ -37,11 +40,27 @@ type Client struct {
 var _ provider.Provider = (*Client)(nil)
 
 func NewClient(token string, spec ServerSpec) (provider.Provider, error) {
-	if token == "" {
-		return nil, fmt.Errorf("hetzner: token must not be empty")
+	client, err := newClient(token, spec)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := buildUserData(spec.UserData); err != nil {
 		return nil, err
+	}
+	return client, nil
+}
+
+func NewNodeClient(token string) (provider.Provider, error) {
+	client, err := newClient(token, ServerSpec{})
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func newClient(token string, spec ServerSpec) (*Client, error) {
+	if token == "" {
+		return nil, fmt.Errorf("hetzner: token must not be empty")
 	}
 	cl := hcloudgo.NewClient(hcloudgo.WithToken(token))
 	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey, spec: spec}, nil

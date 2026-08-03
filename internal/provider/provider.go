@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 )
@@ -56,6 +57,18 @@ type Provider interface {
 	Get(ctx context.Context, name string) (Instance, error)
 	List(ctx context.Context, selector map[string]string) ([]Instance, error)
 	Delete(ctx context.Context, name string) error
+}
+
+func ConfirmAbsent(ctx context.Context, p Provider, name string) (bool, error) {
+	_, err := p.Get(ctx, name)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return true, nil
+	case err != nil:
+		return false, fmt.Errorf("provider: confirm instance %q is absent: %w", name, err)
+	default:
+		return false, nil
+	}
 }
 
 func FormatExpiry(deadline time.Time) string {

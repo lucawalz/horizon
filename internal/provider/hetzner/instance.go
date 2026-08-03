@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
@@ -61,7 +62,7 @@ func toInstance(s *hcloudgo.Server) provider.Instance {
 	}
 	return provider.Instance{
 		Name:       s.Name,
-		ProviderID: fmt.Sprintf("hcloud://%d", s.ID),
+		ProviderID: ProviderIDPrefix + strconv.FormatInt(s.ID, 10),
 		Region:     region,
 		State:      instanceState(s.Status),
 		Labels:     maps.Clone(s.Labels),
