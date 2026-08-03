@@ -79,7 +79,8 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	if err := proveIdentity(ctx, prov, identity); err != nil {
+	inst, err := proveIdentity(ctx, prov, identity)
+	if err != nil {
 		return err
 	}
 
@@ -90,7 +91,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	log.Info("armed", "instance", identity.Name, "maxLifetime", opts.MaxLifetime)
 	startedAt := time.Now()
-	wall := newNodeDeadline(opts.KubeconfigPath, identity.Name)
+	wall := newNodeDeadline(opts.KubeconfigPath, identity.Name, seedWallDeadline(ctx, inst))
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 
@@ -109,17 +110,30 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
-func proveIdentity(ctx context.Context, prov provider.Provider, identity Identity) error {
+func proveIdentity(ctx context.Context, prov provider.Provider, identity Identity) (provider.Instance, error) {
 	inst, err := prov.Get(ctx, identity.Name)
 	if err != nil {
-		return fmt.Errorf("agent: read instance %q back from the provider: %w", identity.Name, err)
+		return provider.Instance{}, fmt.Errorf("agent: read instance %q back from the provider: %w", identity.Name, err)
 	}
 	want := hetzner.ProviderIDPrefix + identity.InstanceID
 	if inst.ProviderID != want {
-		return fmt.Errorf("agent: instance %q reports provider id %q but the metadata service reports %q",
+		return provider.Instance{}, fmt.Errorf("agent: instance %q reports provider id %q but the metadata service reports %q",
 			identity.Name, inst.ProviderID, want)
 	}
-	return nil
+	return inst, nil
+}
+
+func seedWallDeadline(ctx context.Context, inst provider.Instance) *time.Time {
+	log := ctrl.LoggerFrom(ctx)
+	deadline, readable := provider.ParseExpiry(inst.Labels)
+	if !readable {
+		log.Info("no readable expiry label on this instance, leaving the backstop as the only clock",
+			"instance", inst.Name, "label", provider.ExpiresAtLabelKey)
+		return nil
+	}
+	log.Info("seeded the wall clock deadline from the instance label",
+		"instance", inst.Name, "deadline", deadline)
+	return &deadline
 }
 
 func readToken(path string) (string, error) {

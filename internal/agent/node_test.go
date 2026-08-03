@@ -27,8 +27,18 @@ func annotatedNode(deadline string) *corev1.Node {
 }
 
 func nodeDeadlineFor(node *corev1.Node) (*nodeDeadline, *k8sfake.Clientset) {
+	return seededNodeDeadlineFor(node, nil)
+}
+
+func seededNodeDeadlineFor(node *corev1.Node, seed *time.Time) (*nodeDeadline, *k8sfake.Clientset) {
 	client := k8sfake.NewSimpleClientset(node)
-	return &nodeDeadline{nodeName: testNodeName, client: client}, client
+	return &nodeDeadline{nodeName: testNodeName, client: client, last: seed}, client
+}
+
+func refuseNodeReads(client *k8sfake.Clientset, failure error) {
+	client.PrependReactor("get", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, failure
+	})
 }
 
 func armedDeadline() time.Time {
@@ -90,9 +100,7 @@ func TestNodeDeadlineIsStickyAcrossEveryReadFailure(t *testing.T) {
 				t.Fatal("the first read yielded no deadline")
 			}
 
-			client.PrependReactor("get", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
-				return true, nil, failure
-			})
+			refuseNodeReads(client, failure)
 			assertStuckAt(t, deadline, want)
 		})
 	}
@@ -119,9 +127,56 @@ func TestNodeDeadlineIsStickyWhenTheAnnotationStopsBeingReadable(t *testing.T) {
 }
 
 func TestNodeDeadlineSurvivesAMissingKubeconfig(t *testing.T) {
-	deadline := newNodeDeadline(filepath.Join(t.TempDir(), "kubelet.kubeconfig"), testNodeName)
+	deadline := newNodeDeadline(filepath.Join(t.TempDir(), "kubelet.kubeconfig"), testNodeName, nil)
 
 	if got := deadline.read(t.Context()); got != nil {
 		t.Errorf("deadline = %s, want none when the kubeconfig is absent", got)
 	}
+}
+
+func TestNodeDeadlineIsArmedFromTheSeedBeforeAnyNodeReadSucceeds(t *testing.T) {
+	seed := armedDeadline()
+	deadline, client := seededNodeDeadlineFor(annotatedNode(""), &seed)
+	refuseNodeReads(client, errors.New("dial tcp 127.0.0.1:6444: connect: connection refused"))
+
+	assertStuckAt(t, deadline, seed)
+}
+
+func TestNodeDeadlineKeepsTheSeedWhileTheNodeIsNeverReachable(t *testing.T) {
+	seed := armedDeadline()
+	deadline := newNodeDeadline(filepath.Join(t.TempDir(), "kubelet.kubeconfig"), testNodeName, &seed)
+
+	assertStuckAt(t, deadline, seed)
+	assertStuckAt(t, deadline, seed)
+}
+
+func TestNodeDeadlineReplacesTheSeedWithTheAnnotation(t *testing.T) {
+	for name, offset := range map[string]time.Duration{
+		"the annotation renews past the seed": time.Hour,
+		"the annotation falls short of it":    -30 * time.Minute,
+	} {
+		t.Run(name, func(t *testing.T) {
+			seed := armedDeadline()
+			want := seed.Add(offset)
+			deadline, _ := seededNodeDeadlineFor(annotatedNode(provider.FormatExpiry(want)), &seed)
+
+			got := deadline.read(t.Context())
+			if got == nil {
+				t.Fatal("an annotated node yielded no deadline")
+			}
+			if !got.Equal(want) {
+				t.Errorf("deadline = %s, want the annotation %s to replace the seed %s", got, want, seed)
+			}
+		})
+	}
+}
+
+func TestNodeDeadlinePreservesTheSeedWhenTheNodeReadFails(t *testing.T) {
+	seed := armedDeadline()
+	annotation := provider.FormatExpiry(seed.Add(time.Hour))
+	deadline, client := seededNodeDeadlineFor(annotatedNode(annotation), &seed)
+	refuseNodeReads(client, apierrors.NewForbidden(corev1.Resource("nodes"), testNodeName, errors.New("no permission")))
+
+	assertStuckAt(t, deadline, seed)
+	assertStuckAt(t, deadline, seed)
 }

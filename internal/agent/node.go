@@ -22,8 +22,8 @@ type nodeDeadline struct {
 	last           *time.Time
 }
 
-func newNodeDeadline(kubeconfigPath, nodeName string) *nodeDeadline {
-	return &nodeDeadline{kubeconfigPath: kubeconfigPath, nodeName: nodeName}
+func newNodeDeadline(kubeconfigPath, nodeName string, seed *time.Time) *nodeDeadline {
+	return &nodeDeadline{kubeconfigPath: kubeconfigPath, nodeName: nodeName, last: seed}
 }
 
 func (d *nodeDeadline) read(ctx context.Context) *time.Time {
