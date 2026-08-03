@@ -103,6 +103,7 @@ spec:
 | `spec.hetzner.cloudInitSecretRef` | yes | Secret name and key holding the cloud-init the instance boots with. It must already apply the `horizon.dev/pool=reserved` node label. |
 | `spec.hetzner.imageSelector` | no in the schema | Exactly one label and value selecting the boot image. The provider refuses to build without it, so it is required in practice. |
 | `spec.hetzner.sshKeys` | no | Hetzner SSH key names, resolved to key ids at create time. |
+| `spec.hetzner.firewalls` | no | Names of existing Hetzner Cloud Firewalls attached to every created server, at most five. The firewalls are never created or reconciled by horizon, and a name that does not resolve fails the create. |
 | `spec.hetzner.nodeCredentialSecretRef` | no | Accepted and not read by anything today. |
 | `spec.watchdog` | yes | `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other. Required by the schema and not read by anything today. |
 

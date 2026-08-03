@@ -3,6 +3,7 @@ package hetzner
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ type fakeAPI struct {
 	servers       []*hcloudgo.Server
 	images        []*hcloudgo.Image
 	sshKeys       map[string]*hcloudgo.SSHKey
+	firewalls     map[string]*hcloudgo.Firewall
 	created       []hcloudgo.ServerCreateOpts
 	deleted       []int64
 	nextID        int64
@@ -24,6 +26,7 @@ type fakeAPI struct {
 	deleteErr     error
 	imageErr      error
 	sshKeyErr     error
+	firewallErr   error
 }
 
 func (f *fakeAPI) AllWithOpts(_ context.Context, opts hcloudgo.ServerListOpts) ([]*hcloudgo.Server, error) {
@@ -88,6 +91,18 @@ func (k fakeSSHKeyAPI) GetByName(_ context.Context, name string) (*hcloudgo.SSHK
 	return nil, nil, nil
 }
 
+type fakeFirewallAPI struct{ f *fakeAPI }
+
+func (w fakeFirewallAPI) GetByName(_ context.Context, name string) (*hcloudgo.Firewall, *hcloudgo.Response, error) {
+	if w.f.firewallErr != nil {
+		return nil, nil, w.f.firewallErr
+	}
+	if firewall, ok := w.f.firewalls[name]; ok {
+		return firewall, nil, nil
+	}
+	return nil, nil, nil
+}
+
 func filterByLabelSelector(servers []*hcloudgo.Server, selector string) []*hcloudgo.Server {
 	if selector == "" {
 		return servers
@@ -132,13 +147,17 @@ func newFake(spec ServerSpec, images []*hcloudgo.Image, servers ...*hcloudgo.Ser
 		servers: servers,
 		images:  images,
 		sshKeys: map[string]*hcloudgo.SSHKey{"k": {ID: 42, Name: "k"}},
+		firewalls: map[string]*hcloudgo.Firewall{
+			"edge":     {ID: 7, Name: "edge"},
+			"internal": {ID: 8, Name: "internal"},
+		},
 	}
 	for _, s := range servers {
 		if s.ID > f.nextID {
 			f.nextID = s.ID
 		}
 	}
-	return NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{f}, spec), f
+	return NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{f}, fakeFirewallAPI{f}, spec), f
 }
 
 func server(id int64, name string, labels map[string]string) *hcloudgo.Server {
@@ -469,6 +488,54 @@ func TestCreateFailsFastOnUnknownSSHKey(t *testing.T) {
 	_, err := c.Create(context.Background(), reservedRequest("reserved-abc"))
 	if err == nil || !strings.Contains(err.Error(), `ssh key "missing" not found`) {
 		t.Fatalf("expected not-found ssh key error, got %v", err)
+	}
+}
+
+func TestCreateAttachesEveryConfiguredFirewall(t *testing.T) {
+	spec := provisionableSpec()
+	spec.Firewalls = []string{"edge", "internal"}
+	c, f := newFake(spec, poolImage())
+
+	if _, err := c.Create(context.Background(), reservedRequest("reserved-abc")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(f.created) != 1 {
+		t.Fatalf("expected 1 create, got %d", len(f.created))
+	}
+	got := []int64{}
+	for _, attached := range f.created[0].Firewalls {
+		got = append(got, attached.Firewall.ID)
+	}
+	if !slices.Equal(got, []int64{7, 8}) {
+		t.Errorf("firewall ids = %v, want [7 8]", got)
+	}
+}
+
+func TestCreateFailsFastOnUnknownFirewall(t *testing.T) {
+	spec := provisionableSpec()
+	spec.Firewalls = []string{"edge", "missing"}
+	c, f := newFake(spec, poolImage())
+
+	_, err := c.Create(context.Background(), reservedRequest("reserved-abc"))
+	if err == nil || !strings.Contains(err.Error(), `firewall "missing" not found`) {
+		t.Fatalf("expected not-found firewall error, got %v", err)
+	}
+	if len(f.created) != 0 {
+		t.Fatalf("an unresolvable firewall must not reach the create call, got %d creates", len(f.created))
+	}
+}
+
+func TestCreateWithoutFirewallsAttachesNone(t *testing.T) {
+	c, f := newFake(provisionableSpec(), poolImage())
+
+	if _, err := c.Create(context.Background(), reservedRequest("reserved-abc")); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(f.created) != 1 {
+		t.Fatalf("expected 1 create, got %d", len(f.created))
+	}
+	if len(f.created[0].Firewalls) != 0 {
+		t.Errorf("firewalls = %+v, want none", f.created[0].Firewalls)
 	}
 }
 

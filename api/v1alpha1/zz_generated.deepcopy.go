@@ -162,6 +162,11 @@ func (in *HetznerProviderSpec) DeepCopyInto(out *HetznerProviderSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.Firewalls != nil {
+		in, out := &in.Firewalls, &out.Firewalls
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.CloudInitSecretRef.DeepCopyInto(&out.CloudInitSecretRef)
 }
 

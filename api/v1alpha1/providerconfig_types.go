@@ -22,6 +22,12 @@ type HetznerProviderSpec struct {
 	// +listType=atomic
 	SSHKeys []string `json:"sshKeys,omitempty"`
 
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=5
+	// +kubebuilder:validation:items:MinLength=1
+	Firewalls []string `json:"firewalls,omitempty"`
+
 	CloudInitSecretRef corev1.SecretKeySelector `json:"cloudInitSecretRef"`
 }
 

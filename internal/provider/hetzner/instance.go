@@ -20,6 +20,7 @@ type ServerSpec struct {
 	ImageLabel string
 	ImageValue string
 	SSHKeys    []string
+	Firewalls  []string
 	UserData   string
 }
 
@@ -180,12 +181,17 @@ func (c *Client) createOpts(ctx context.Context, req provider.CreateRequest) (hc
 	if err != nil {
 		return hcloudgo.ServerCreateOpts{}, err
 	}
+	firewalls, err := c.resolveFirewalls(ctx)
+	if err != nil {
+		return hcloudgo.ServerCreateOpts{}, err
+	}
 	return hcloudgo.ServerCreateOpts{
 		Name:       req.Name,
 		ServerType: &hcloudgo.ServerType{Name: serverType},
 		Image:      image,
 		Location:   &hcloudgo.Location{Name: location},
 		SSHKeys:    sshKeys,
+		Firewalls:  firewalls,
 		UserData:   userData,
 		Labels:     managedLabels(req.Labels),
 	}, nil
@@ -221,6 +227,21 @@ func (c *Client) resolveSSHKeys(ctx context.Context) ([]*hcloudgo.SSHKey, error)
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+func (c *Client) resolveFirewalls(ctx context.Context) ([]*hcloudgo.ServerCreateFirewall, error) {
+	firewalls := make([]*hcloudgo.ServerCreateFirewall, 0, len(c.spec.Firewalls))
+	for _, name := range c.spec.Firewalls {
+		firewall, _, err := c.firewalls.GetByName(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("hetzner: lookup firewall %q: %w", name, err)
+		}
+		if firewall == nil {
+			return nil, fmt.Errorf("hetzner: firewall %q not found in project", name)
+		}
+		firewalls = append(firewalls, &hcloudgo.ServerCreateFirewall{Firewall: *firewall})
+	}
+	return firewalls, nil
 }
 
 func managedLabels(requested map[string]string) map[string]string {

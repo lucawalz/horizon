@@ -97,6 +97,13 @@ spec:
                     - key
                     type: object
                     x-kubernetes-map-type: atomic
+                  firewalls:
+                    items:
+                      minLength: 1
+                      type: string
+                    maxItems: 5
+                    type: array
+                    x-kubernetes-list-type: atomic
                   imageSelector:
                     additionalProperties:
                       type: string

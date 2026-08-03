@@ -71,6 +71,7 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 		ImageLabel: label,
 		ImageValue: value,
 		SSHKeys:    slices.Clone(spec.SSHKeys),
+		Firewalls:  slices.Clone(spec.Firewalls),
 		UserData:   userData,
 	})
 }

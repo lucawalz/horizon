@@ -30,11 +30,16 @@ type SSHKeyAPI interface {
 	GetByName(ctx context.Context, name string) (*hcloudgo.SSHKey, *hcloudgo.Response, error)
 }
 
+type FirewallAPI interface {
+	GetByName(ctx context.Context, name string) (*hcloudgo.Firewall, *hcloudgo.Response, error)
+}
+
 type Client struct {
-	servers ServerAPI
-	images  ImageAPI
-	sshKeys SSHKeyAPI
-	spec    ServerSpec
+	servers   ServerAPI
+	images    ImageAPI
+	sshKeys   SSHKeyAPI
+	firewalls FirewallAPI
+	spec      ServerSpec
 }
 
 var _ provider.Provider = (*Client)(nil)
@@ -63,11 +68,11 @@ func newClient(token string, spec ServerSpec) (*Client, error) {
 		return nil, fmt.Errorf("hetzner: token must not be empty")
 	}
 	cl := hcloudgo.NewClient(hcloudgo.WithToken(token))
-	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey, spec: spec}, nil
+	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey, firewalls: &cl.Firewall, spec: spec}, nil
 }
 
-func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, spec ServerSpec) *Client {
-	return &Client{servers: servers, images: images, sshKeys: sshKeys, spec: spec}
+func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, firewalls FirewallAPI, spec ServerSpec) *Client {
+	return &Client{servers: servers, images: images, sshKeys: sshKeys, firewalls: firewalls, spec: spec}
 }
 
 func (c *Client) Capabilities() provider.Capabilities {
