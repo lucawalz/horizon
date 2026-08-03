@@ -26,14 +26,13 @@ Implemented:
 - the Hetzner Cloud provider behind a narrow instance seam, with an in-memory implementation and a contract suite every implementation must pass
 - workload migration onto and off the leased nodes, and node drain
 - the Helm chart that installs the controller and the definitions
-- the node-side dead man's switch, which deletes the leased server from the server itself once its maximum lifetime has elapsed
+- the node-side dead man's switch on two clocks: a monotonic backstop and a renewable wall clock deadline the controller writes onto the leased node
 - three commands, `horizon controller`, `horizon watchdog` and `horizon version`
 
 Not implemented:
 
 - the web interface. Nothing is served, the binary has no flag for it, and the chart carries no values, port, or ingress for it.
 - the watch command and the lease verbs on the command line. Lease state is read with `kubectl get capacityleases`, which the printer columns make readable.
-- the renewable half of the watchdog. `horizon watchdog` enforces a maximum lifetime passed on its command line, but `ProviderConfig.spec.watchdog` is still read by nothing, `CapacityLease.status.watchdogDeadline` is never written, and the leased server reads no deadline back from the cluster.
 - `ProviderConfig` status conditions. The subresource exists and stays empty.
 - `hetzner.nodeCredentialSecretRef`. The schema accepts it and nothing reads it.
 
@@ -51,7 +50,11 @@ Deletion is confirmed, not assumed. After the provider reports a successful dele
 
 An orphan collector reconciles the provider against the cluster. Once a minute it lists every instance carrying the managed-by label across every `ProviderConfig` and deletes any whose owning lease UID no longer resolves to a live lease, either five minutes past the deadline on its own label or immediately if that label cannot be parsed. A second reconciler watches Nodes, and deletes a Node that carries a dead lease UID, reports not ready, and has no matching instance at any configured provider.
 
-The last layer runs on the leased server itself, so it survives the operator, the cluster and the network all being gone. `horizon watchdog` starts with the machine and proves its own identity before arming: it reads the hostname and instance id from the metadata service, reads the instance back from the provider, and refuses to arm unless the provider id matches the metadata. Once the maximum lifetime has elapsed it deletes the server it is running on. Elapsed time is measured against a monotonic clock, so a clock correction cannot defer it. A `terminating` sentinel is written before the first delete, so a restart mid-teardown resumes the teardown instead of arming a fresh lifetime. Retries continue at up to a minute apart for as long as the process lives, because giving up leaves the server billing, and absence is confirmed by reading the instance back exactly as the controller does. The token is read from a file and never from a flag or an environment variable, so it stays out of the process arguments and the unit definition, and the provider client the watchdog builds carries no server specification, so it can delete but never create.
+The last layer runs on the leased server itself, so it survives the operator, the cluster and the network all being gone. `horizon watchdog` starts with the machine and proves its own identity before arming: it reads the hostname and instance id from the metadata service, reads the instance back from the provider, and refuses to arm unless the provider id matches the metadata. A `terminating` sentinel is written before the first delete, so a restart mid-teardown resumes the teardown instead of arming a fresh lifetime. Retries continue at up to a minute apart for as long as the process lives, because giving up leaves the server billing, and absence is confirmed by reading the instance back exactly as the controller does. The token is read from a file and never from a flag or an environment variable, so it stays out of the process arguments and the unit definition, and the provider client the watchdog builds carries no server specification, so it can delete but never create.
+
+The watchdog runs two clocks and fires on whichever comes first. The backstop is `--max-lifetime`, measured against a monotonic clock from the moment the process arms, so a clock correction cannot defer it and it needs nothing outside the machine. The second clock is a wall clock deadline the controller renews: every adopted node carries a `horizon.dev/watchdog-deadline` annotation holding a Unix timestamp, rewritten roughly once per `renewInterval` and never set beyond the lease expiry, so a node cannot outlive the lease that pays for it. The watchdog reads that annotation from its own Node object on every poll, using the kubelet credential already on the machine, which can read its own Node and nothing else. Nothing is pushed to the server and no port is opened on it.
+
+The wall clock may only shorten the deadline, never defer it, so a renewal cannot extend a machine past its backstop. A partition is treated as death rather than a reason to wait: there is no retry budget and no partition detector, so a failed read leaves the last deadline it managed to read standing, and that deadline simply elapses. `slack` is the retry budget, and it is the schema that guarantees there is one, because `slack` must exceed `renewInterval`. A server that never joins the cluster reads no annotation at all and runs on the backstop alone, which is the intended behaviour rather than a startup failure.
 
 Launch and registration have deadlines of their own. An instance that has not launched within five minutes, or that has launched but whose node has not registered within fifteen, is released and the lease marked degraded rather than left waiting.
 
@@ -75,7 +78,7 @@ Both definitions are cluster-scoped and live in the `horizon.dev/v1alpha1` group
 | `spec.workload.namespace` | no | Namespace whose Deployments and StatefulSets are moved onto the leased nodes and restored on release. Omit it to add bare capacity. |
 | `spec.teardownGrace` | no | Drain timeout per node before the instance is deleted, between `0s` and `15m`. Defaults to `2m`. |
 
-The status carries `phase`, `acceptedAt`, `expiresAt`, a per-instance list with the provider id, node name and instance phase, the names of the migrated workloads, and conditions. The phase is derived from the conditions and is one of `Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`. The conditions are `Accepted`, `InstancesReady`, `WorkloadMigrated`, `Expired`, `Released`, and `Degraded`.
+The status carries `phase`, `acceptedAt`, `expiresAt`, `watchdogDeadline` holding the wall clock deadline last written onto the leased nodes, a per-instance list with the provider id, node name and instance phase, the names of the migrated workloads, and conditions. The phase is derived from the conditions and is one of `Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`. The conditions are `Accepted`, `InstancesReady`, `WorkloadMigrated`, `Expired`, `Released`, and `Degraded`.
 
 Printer columns expose replicas, region, phase, expiry, readiness, and age, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client. The short name is `cl`.
 
@@ -105,7 +108,7 @@ spec:
 | `spec.hetzner.sshKeys` | no | Hetzner SSH key names, resolved to key ids at create time. |
 | `spec.hetzner.firewalls` | no | Names of existing Hetzner Cloud Firewalls attached to every created server, at most five. The firewalls are never created or reconciled by horizon, and a name that does not resolve fails the create. |
 | `spec.hetzner.nodeCredentialSecretRef` | no | Accepted and not read by anything today. |
-| `spec.watchdog` | yes | `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other. Required by the schema and not read by anything today. |
+| `spec.watchdog` | yes | `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other. `renewInterval` is how often the controller rewrites the deadline on each leased node, `slack` is how long a node keeps running after the renewals stop, and `maxLifetime` bounds the whole policy. |
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -139,7 +142,7 @@ Secret references are resolved in the namespace the controller runs in, taken fr
 
 Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. It boots from the image the selector names and joins the cluster through the cloud-init held in the Secret.
 
-Node placement is a contract. A leased node is labelled `horizon.dev/pool=reserved` along with the lease name and UID, and tainted `horizon.dev/burst=<lease>:NoSchedule` as it joins, so nothing schedules onto it by accident. When a lease names a workload namespace, horizon rewrites the affinity of each Deployment and StatefulSet in it to target the pool and adds the matching toleration, then restores the original placement during teardown.
+Node placement is a contract. A leased node is labelled `horizon.dev/pool=reserved` along with the lease name and UID, annotated `horizon.dev/watchdog-deadline`, and tainted `horizon.dev/burst=<lease>:NoSchedule` as it joins, so nothing schedules onto it by accident. Labels and the annotation are written with a merge patch scoped to `metadata`, so a renewal cannot collide with the kubelet, and the taint is added under a conflict retry because a taint list cannot be merged safely. When a lease names a workload namespace, horizon rewrites the affinity of each Deployment and StatefulSet in it to target the pool and adds the matching toleration, then restores the original placement during teardown.
 
 ```mermaid
 flowchart LR
@@ -156,7 +159,7 @@ flowchart LR
 The controller is built on controller-runtime. The provider is a seam rather than a dependency, so the reconcilers never reach a cloud SDK directly.
 
 - `api/v1alpha1` holds the `CapacityLease` and `ProviderConfig` types and their validation markers.
-- `internal/agent` holds the node-side dead man's switch: identity resolution, the deadline rule, and the destroy loop.
+- `internal/agent` holds the node-side dead man's switch: identity resolution, the deadline rule, the node annotation read, and the destroy loop.
 - `internal/controller` holds the lease reconciler, the orphan collector, and the factory that turns a `ProviderConfig` into a provider.
 - `internal/manager` wires the manager: scheme, cache, metrics, health probes, leader election, and the reconcilers.
 - `internal/provider` declares the instance lifecycle interface, the capability report, and the label constants.
@@ -216,14 +219,15 @@ horizon version      Print the build stamp
 | `--metrics-bind-address` | `:8080` | Address the metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the liveness and readiness endpoints bind to. |
 
-`horizon watchdog` runs on the leased server rather than in the cluster, started by the cloud-init that boots it. It takes six flags:
+`horizon watchdog` runs on the leased server rather than in the cluster, started by the cloud-init that boots it. It takes seven flags:
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--max-lifetime` | none, required | Age at which the server deletes itself, between `5m` and `24h`. |
 | `--token-file` | `/etc/horizon/token` | File holding the provider token used to delete this server. |
-| `--node-name` | empty | Server to act on. Empty means the hostname reported by the metadata service. |
-| `--poll-interval` | `15s` | Interval between deadline checks. |
+| `--kubeconfig` | `/var/lib/rancher/k3s/agent/kubelet.kubeconfig` | Kubelet credential used to read the renewable deadline from this node. A missing file is not an error, and leaves the backstop as the only clock. |
+| `--node-name` | empty | Server and node to act on. Empty means the hostname reported by the metadata service. |
+| `--poll-interval` | `15s` | Interval between deadline checks, and between reads of the node annotation. |
 | `--metadata-url` | `http://169.254.169.254/hetzner/v1/metadata` | Base URL of the instance metadata service. |
 | `--state-dir` | `/run/horizon` | Directory holding the sentinel that records a teardown in progress. |
 
