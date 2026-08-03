@@ -23,6 +23,7 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newControllerCmd())
+	cmd.AddCommand(newWatchdogCmd())
 	return cmd
 }
 

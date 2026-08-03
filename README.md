@@ -26,13 +26,14 @@ Implemented:
 - the Hetzner Cloud provider behind a narrow instance seam, with an in-memory implementation and a contract suite every implementation must pass
 - workload migration onto and off the leased nodes, and node drain
 - the Helm chart that installs the controller and the definitions
-- two commands, `horizon controller` and `horizon version`
+- the node-side dead man's switch, which deletes the leased server from the server itself once its maximum lifetime has elapsed
+- three commands, `horizon controller`, `horizon watchdog` and `horizon version`
 
 Not implemented:
 
 - the web interface. Nothing is served, the binary has no flag for it, and the chart carries no values, port, or ingress for it.
 - the watch command and the lease verbs on the command line. Lease state is read with `kubectl get capacityleases`, which the printer columns make readable.
-- the watchdog policy. `ProviderConfig.spec.watchdog` is required by the schema and validated, but no controller reads it and `CapacityLease.status.watchdogDeadline` is never written.
+- the renewable half of the watchdog. `horizon watchdog` enforces a maximum lifetime passed on its command line, but `ProviderConfig.spec.watchdog` is still read by nothing, `CapacityLease.status.watchdogDeadline` is never written, and the leased server reads no deadline back from the cluster.
 - `ProviderConfig` status conditions. The subresource exists and stays empty.
 - `hetzner.nodeCredentialSecretRef`. The schema accepts it and nothing reads it.
 
@@ -49,6 +50,8 @@ Ownership labels are applied atomically at create. Every instance carries `horiz
 Deletion is confirmed, not assumed. After the provider reports a successful delete the controller reads the instance back and requires a not-found result. Anything else keeps the instance unreleased, the lease unfinished, and the finalizer in place.
 
 An orphan collector reconciles the provider against the cluster. Once a minute it lists every instance carrying the managed-by label across every `ProviderConfig` and deletes any whose owning lease UID no longer resolves to a live lease, either five minutes past the deadline on its own label or immediately if that label cannot be parsed. A second reconciler watches Nodes, and deletes a Node that carries a dead lease UID, reports not ready, and has no matching instance at any configured provider.
+
+The last layer runs on the leased server itself, so it survives the operator, the cluster and the network all being gone. `horizon watchdog` starts with the machine and proves its own identity before arming: it reads the hostname and instance id from the metadata service, reads the instance back from the provider, and refuses to arm unless the provider id matches the metadata. Once the maximum lifetime has elapsed it deletes the server it is running on. Elapsed time is measured against a monotonic clock, so a clock correction cannot defer it. A `terminating` sentinel is written before the first delete, so a restart mid-teardown resumes the teardown instead of arming a fresh lifetime. Retries continue at up to a minute apart for as long as the process lives, because giving up leaves the server billing, and absence is confirmed by reading the instance back exactly as the controller does. The token is read from a file and never from a flag or an environment variable, so it stays out of the process arguments and the unit definition, and the provider client the watchdog builds carries no server specification, so it can delete but never create.
 
 Launch and registration have deadlines of their own. An instance that has not launched within five minutes, or that has launched but whose node has not registered within fifteen, is released and the lease marked degraded rather than left waiting.
 
@@ -152,6 +155,7 @@ flowchart LR
 The controller is built on controller-runtime. The provider is a seam rather than a dependency, so the reconcilers never reach a cloud SDK directly.
 
 - `api/v1alpha1` holds the `CapacityLease` and `ProviderConfig` types and their validation markers.
+- `internal/agent` holds the node-side dead man's switch: identity resolution, the deadline rule, and the destroy loop.
 - `internal/controller` holds the lease reconciler, the orphan collector, and the factory that turns a `ProviderConfig` into a provider.
 - `internal/manager` wires the manager: scheme, cache, metrics, health probes, leader election, and the reconcilers.
 - `internal/provider` declares the instance lifecycle interface, the capability report, and the label constants.
@@ -159,7 +163,7 @@ The controller is built on controller-runtime. The provider is a seam rather tha
 - `internal/provider/conformance` holds the contract suite every provider implementation must pass.
 - `internal/provider/fake` holds the in-memory provider and the create and delete ledger used in tests.
 - `internal/k8s` holds workload migration, placement restore, and node drain.
-- `internal/cli` holds the cobra root and the two commands.
+- `internal/cli` holds the cobra root and the three commands.
 - `internal/version` holds the build stamp.
 
 ## Requirements
@@ -199,6 +203,7 @@ make build
 
 ```
 horizon controller   Run the in-cluster capacity lease controller
+horizon watchdog     Enforce the node-side teardown deadline from the leased server itself
 horizon version      Print the build stamp
 ```
 
@@ -209,6 +214,17 @@ horizon version      Print the build stamp
 | `--leader-elect` | `true` | Hold a leader election lease so only one replica reconciles. |
 | `--metrics-bind-address` | `:8080` | Address the metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the liveness and readiness endpoints bind to. |
+
+`horizon watchdog` runs on the leased server rather than in the cluster, started by the cloud-init that boots it. It takes six flags:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--max-lifetime` | none, required | Age at which the server deletes itself, between `5m` and `24h`. |
+| `--token-file` | `/etc/horizon/token` | File holding the provider token used to delete this server. |
+| `--node-name` | empty | Server to act on. Empty means the hostname reported by the metadata service. |
+| `--poll-interval` | `15s` | Interval between deadline checks. |
+| `--metadata-url` | `http://169.254.169.254/hetzner/v1/metadata` | Base URL of the instance metadata service. |
+| `--state-dir` | `/run/horizon` | Directory holding the sentinel that records a teardown in progress. |
 
 ## Releases
 
@@ -223,7 +239,8 @@ The image is built from source in a `golang` stage and shipped on `gcr.io/distro
 ```
 api/v1alpha1/       CapacityLease and ProviderConfig types
 cmd/horizon/        main entry point
-internal/cli/       cobra root, version command, controller command
+internal/cli/       cobra root, version command, controller command, watchdog command
+internal/agent/     node-side dead man's switch
 internal/manager/   controller-runtime wiring
 internal/controller/  lease reconciler, orphan collector, provider factory
 internal/k8s/       workload migration, placement restore, node drain
