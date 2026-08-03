@@ -8,7 +8,68 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+
+	"github.com/lucawalz/horizon/internal/provider"
 )
+
+func watchedNode(ready corev1.ConditionStatus, leaseUID string, annotations map[string]string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "burst-0",
+			Labels:      map[string]string{LeaseUIDLabelKey: leaseUID},
+			Annotations: annotations,
+		},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: ready}},
+		},
+	}
+}
+
+func TestTheNodeWatchIgnoresRenewalsAndKeepsEveryStrandingSignal(t *testing.T) {
+	deadline := map[string]string{provider.WatchdogDeadlineAnnotationKey: "1785931200"}
+	renewed := map[string]string{provider.WatchdogDeadlineAnnotationKey: "1785931380"}
+
+	tests := map[string]struct {
+		before *corev1.Node
+		after  *corev1.Node
+		want   bool
+	}{
+		"a renewed deadline is not a stranding signal": {
+			before: watchedNode(corev1.ConditionTrue, "uid", deadline),
+			after:  watchedNode(corev1.ConditionTrue, "uid", renewed),
+		},
+		"an unchanged node is not a stranding signal": {
+			before: watchedNode(corev1.ConditionTrue, "uid", deadline),
+			after:  watchedNode(corev1.ConditionTrue, "uid", deadline),
+		},
+		"a node falling out of readiness wakes the collector": {
+			before: watchedNode(corev1.ConditionTrue, "uid", deadline),
+			after:  watchedNode(corev1.ConditionFalse, "uid", renewed),
+			want:   true,
+		},
+		"a node losing its lease label wakes the collector": {
+			before: watchedNode(corev1.ConditionFalse, "uid", deadline),
+			after:  watchedNode(corev1.ConditionFalse, "", deadline),
+			want:   true,
+		},
+		"a node adopted by another lease wakes the collector": {
+			before: watchedNode(corev1.ConditionFalse, "uid", deadline),
+			after:  watchedNode(corev1.ConditionFalse, "other-uid", deadline),
+			want:   true,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := strandingSignals().Update(event.UpdateEvent{ObjectOld: tc.before, ObjectNew: tc.after})
+			if got != tc.want {
+				t.Errorf("update passed the predicate = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestJoiningNodeIsNotDeletedForBeingNotReady(t *testing.T) {
 	f := newOrphanFixture(t)
