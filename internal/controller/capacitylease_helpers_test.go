@@ -94,6 +94,10 @@ func (h *harness) createProviderConfig() {
 					LocalObjectReference: corev1.LocalObjectReference{Name: "cloud-init"},
 					Key:                  "user-data",
 				},
+				NodeCredentialSecretRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "hcloud"},
+					Key:                  "node-token",
+				},
 			},
 			Watchdog: testPolicy(testRenewInterval, testSlack),
 		},
@@ -102,6 +106,18 @@ func (h *harness) createProviderConfig() {
 		h.t.Fatalf("create providerconfig: %v", err)
 	}
 	h.t.Cleanup(func() { _ = h.api.Delete(context.Background(), cfg) })
+}
+
+func (h *harness) dropNodeCredential() {
+	h.t.Helper()
+	cfg := &v1alpha1.ProviderConfig{}
+	if err := h.api.Get(h.t.Context(), client.ObjectKey{Name: h.name}, cfg); err != nil {
+		h.t.Fatalf("get providerconfig: %v", err)
+	}
+	cfg.Spec.Hetzner.NodeCredentialSecretRef = nil
+	if err := h.api.Update(h.t.Context(), cfg); err != nil {
+		h.t.Fatalf("update providerconfig: %v", err)
+	}
 }
 
 func (h *harness) createLease(mutators ...func(*v1alpha1.CapacityLease)) {

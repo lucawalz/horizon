@@ -89,6 +89,9 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	policy := cfg.Spec.Watchdog
 
 	if lease.Status.AcceptedAt == nil {
+		if err := requireTeardownGuarantee(cfg, prov); err != nil {
+			return r.rejectLease(ctx, lease, err)
+		}
 		return r.acceptLease(ctx, lease)
 	}
 

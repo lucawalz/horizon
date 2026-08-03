@@ -15,6 +15,7 @@ import (
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/provider"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
+	"github.com/lucawalz/horizon/internal/version"
 )
 
 const podNamespaceEnvVar = "POD_NAMESPACE"
@@ -34,6 +35,17 @@ func NewProviderFactory(kc kubernetes.Interface) (ProviderFactory, error) {
 			return nil, fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
 		}
 	}, nil
+}
+
+func nodeCredentialConfigured(spec v1alpha1.ProviderConfigSpec) bool {
+	return spec.Hetzner != nil && spec.Hetzner.NodeCredentialSecretRef != nil
+}
+
+func requireTeardownGuarantee(cfg *v1alpha1.ProviderConfig, prov provider.Provider) error {
+	if prov.Capabilities().SelfTerminationStopsBilling || nodeCredentialConfigured(cfg.Spec) {
+		return nil
+	}
+	return fmt.Errorf("providerconfig %q cannot stop billing by self-terminating and configures no nodeCredentialSecretRef, so teardown of new capacity is not guaranteed", cfg.Name)
 }
 
 func operatorNamespace() (string, error) {
@@ -59,7 +71,11 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	if err != nil {
 		return nil, err
 	}
-	userData, err := secretValue(ctx, kc, namespace, "cloudInitSecretRef", spec.CloudInitSecretRef)
+	template, err := secretValue(ctx, kc, namespace, "cloudInitSecretRef", spec.CloudInitSecretRef)
+	if err != nil {
+		return nil, err
+	}
+	userData, err := renderCloudInit(ctx, kc, namespace, spec, template)
 	if err != nil {
 		return nil, err
 	}
@@ -74,6 +90,18 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 		Firewalls:  slices.Clone(spec.Firewalls),
 		UserData:   userData,
 	})
+}
+
+func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, template string) (string, error) {
+	values := map[string]string{hetzner.VersionSentinel: version.Version()}
+	if spec.NodeCredentialSecretRef != nil {
+		nodeToken, err := secretValue(ctx, kc, namespace, "nodeCredentialSecretRef", *spec.NodeCredentialSecretRef)
+		if err != nil {
+			return "", err
+		}
+		values[hetzner.NodeTokenSentinel] = nodeToken
+	}
+	return hetzner.RenderUserData(template, values)
 }
 
 func imageSelector(selector map[string]string) (label, value string, err error) {

@@ -27,6 +27,7 @@ Implemented:
 - workload migration onto and off the leased nodes, and node drain
 - the Helm chart that installs the controller and the definitions
 - the node-side dead man's switch on two clocks: a monotonic backstop and a wall clock deadline seeded from the instance label and renewed through the leased node
+- delivery of the node token and the controller version into the cloud-init, and the capability gate that refuses a lease when neither the provider nor the configuration can guarantee teardown
 - three commands, `horizon controller`, `horizon watchdog` and `horizon version`
 
 Not implemented:
@@ -34,7 +35,6 @@ Not implemented:
 - the web interface. Nothing is served, the binary has no flag for it, and the chart carries no values, port, or ingress for it.
 - the watch command and the lease verbs on the command line. Lease state is read with `kubectl get capacityleases`, which the printer columns make readable.
 - `ProviderConfig` status conditions. The subresource exists and stays empty.
-- `hetzner.nodeCredentialSecretRef`. The schema accepts it and nothing reads it.
 
 Two records set the direction. [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) moved orchestration out of a command line sequence and into a custom resource reconciled by a controller, because a linear sequence cleans up only if the process survives to clean up and was measured leaking a rented server on every kill. [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md) removed the terminal interface and the first-run wizard in favour of printer columns, a watch command, and a web interface.
 
@@ -57,6 +57,8 @@ The watchdog runs two clocks and fires on whichever comes first. The backstop is
 The wall clock holds the most recently known deadline, the seed until a read of the node succeeds and the annotation after that, whether the annotation falls earlier or later than the seed, because renewal is what a lease is for. It may only shorten the life of the machine, never defer it, so no renewal carries a server past its backstop. A partition is treated as death rather than a reason to wait: there is no retry budget and no partition detector, so a failed read leaves the last known deadline standing, the seed included, and that deadline simply elapses. `slack` is the retry budget, and it is the schema that guarantees there is one, because `slack` must exceed `renewInterval`. A server that never joins the cluster still dies on the deadline it was seeded with; only an instance whose expiry label is missing or unreadable runs on the backstop alone, and a seed that has already passed fires on the first poll rather than failing to arm.
 
 Launch and registration have deadlines of their own. An instance that has not launched within five minutes, or that has launched but whose node has not registered within fifteen, is released and the lease marked degraded rather than left waiting.
+
+A lease is refused before it is accepted when neither the provider nor the configuration can guarantee teardown. Hetzner keeps billing a powered-off server and offers no server-side deadline, so it reports that self-termination does not stop billing, and a Hetzner provider config that carries no `nodeCredentialSecretRef` therefore has no way to destroy a machine once the operator is gone. Such a lease is rejected with the reason recorded on its `Accepted` condition, and nothing is created. The check is deliberately confined to acceptance: teardown, expiry and orphan collection build the same provider client and keep working, so capacity that already exists is still released and a configuration change never strands a running server.
 
 The schema bounds the blast radius before any of that runs. `replicas` is capped at 8, `duration` at 8 hours, and `teardownGrace` at 15 minutes, all rejected by the API server rather than by the controller.
 
@@ -103,11 +105,11 @@ spec:
 | --- | --- | --- |
 | `spec.type` | yes | Provider type. `hetzner` is the only accepted value. |
 | `spec.hetzner.credentialsSecretRef` | yes | Secret name and key holding the Hetzner Cloud API token. |
-| `spec.hetzner.cloudInitSecretRef` | yes | Secret name and key holding the cloud-init the instance boots with. It must already apply the `horizon.dev/pool=reserved` node label. |
+| `spec.hetzner.cloudInitSecretRef` | yes | Secret name and key holding the cloud-init the instance boots with. It must already apply the `horizon.dev/pool=reserved` node label, and it may carry the sentinels below. |
 | `spec.hetzner.imageSelector` | no in the schema | Exactly one label and value selecting the boot image. The provider refuses to build without it, so it is required in practice. |
 | `spec.hetzner.sshKeys` | no | Hetzner SSH key names, resolved to key ids at create time. |
 | `spec.hetzner.firewalls` | no | Names of existing Hetzner Cloud Firewalls attached to every created server, at most five. The firewalls are never created or reconciled by horizon, and a name that does not resolve fails the create. |
-| `spec.hetzner.nodeCredentialSecretRef` | no | Accepted and not read by anything today. |
+| `spec.hetzner.nodeCredentialSecretRef` | no in the schema | Secret name and key holding the delete-capable Hetzner Cloud API token the watchdog uses to destroy its own server. It is substituted into the cloud-init rather than mounted. Hetzner cannot stop billing by self-terminating, so a lease is refused while this is unset, which makes it required in practice. |
 | `spec.watchdog` | yes | `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other. `renewInterval` is how often the controller rewrites the deadline on each leased node, `slack` is how long a node keeps running after the renewals stop, and `maxLifetime` bounds the whole policy. |
 
 ```yaml
@@ -124,6 +126,9 @@ spec:
     cloudInitSecretRef:
       name: horizon-cloud-init
       key: cloud-init
+    nodeCredentialSecretRef:
+      name: horizon-hetzner-node
+      key: token
     imageSelector:
       snapshot-name: cluster-node
   watchdog:
@@ -131,6 +136,17 @@ spec:
     slack: 2m
     maxLifetime: 8h
 ```
+
+### Cloud-init sentinels
+
+The cloud-init is substituted when the provider is built, so the watchdog can install and authenticate itself without anything placed on the machine by hand. Two placeholders are recognised:
+
+| Sentinel | Replaced with |
+| --- | --- |
+| `${HORIZON_NODE_TOKEN}` | The value behind `spec.hetzner.nodeCredentialSecretRef`. |
+| `${HORIZON_VERSION}` | The build stamp of the running controller, so a machine fetches the agent release that matches the operator that provisioned it. |
+
+Substitution is a literal replacement and not a template evaluation, so braces and dollar signs that are not one of these two placeholders pass through untouched, and a cloud-init using neither placeholder is delivered byte for byte. Anything starting `${HORIZON_` still standing afterwards fails the provider build and is named in the error, so a machine never boots with a placeholder where a credential belongs. The `horizon.dev/pool=reserved` check runs on the substituted text.
 
 ## Configuration
 
@@ -176,6 +192,7 @@ Hard requirements:
 
 - A Kubernetes cluster at 1.29 or newer, and permission to install cluster-scoped custom resource definitions and RBAC into it.
 - A Hetzner Cloud API token and a cloud-init that joins the cluster and applies the `horizon.dev/pool=reserved` node label, each stored in a Secret in the controller's namespace.
+- A delete-capable Hetzner Cloud API token for the leased machines, stored in a Secret in the controller's namespace and named by `nodeCredentialSecretRef`. Hetzner cannot stop billing by self-terminating, so no lease is accepted while that reference is unset.
 - A boot image in the Hetzner project, selectable by a single label.
 
 ## Installation
@@ -224,7 +241,7 @@ horizon version      Print the build stamp
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--max-lifetime` | none, required | Age at which the server deletes itself, between `5m` and `24h`. |
-| `--token-file` | `/etc/horizon/token` | File holding the provider token used to delete this server. |
+| `--token-file` | `/etc/horizon/token` | File holding the provider token used to delete this server, written by the cloud-init from the `${HORIZON_NODE_TOKEN}` sentinel. |
 | `--kubeconfig` | `/var/lib/rancher/k3s/agent/kubelet.kubeconfig` | Kubelet credential used to read the renewed deadline from this node. A missing file is not an error, and leaves the deadline seeded from the instance label standing. |
 | `--node-name` | empty | Server and node to act on. Empty means the hostname reported by the metadata service. |
 | `--poll-interval` | `15s` | Interval between deadline checks, and between reads of the node annotation. |

@@ -13,6 +13,9 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/provider"
+	"github.com/lucawalz/horizon/internal/provider/fake"
+	"github.com/lucawalz/horizon/internal/provider/hetzner"
+	"github.com/lucawalz/horizon/internal/version"
 )
 
 const (
@@ -22,10 +25,16 @@ const (
 	testImageValue      = "ubuntu-24.04"
 	blankTokenSecret    = "blank-token"
 	unlabelledInitName  = "plain-cloud-init"
+	sentinelInitName    = "watchdog-cloud-init"
+	testNodeToken       = "hcloud-node-token"
 	namespaceFileName   = "namespace"
 	namespaceFilePerm   = 0o600
 	poolLabelAssignment = provider.PoolLabelKey + "=" + provider.ReservedPoolValue
 )
+
+const sentinelCloudInit = "#cloud-config\nnode-label: " + poolLabelAssignment +
+	"\ntoken: " + hetzner.NodeTokenSentinel +
+	"\nrelease: " + hetzner.VersionSentinel + "\n"
 
 func assertErrorMessage(t *testing.T, err error, want string) {
 	t.Helper()
@@ -69,7 +78,14 @@ func credentialSecrets() []runtime.Object {
 		operatorSecret(blankTokenSecret, "token", ""),
 		operatorSecret("cloud-init", "user-data", "#cloud-config\nnode-label: "+poolLabelAssignment+"\n"),
 		operatorSecret(unlabelledInitName, "user-data", "#cloud-config\n"),
+		operatorSecret(sentinelInitName, "user-data", sentinelCloudInit),
+		operatorSecret("hcloud-node", "token", testNodeToken),
 	}
+}
+
+func nodeCredentialRef(name, key string) *corev1.SecretKeySelector {
+	ref := secretKeyRef(name, key)
+	return &ref
 }
 
 func hetznerSpec(mutate func(*v1alpha1.HetznerProviderSpec)) *v1alpha1.HetznerProviderSpec {
@@ -278,6 +294,116 @@ func TestHetznerProviderReportsEveryConstructionFailure(t *testing.T) {
 	}
 }
 
+func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
+	tests := []struct {
+		name     string
+		spec     *v1alpha1.HetznerProviderSpec
+		template string
+		want     string
+		wantErr  string
+	}{
+		{
+			name: "node credential and version reach the cloud-init",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.NodeCredentialSecretRef = nodeCredentialRef("hcloud-node", "token")
+			}),
+			template: sentinelCloudInit,
+			want: "#cloud-config\nnode-label: " + poolLabelAssignment +
+				"\ntoken: " + testNodeToken + "\nrelease: " + version.Version() + "\n",
+		},
+		{
+			name:     "a cloud-init without sentinels is untouched",
+			spec:     hetznerSpec(nil),
+			template: "#cloud-config\nnode-label: " + poolLabelAssignment + "\n",
+			want:     "#cloud-config\nnode-label: " + poolLabelAssignment + "\n",
+		},
+		{
+			name: "the node credential secret is absent",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.NodeCredentialSecretRef = nodeCredentialRef("absent", "token")
+			}),
+			template: sentinelCloudInit,
+			wantErr:  `read secret ` + testOperatorNS + `/absent: secrets "absent" not found`,
+		},
+		{
+			name: "the node credential key is absent",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.NodeCredentialSecretRef = nodeCredentialRef("hcloud-node", "absent")
+			}),
+			template: sentinelCloudInit,
+			wantErr:  `secret ` + testOperatorNS + `/hcloud-node has no key "absent"`,
+		},
+		{
+			name:     "the token sentinel is used without a node credential",
+			spec:     hetznerSpec(nil),
+			template: sentinelCloudInit,
+			wantErr:  "hetzner: cloud-init leaves " + hetzner.NodeTokenSentinel + " unresolved",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := renderCloudInit(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, tc.spec, tc.template)
+			assertErrorMessage(t, err, tc.wantErr)
+			if got != tc.want {
+				t.Errorf("rendered cloud-init is %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHetznerProviderValidatesTheRenderedCloudInit(t *testing.T) {
+	spec := hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+		s.CloudInitSecretRef = secretKeyRef(sentinelInitName, "user-data")
+		s.NodeCredentialSecretRef = nodeCredentialRef("hcloud-node", "token")
+	})
+
+	prov, err := hetznerProvider(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, spec)
+	assertErrorMessage(t, err, "")
+	if prov == nil {
+		t.Fatal("no provider returned for a cloud-init carrying sentinels")
+	}
+}
+
+func TestRequireTeardownGuaranteeRefusesOnlyWhatCannotBeTornDown(t *testing.T) {
+	tests := []struct {
+		name           string
+		selfTerminates bool
+		nodeCredential *corev1.SecretKeySelector
+		wantErr        string
+	}{
+		{
+			name:           "self-terminating provider needs no node credential",
+			selfTerminates: true,
+		},
+		{
+			name:           "a node credential covers a provider that cannot self-terminate",
+			nodeCredential: nodeCredentialRef("hcloud-node", "token"),
+		},
+		{
+			name:    "neither the provider nor the configuration guarantees teardown",
+			wantErr: `providerconfig "hetzner" cannot stop billing by self-terminating and configures no nodeCredentialSecretRef, so teardown of new capacity is not guaranteed`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prov := fake.New()
+			prov.AdvertisedCapabilities.SelfTerminationStopsBilling = tc.selfTerminates
+			cfg := &v1alpha1.ProviderConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "hetzner"},
+				Spec: v1alpha1.ProviderConfigSpec{
+					Type: v1alpha1.ProviderTypeHetzner,
+					Hetzner: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+						s.NodeCredentialSecretRef = tc.nodeCredential
+					}),
+				},
+			}
+			assertErrorMessage(t, requireTeardownGuarantee(cfg, prov), tc.wantErr)
+		})
+	}
+}
+
 func TestNewProviderFactoryBuildsTheConfiguredProvider(t *testing.T) {
 	t.Setenv(podNamespaceEnvVar, testOperatorNS)
 	factory, err := NewProviderFactory(newKubeClient(credentialSecrets()...))
@@ -291,6 +417,23 @@ func TestNewProviderFactoryBuildsTheConfiguredProvider(t *testing.T) {
 	assertErrorMessage(t, err, "")
 	if prov == nil {
 		t.Fatal("no provider returned for a hetzner configuration")
+	}
+}
+
+func TestNewProviderFactoryStillBuildsWithoutANodeCredential(t *testing.T) {
+	t.Setenv(podNamespaceEnvVar, testOperatorNS)
+	factory, err := NewProviderFactory(newKubeClient(credentialSecrets()...))
+	if err != nil {
+		t.Fatalf("building the factory failed: %v", err)
+	}
+
+	prov, err := factory(t.Context(), &v1alpha1.ProviderConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "hetzner"},
+		Spec:       v1alpha1.ProviderConfigSpec{Type: v1alpha1.ProviderTypeHetzner, Hetzner: hetznerSpec(nil)},
+	})
+	assertErrorMessage(t, err, "")
+	if prov == nil {
+		t.Fatal("no provider returned, so teardown and orphan collection would lose their client")
 	}
 }
 

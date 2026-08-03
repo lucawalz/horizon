@@ -340,6 +340,39 @@ func TestAnUnresolvableProviderBlocksAcceptanceAndSpending(t *testing.T) {
 	}
 }
 
+func TestAProviderThatCannotGuaranteeTeardownBlocksAcceptance(t *testing.T) {
+	h := newHarness(t)
+	h.dropNodeCredential()
+
+	h.settleIgnoringErrors(3)
+
+	h.assertCondition(v1alpha1.ConditionAccepted, metav1.ConditionFalse)
+	h.assertConditionDetail(v1alpha1.ConditionAccepted, reasonProviderUnavailable, "nodeCredentialSecretRef")
+	if h.lease().Status.AcceptedAt != nil {
+		t.Error("the deadline started without a teardown guarantee")
+	}
+	if got := len(h.prov.CreateCalls()); got != 0 {
+		t.Errorf("provider create was called %d times without a teardown guarantee", got)
+	}
+}
+
+func TestRemovingTheNodeCredentialStillReleasesAnAcceptedLease(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	if got := len(h.providerInstances()); got != 1 {
+		t.Fatalf("provider holds %d instances before the credential is removed, want 1", got)
+	}
+
+	h.dropNodeCredential()
+	h.deleteLease()
+	h.settle()
+
+	h.assertProviderEmpty()
+	if !h.leaseGone() {
+		t.Error("the finalizer was retained after a lease whose provider config lost its node credential")
+	}
+}
+
 func TestTheRequeueNeverOvershootsTheDeadline(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Duration = metav1.Duration{Duration: 5 * time.Minute}
