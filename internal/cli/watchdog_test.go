@@ -25,6 +25,7 @@ func TestWatchdogCommandDefaultsMatchTheNodeImage(t *testing.T) {
 	for name, want := range map[string]string{
 		"max-lifetime":  "0s",
 		"token-file":    "/etc/horizon/token",
+		"kubeconfig":    "/var/lib/rancher/k3s/agent/kubelet.kubeconfig",
 		"node-name":     "",
 		"poll-interval": "15s",
 		"metadata-url":  "http://169.254.169.254/hetzner/v1/metadata",

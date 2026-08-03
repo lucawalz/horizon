@@ -26,6 +26,7 @@ type Options struct {
 	MaxLifetime     time.Duration
 	PollInterval    time.Duration
 	TokenPath       string
+	KubeconfigPath  string
 	NodeName        string
 	MetadataBaseURL string
 	StateDir        string
@@ -41,6 +42,9 @@ func (o Options) Validate() error {
 	}
 	if o.TokenPath == "" {
 		return fmt.Errorf("agent: token path must not be empty")
+	}
+	if o.KubeconfigPath == "" {
+		return fmt.Errorf("agent: kubeconfig path must not be empty")
 	}
 	if o.MetadataBaseURL == "" {
 		return fmt.Errorf("agent: metadata url must not be empty")
@@ -86,6 +90,7 @@ func Run(ctx context.Context, opts Options) error {
 
 	log.Info("armed", "instance", identity.Name, "maxLifetime", opts.MaxLifetime)
 	startedAt := time.Now()
+	wall := newNodeDeadline(opts.KubeconfigPath, identity.Name)
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 
@@ -94,7 +99,7 @@ func Run(ctx context.Context, opts Options) error {
 		case <-ctx.Done():
 			return nil
 		case now := <-ticker.C:
-			reason, due := fired(startedAt, opts.MaxLifetime, nil, now)
+			reason, due := fired(startedAt, opts.MaxLifetime, wall.read(ctx), now)
 			if !due {
 				continue
 			}

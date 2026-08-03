@@ -11,6 +11,7 @@ import (
 
 const (
 	defaultTokenFile    = "/etc/horizon/token"
+	defaultKubeconfig   = "/var/lib/rancher/k3s/agent/kubelet.kubeconfig"
 	defaultPollInterval = 15 * time.Second
 	defaultMetadataURL  = "http://169.254.169.254/hetzner/v1/metadata"
 	defaultStateDir     = "/run/horizon"
@@ -39,8 +40,10 @@ func newWatchdogCmd() *cobra.Command {
 		"Age at which the server deletes itself, between 5m and 24h")
 	flags.StringVar(&opts.TokenPath, "token-file", defaultTokenFile,
 		"File holding the provider token used to delete this server")
+	flags.StringVar(&opts.KubeconfigPath, "kubeconfig", defaultKubeconfig,
+		"Kubelet credential used to read the renewable deadline from this node")
 	flags.StringVar(&opts.NodeName, "node-name", "",
-		"Server to act on, defaulting to the hostname reported by the metadata service")
+		"Server and node to act on, defaulting to the hostname reported by the metadata service")
 	flags.DurationVar(&opts.PollInterval, "poll-interval", defaultPollInterval,
 		"Interval between deadline checks")
 	flags.StringVar(&opts.MetadataBaseURL, "metadata-url", defaultMetadataURL,
