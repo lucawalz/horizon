@@ -157,7 +157,7 @@ func newFake(spec ServerSpec, images []*hcloudgo.Image, servers ...*hcloudgo.Ser
 			f.nextID = s.ID
 		}
 	}
-	return NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{f}, fakeFirewallAPI{f}, spec), f
+	return NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{f}, fakeFirewallAPI{f}, &fakeServerTypes{}, spec), f
 }
 
 func server(id int64, name string, labels map[string]string) *hcloudgo.Server {
@@ -179,8 +179,7 @@ func provisionableSpec() ServerSpec {
 	return ServerSpec{
 		Location:   "hel1",
 		ServerType: "cpx22",
-		ImageLabel: "pool-image",
-		ImageValue: "reserved-pool",
+		Image:      ImageRef{Selector: map[string]string{"pool-image": "reserved-pool"}},
 		UserData:   "ud",
 	}
 }
@@ -420,25 +419,14 @@ func TestCreateFailsFastWithoutImage(t *testing.T) {
 	}
 }
 
-func TestCreateFailsFastOnEmptyImageValue(t *testing.T) {
+func TestCreateFailsFastOnEmptyImage(t *testing.T) {
 	spec := provisionableSpec()
-	spec.ImageValue = ""
+	spec.Image = ImageRef{}
 	c, _ := newFake(spec, poolImage())
 
 	_, err := c.Create(context.Background(), reservedRequest("reserved-abc"))
-	if err == nil || !strings.Contains(err.Error(), "spec.hetzner.imageSelector needs a label value") {
-		t.Fatalf("expected image value error, got %v", err)
-	}
-}
-
-func TestCreateFailsFastOnEmptyImageLabel(t *testing.T) {
-	spec := provisionableSpec()
-	spec.ImageLabel = ""
-	c, _ := newFake(spec, poolImage())
-
-	_, err := c.Create(context.Background(), reservedRequest("reserved-abc"))
-	if err == nil || !strings.Contains(err.Error(), "spec.hetzner.imageSelector needs a label key") {
-		t.Fatalf("expected image label error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "spec.hetzner.image is required") {
+		t.Fatalf("expected image required error, got %v", err)
 	}
 }
 
@@ -452,8 +440,7 @@ func TestCreateFailsFastOnEmptyName(t *testing.T) {
 
 func TestCreateUsesConfiguredImageSelector(t *testing.T) {
 	spec := provisionableSpec()
-	spec.ImageLabel = "custom-label"
-	spec.ImageValue = "custom-node"
+	spec.Image = ImageRef{Selector: map[string]string{"custom-label": "custom-node"}}
 	c, f := newFake(spec, poolImage())
 
 	if _, err := c.Create(context.Background(), reservedRequest("reserved-abc")); err != nil {

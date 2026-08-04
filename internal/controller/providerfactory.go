@@ -84,11 +84,10 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 		return nil, err
 	}
 	return hetzner.NewClient(token, hetzner.ServerSpec{
-		ImageLabel: label,
-		ImageValue: value,
-		SSHKeys:    slices.Clone(spec.SSHKeys),
-		Firewalls:  slices.Clone(spec.Firewalls),
-		UserData:   userData,
+		Image:     hetzner.ImageRef{Selector: map[string]string{label: value}},
+		SSHKeys:   slices.Clone(spec.SSHKeys),
+		Firewalls: slices.Clone(spec.Firewalls),
+		UserData:  userData,
 	})
 }
 

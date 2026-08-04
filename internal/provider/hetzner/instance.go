@@ -17,8 +17,7 @@ import (
 type ServerSpec struct {
 	Location   string
 	ServerType string
-	ImageLabel string
-	ImageValue string
+	Image      ImageRef
 	SSHKeys    []string
 	Firewalls  []string
 	UserData   string
@@ -164,16 +163,13 @@ func (c *Client) createOpts(ctx context.Context, req provider.CreateRequest) (hc
 	if location == "" || serverType == "" {
 		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: server location and type are required")
 	}
-	if c.spec.ImageLabel == "" {
-		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: spec.hetzner.imageSelector needs a label key")
-	}
-	if c.spec.ImageValue == "" {
-		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: spec.hetzner.imageSelector needs a label value")
+	if c.spec.Image.empty() {
+		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: spec.hetzner.image is required")
 	}
 	if userData == "" {
 		return hcloudgo.ServerCreateOpts{}, fmt.Errorf("hetzner: server user-data is required")
 	}
-	image, err := c.resolveImage(ctx, c.spec.ImageLabel, c.spec.ImageValue)
+	image, err := c.resolveImage(ctx, c.spec.Image, serverType)
 	if err != nil {
 		return hcloudgo.ServerCreateOpts{}, err
 	}
@@ -195,23 +191,6 @@ func (c *Client) createOpts(ctx context.Context, req provider.CreateRequest) (hc
 		UserData:   userData,
 		Labels:     managedLabels(req.Labels),
 	}, nil
-}
-
-func (c *Client) resolveImage(ctx context.Context, label, value string) (*hcloudgo.Image, error) {
-	selector := label + "=" + value
-	images, err := c.images.AllWithOpts(ctx, hcloudgo.ImageListOpts{
-		ListOpts: hcloudgo.ListOpts{LabelSelector: selector},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("hetzner: list images %q: %w", selector, err)
-	}
-	if len(images) == 0 {
-		return nil, fmt.Errorf("hetzner: no image matches label %q", selector)
-	}
-	sort.Slice(images, func(i, j int) bool {
-		return images[i].Created.After(images[j].Created)
-	})
-	return images[0], nil
 }
 
 func (c *Client) resolveSSHKeys(ctx context.Context) ([]*hcloudgo.SSHKey, error) {

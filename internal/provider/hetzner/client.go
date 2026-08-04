@@ -26,6 +26,10 @@ type ImageAPI interface {
 	AllWithOpts(ctx context.Context, opts hcloudgo.ImageListOpts) ([]*hcloudgo.Image, error)
 }
 
+type ServerTypeAPI interface {
+	GetByName(ctx context.Context, name string) (*hcloudgo.ServerType, *hcloudgo.Response, error)
+}
+
 type SSHKeyAPI interface {
 	GetByName(ctx context.Context, name string) (*hcloudgo.SSHKey, *hcloudgo.Response, error)
 }
@@ -35,11 +39,12 @@ type FirewallAPI interface {
 }
 
 type Client struct {
-	servers   ServerAPI
-	images    ImageAPI
-	sshKeys   SSHKeyAPI
-	firewalls FirewallAPI
-	spec      ServerSpec
+	servers     ServerAPI
+	images      ImageAPI
+	sshKeys     SSHKeyAPI
+	firewalls   FirewallAPI
+	serverTypes ServerTypeAPI
+	spec        ServerSpec
 }
 
 var _ provider.Provider = (*Client)(nil)
@@ -68,11 +73,11 @@ func newClient(token string, spec ServerSpec) (*Client, error) {
 		return nil, fmt.Errorf("hetzner: token must not be empty")
 	}
 	cl := hcloudgo.NewClient(hcloudgo.WithToken(token))
-	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey, firewalls: &cl.Firewall, spec: spec}, nil
+	return &Client{servers: &cl.Server, images: &cl.Image, sshKeys: &cl.SSHKey, firewalls: &cl.Firewall, serverTypes: &cl.ServerType, spec: spec}, nil
 }
 
-func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, firewalls FirewallAPI, spec ServerSpec) *Client {
-	return &Client{servers: servers, images: images, sshKeys: sshKeys, firewalls: firewalls, spec: spec}
+func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, firewalls FirewallAPI, serverTypes ServerTypeAPI, spec ServerSpec) *Client {
+	return &Client{servers: servers, images: images, sshKeys: sshKeys, firewalls: firewalls, serverTypes: serverTypes, spec: spec}
 }
 
 func (c *Client) Capabilities() provider.Capabilities {
