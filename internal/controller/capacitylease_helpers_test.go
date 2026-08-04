@@ -100,6 +100,7 @@ func (h *harness) createProviderConfig() {
 					LocalObjectReference: corev1.LocalObjectReference{Name: "hcloud"},
 					Key:                  "node-token",
 				},
+				ImageSelector: map[string]string{"name": "bedrock-cluster-node"},
 			},
 			Watchdog: testPolicy(testRenewInterval, testSlack),
 		},

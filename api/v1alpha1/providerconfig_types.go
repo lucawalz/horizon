@@ -9,6 +9,22 @@ const ConditionReady = "Ready"
 
 const ProviderTypeHetzner = "hetzner"
 
+// +kubebuilder:validation:XValidation:rule="[has(self.name), has(self.id), has(self.selector)].filter(x, x).size() == 1",message="set exactly one of name, id or selector"
+type ImageSpec struct {
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	ID int64 `json:"id,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MinProperties=1
+	Selector map[string]string `json:"selector,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="has(self.image) != has(self.imageSelector)",message="set exactly one of image or the deprecated imageSelector"
 type HetznerProviderSpec struct {
 	CredentialsSecretRef corev1.SecretKeySelector `json:"credentialsSecretRef"`
 
@@ -17,6 +33,9 @@ type HetznerProviderSpec struct {
 
 	// +optional
 	ImageSelector map[string]string `json:"imageSelector,omitempty"`
+
+	// +optional
+	Image *ImageSpec `json:"image,omitempty"`
 
 	// +optional
 	// +listType=atomic

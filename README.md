@@ -106,7 +106,8 @@ spec:
 | `spec.type` | yes | Provider type. `hetzner` is the only accepted value. |
 | `spec.hetzner.credentialsSecretRef` | yes | Secret name and key holding the Hetzner Cloud API token. |
 | `spec.hetzner.cloudInitSecretRef` | yes | Secret name and key holding the cloud-init the instance boots with. It must already apply the `horizon.dev/pool=reserved` node label, and it may carry the sentinels below. |
-| `spec.hetzner.imageSelector` | no in the schema | Exactly one label and value selecting the boot image. The provider refuses to build without it, so it is required in practice. |
+| `spec.hetzner.imageSelector` | deprecated, one of `imageSelector`/`image` required | Exactly one label and value selecting the boot image. The provider refuses to build without it. |
+| `spec.hetzner.image` | one of `imageSelector`/`image` required | Selects the boot image by exactly one of `name`, `id` or `selector`. Replaces `imageSelector`; the provider does not read it yet. |
 | `spec.hetzner.sshKeys` | no | Hetzner SSH key names, resolved to key ids at create time. |
 | `spec.hetzner.firewalls` | no | Names of existing Hetzner Cloud Firewalls attached to every created server, at most five. The firewalls are never created or reconciled by horizon, and a name that does not resolve fails the create. |
 | `spec.hetzner.nodeCredentialSecretRef` | no in the schema | Secret name and key holding the delete-capable Hetzner Cloud API token the watchdog uses to destroy its own server. It is substituted into the cloud-init rather than mounted. Hetzner cannot stop billing by self-terminating, so a lease is refused while this is unset, which makes it required in practice. |

@@ -104,6 +104,25 @@ spec:
                     maxItems: 5
                     type: array
                     x-kubernetes-list-type: atomic
+                  image:
+                    properties:
+                      id:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      name:
+                        minLength: 1
+                        type: string
+                      selector:
+                        additionalProperties:
+                          type: string
+                        minProperties: 1
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: set exactly one of name, id or selector
+                      rule: '[has(self.name), has(self.id), has(self.selector)].filter(x,
+                        x).size() == 1'
                   imageSelector:
                     additionalProperties:
                       type: string
@@ -141,6 +160,9 @@ spec:
                 - cloudInitSecretRef
                 - credentialsSecretRef
                 type: object
+                x-kubernetes-validations:
+                - message: set exactly one of image or the deprecated imageSelector
+                  rule: has(self.image) != has(self.imageSelector)
               type:
                 type: string
                 x-kubernetes-validations:

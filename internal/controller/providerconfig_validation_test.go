@@ -23,6 +23,7 @@ func hetznerBlock() *v1alpha1.HetznerProviderSpec {
 	return &v1alpha1.HetznerProviderSpec{
 		CredentialsSecretRef: secretKeyRef("hcloud", "token"),
 		CloudInitSecretRef:   secretKeyRef("cloud-init", "user-data"),
+		ImageSelector:        map[string]string{"name": "bedrock-cluster-node"},
 	}
 }
 
@@ -117,6 +118,49 @@ func TestProviderConfigWatchdogRejectsUnparseableDurations(t *testing.T) {
 				assertCreate(t, c, rawWatchdogProviderConfig(t, field, value), true)
 			})
 		}
+	}
+}
+
+func TestProviderConfigImageValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutate       func(*v1alpha1.HetznerProviderSpec)
+		wantRejected bool
+	}{
+		{"legacy selector alone", func(h *v1alpha1.HetznerProviderSpec) {
+			h.ImageSelector = map[string]string{"caph-image-name": "bedrock-cluster-node"}
+		}, false},
+		{"image name alone", func(h *v1alpha1.HetznerProviderSpec) {
+			h.ImageSelector = nil
+			h.Image = &v1alpha1.ImageSpec{Name: "ubuntu-24.04"}
+		}, false},
+		{"image id alone", func(h *v1alpha1.HetznerProviderSpec) {
+			h.ImageSelector = nil
+			h.Image = &v1alpha1.ImageSpec{ID: 161547269}
+		}, false},
+		{"image selector alone", func(h *v1alpha1.HetznerProviderSpec) {
+			h.ImageSelector = nil
+			h.Image = &v1alpha1.ImageSpec{Selector: map[string]string{"k": "v"}}
+		}, false},
+		{"both blocks", func(h *v1alpha1.HetznerProviderSpec) {
+			h.Image = &v1alpha1.ImageSpec{Name: "ubuntu-24.04"}
+		}, true},
+		{"neither block", func(h *v1alpha1.HetznerProviderSpec) {
+			h.ImageSelector = nil
+		}, true},
+		{"two image variants", func(h *v1alpha1.HetznerProviderSpec) {
+			h.ImageSelector = nil
+			h.Image = &v1alpha1.ImageSpec{Name: "ubuntu-24.04", ID: 1}
+		}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := apiServerClient(t)
+			config := validProviderConfig(objectName(t))
+			tc.mutate(config.Spec.Hetzner)
+			assertCreate(t, c, config, tc.wantRejected)
+		})
 	}
 }
 
