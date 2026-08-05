@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -94,7 +96,19 @@ func Render(opts Options) (string, error) {
 	}
 
 	commands = append(commands, opts.PostCommands...)
-	return document(files, commands), nil
+	rendered := document(files, commands)
+	if err := parses(rendered); err != nil {
+		return "", err
+	}
+	return rendered, nil
+}
+
+func parses(rendered string) error {
+	var parsed any
+	if err := yaml.Unmarshal([]byte(rendered), &parsed); err != nil {
+		return fmt.Errorf("cloudinit: the generated document is not valid YAML, a file content or a command most likely starts with an indent or a tab: %w", err)
+	}
+	return nil
 }
 
 func document(files []File, commands []string) string {

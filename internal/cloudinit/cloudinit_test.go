@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -117,6 +119,72 @@ func TestRenderProbesTheInstalledBinary(t *testing.T) {
 	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", InstallWatchdogUnit: boolPtr(true)})
 	if !strings.Contains(out, "/var/lib/horizon/bin/horizon version") {
 		t.Fatal("the install script must probe the installed binary")
+	}
+}
+
+func TestRenderProducesAParsableDocument(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		Labels:              []string{"horizon.dev/pool=reserved"},
+		Files:               []File{{Path: "/etc/motd", Content: "alpha: beta\n"}},
+		PostCommands:        []string{"echo done"},
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	var parsed struct {
+		WriteFiles []struct {
+			Path    string `yaml:"path"`
+			Content string `yaml:"content"`
+		} `yaml:"write_files"`
+		RunCmd []string `yaml:"runcmd"`
+	}
+	if err := yaml.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("generated document does not parse: %v\n%s", err, out)
+	}
+	if len(parsed.WriteFiles) == 0 || len(parsed.RunCmd) == 0 {
+		t.Fatalf("generated document parsed to nothing useful:\n%s", out)
+	}
+}
+
+func TestRenderRejectsContentTheDocumentCannotCarry(t *testing.T) {
+	tests := []struct {
+		name string
+		opts Options
+	}{
+		{
+			name: "file content whose first line is indented",
+			opts: Options{Files: []File{{Path: "/etc/x", Content: "  alpha\nbeta\n"}}},
+		},
+		{
+			name: "file content carrying a leading tab",
+			opts: Options{Files: []File{{Path: "/etc/x", Content: "\talpha\nbeta\n"}}},
+		},
+		{
+			name: "a command whose first line is indented",
+			opts: Options{PostCommands: []string{"  alpha\nbeta"}},
+		},
+		{
+			name: "a command carrying a leading tab",
+			opts: Options{PostCommands: []string{"\talpha\nbeta"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := tc.opts
+			opts.Passthrough = true
+			opts.InstallWatchdogUnit = boolPtr(false)
+			out, err := Render(opts)
+			if err == nil {
+				t.Fatalf("an unparsable document was returned:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "not valid YAML") {
+				t.Errorf("error is %q, want it to say the document does not parse", err)
+			}
+		})
 	}
 }
 
