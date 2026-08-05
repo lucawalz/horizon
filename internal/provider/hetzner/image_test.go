@@ -51,6 +51,7 @@ func TestResolveImage(t *testing.T) {
 		{name: "name with no match", ref: ImageRef{Name: "ubuntu-24.04"}, wantErr: "no image named"},
 		{name: "name ambiguous", ref: ImageRef{Name: "ubuntu-24.04"}, images: []*hcloudgo.Image{img(7, newer), img(8, older)}, wantErr: "matches 2 images"},
 		{name: "selector newest wins", ref: ImageRef{Selector: map[string]string{"k": "v"}}, images: []*hcloudgo.Image{img(8, older), img(9, newer)}, wantID: 9},
+		{name: "selector ties on created time break on the higher id", ref: ImageRef{Selector: map[string]string{"k": "v"}}, images: []*hcloudgo.Image{img(5, newer), img(9, newer), img(7, newer)}, wantID: 9},
 		{name: "selector with no match", ref: ImageRef{Selector: map[string]string{"k": "v"}}, wantErr: "no image matches label"},
 	}
 	for _, tc := range cases {
@@ -80,5 +81,13 @@ func TestResolveImageFiltersByArchitecture(t *testing.T) {
 	}
 	if got := c.images.(*fakeImages).lastOpts.Architecture; len(got) != 1 || got[0] != hcloudgo.ArchitectureARM {
 		t.Fatalf("architecture was not passed to the lookup, got %v", got)
+	}
+}
+
+func TestLabelSelectorExprSortsKeys(t *testing.T) {
+	got := labelSelectorExpr(map[string]string{"zeta": "1", "alpha": "2", "mid": "3"})
+	want := "alpha=2,mid=3,zeta=1"
+	if got != want {
+		t.Fatalf("selector expr is %q, want %q", got, want)
 	}
 }

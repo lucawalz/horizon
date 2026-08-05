@@ -79,7 +79,12 @@ func (c *Client) imageBySelector(ctx context.Context, selector map[string]string
 	if len(images) == 0 {
 		return nil, fmt.Errorf("hetzner: no image matches label %q for architecture %s", expr, arch)
 	}
-	sort.Slice(images, func(i, j int) bool { return images[i].Created.After(images[j].Created) })
+	sort.Slice(images, func(i, j int) bool {
+		if !images[i].Created.Equal(images[j].Created) {
+			return images[i].Created.After(images[j].Created)
+		}
+		return images[i].ID > images[j].ID
+	})
 	return images[0], nil
 }
 
