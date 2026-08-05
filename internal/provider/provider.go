@@ -21,11 +21,20 @@ const (
 )
 
 const (
-	NodeTokenSentinel   = "${HORIZON_NODE_TOKEN}"
-	VersionSentinel     = "${HORIZON_VERSION}"
-	MaxLifetimeSentinel = "${HORIZON_MAX_LIFETIME}"
-	JoinTokenSentinel   = "${HORIZON_JOIN_TOKEN}"
+	SentinelPrefix = "${HORIZON_"
+	SentinelSuffix = "}"
 )
+
+const (
+	NodeTokenSentinel   = SentinelPrefix + "NODE_TOKEN" + SentinelSuffix
+	VersionSentinel     = SentinelPrefix + "VERSION" + SentinelSuffix
+	MaxLifetimeSentinel = SentinelPrefix + "MAX_LIFETIME" + SentinelSuffix
+	JoinTokenSentinel   = SentinelPrefix + "JOIN_TOKEN" + SentinelSuffix
+)
+
+func Sentinels() []string {
+	return []string{NodeTokenSentinel, VersionSentinel, MaxLifetimeSentinel, JoinTokenSentinel}
+}
 
 var ErrNotFound = errors.New("provider: instance not found")
 

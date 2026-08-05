@@ -1,8 +1,11 @@
 package hetzner
 
 import (
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/lucawalz/horizon/internal/provider"
 )
 
 const reservedCloudInit = `#cloud-config
@@ -39,19 +42,47 @@ func fullValues() map[string]string {
 	}
 }
 
+func vocabularyTemplate() (string, map[string]string) {
+	var b strings.Builder
+	b.WriteString("#cloud-config\n")
+	values := make(map[string]string, len(provider.Sentinels()))
+	for i, sentinel := range provider.Sentinels() {
+		value := "resolved-" + strconv.Itoa(i)
+		b.WriteString("field-" + strconv.Itoa(i) + ": " + sentinel + "\n")
+		values[sentinel] = value
+	}
+	return b.String(), values
+}
+
 func TestRenderUserDataResolvesEverySentinel(t *testing.T) {
-	rendered, err := RenderUserData(sentinelCloudInit, fullValues())
+	template, values := vocabularyTemplate()
+	rendered, err := RenderUserData(template, values)
 	if err != nil {
 		t.Fatalf("RenderUserData: %v", err)
 	}
 	if strings.Contains(rendered, sentinelPrefix) {
 		t.Errorf("rendered cloud-init still carries a sentinel:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, testNodeToken) {
-		t.Error("rendered cloud-init does not carry the node token")
+	for sentinel, value := range values {
+		if !strings.Contains(rendered, value) {
+			t.Errorf("rendered cloud-init does not carry the value for %s", sentinel)
+		}
 	}
-	if !strings.Contains(rendered, "horizon_"+testVersion+"_linux_amd64") {
-		t.Error("rendered cloud-init does not carry the version")
+}
+
+func TestRenderUserDataRejectsEverySentinelLeftWithoutAValue(t *testing.T) {
+	for _, missing := range provider.Sentinels() {
+		t.Run(missing, func(t *testing.T) {
+			template, values := vocabularyTemplate()
+			delete(values, missing)
+			_, err := RenderUserData(template, values)
+			if err == nil {
+				t.Fatalf("%s resolved without a value", missing)
+			}
+			if !strings.Contains(err.Error(), missing) {
+				t.Errorf("error is %q, want it to name %s", err, missing)
+			}
+		})
 	}
 }
 

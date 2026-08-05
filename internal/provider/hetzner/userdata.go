@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	sentinelPrefix = "${HORIZON_"
-	sentinelSuffix = "}"
+	sentinelPrefix = provider.SentinelPrefix
+	sentinelSuffix = provider.SentinelSuffix
 )
 
 const (
@@ -32,6 +32,11 @@ func RenderUserData(template string, values map[string]string) (string, error) {
 }
 
 func unresolvedSentinel(rendered string) (string, bool) {
+	for _, sentinel := range provider.Sentinels() {
+		if strings.Contains(rendered, sentinel) {
+			return sentinel, true
+		}
+	}
 	start := strings.Index(rendered, sentinelPrefix)
 	if start < 0 {
 		return "", false
