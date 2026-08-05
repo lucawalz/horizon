@@ -38,9 +38,14 @@ type Options struct {
 	Files               []File
 	PreCommands         []string
 	PostCommands        []string
+	InstallKubernetes   *bool
 	InstallWatchdogUnit *bool
 	BinaryBaseURL       string
 	Passthrough         bool
+}
+
+func (o Options) installsKubernetes() bool {
+	return o.InstallKubernetes == nil || *o.InstallKubernetes
 }
 
 type Flavor interface {
@@ -85,12 +90,14 @@ func Render(opts Options) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		flavorCommands, err := flavor.Commands(opts)
-		if err != nil {
-			return "", err
-		}
 		files = append(flavorFiles, files...)
-		commands = append(commands, flavorCommands...)
+		if opts.installsKubernetes() {
+			flavorCommands, err := flavor.Commands(opts)
+			if err != nil {
+				return "", err
+			}
+			commands = append(commands, flavorCommands...)
+		}
 		commands = append(commands, watchdogCommands(opts)...)
 		files = append(files, watchdogFiles(opts)...)
 	}

@@ -41,6 +41,41 @@ func TestRenderK3sIncludesTheContract(t *testing.T) {
 	}
 }
 
+func TestRenderInstallsKubernetesByDefault(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if !strings.Contains(out, "get.k3s.io") {
+		t.Fatalf("expected the flavour install command, got:\n%s", out)
+	}
+}
+
+func TestRenderOmitsKubernetesInstallWhenPreinstalled(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		InstallKubernetes:   boolPtr(false),
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if strings.Contains(out, "get.k3s.io") {
+		t.Fatalf("expected no k3s install command, got:\n%s", out)
+	}
+	if !strings.Contains(out, "/etc/rancher/k3s/config.yaml") {
+		t.Fatalf("expected the flavour config file to survive, got:\n%s", out)
+	}
+	if !strings.Contains(out, "/var/lib/horizon/bin/horizon") {
+		t.Fatalf("expected the watchdog install to survive, got:\n%s", out)
+	}
+}
+
 func TestRenderRejectsUnknownFlavor(t *testing.T) {
 	if _, err := Render(Options{Flavor: "nomad", Server: "https://x:6443", InstallWatchdogUnit: boolPtr(true)}); err == nil {
 		t.Fatal("expected an error for an unknown flavour")
