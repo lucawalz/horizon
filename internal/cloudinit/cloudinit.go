@@ -2,6 +2,8 @@ package cloudinit
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
@@ -79,6 +81,9 @@ func Render(opts Options) (string, error) {
 	if opts.TransientWatchdogUnit && !*opts.InstallWatchdogUnit {
 		return "", fmt.Errorf("--transient-watchdog-unit writes the watchdog unit to /run, so it needs --install-watchdog-unit to stay true")
 	}
+	if err := validateFlavorConfig(opts.FlavorConfig); err != nil {
+		return "", err
+	}
 	if opts.BinaryBaseURL == "" {
 		opts.BinaryBaseURL = DefaultBinaryBaseURL
 	}
@@ -115,6 +120,24 @@ func Render(opts Options) (string, error) {
 		return "", err
 	}
 	return rendered, nil
+}
+
+// A key or value spanning lines would write configuration keys of its own, past the rejection of the keys a flavour generates.
+func validateFlavorConfig(config map[string]string) error {
+	for _, key := range slices.Sorted(maps.Keys(config)) {
+		value := config[key]
+		switch {
+		case key == "" || key != strings.TrimSpace(key):
+			return fmt.Errorf("--flavor-config key %q is empty or carries surrounding whitespace", key)
+		case strings.ContainsAny(key, ":\n\r"):
+			return fmt.Errorf("--flavor-config key %q carries a colon or a line break, and one key=value pair sets exactly one configuration key", key)
+		case value == "":
+			return fmt.Errorf("--flavor-config key %q carries no value, which would set it to null rather than leave it unset", key)
+		case strings.ContainsAny(value, "\n\r"):
+			return fmt.Errorf("--flavor-config value for %q carries a line break, which would inject configuration keys the flavour owns", key)
+		}
+	}
+	return nil
 }
 
 func parses(rendered string) error {

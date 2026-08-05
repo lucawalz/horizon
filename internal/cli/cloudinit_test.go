@@ -251,6 +251,32 @@ func TestCloudInitCommandFlavorConfigValueKeepsEqualsSigns(t *testing.T) {
 	}
 }
 
+func TestCloudInitCommandRejectsFlavorConfigThatInjectsAnOwnedKey(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--flavor-config", "flannel-iface=tailscale0\nnode-taint:\n  - injected.dev/x=y:NoSchedule",
+	})
+	if err == nil {
+		t.Fatalf("a line break routed around the owned-key rejection, got:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--flavor-config") {
+		t.Errorf("error = %q, want it to name the flag", err)
+	}
+}
+
+func TestCloudInitCommandRejectsValuelessFlavorConfig(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--flavor-config", "flannel-iface=",
+	})
+	if err == nil {
+		t.Fatalf("a key with no value was accepted, got:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--flavor-config") {
+		t.Errorf("error = %q, want it to name the flag", err)
+	}
+}
+
 func TestCloudInitCommandRejectsRepeatedFlavorConfigKey(t *testing.T) {
 	_, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",

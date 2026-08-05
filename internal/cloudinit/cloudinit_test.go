@@ -255,6 +255,55 @@ func TestRenderRejectsExtraConfigForOwnedKeys(t *testing.T) {
 	}
 }
 
+const injectingFlavorConfigValue = "tailscale0\nnode-taint:\n  - injected.dev/x=y:NoSchedule"
+
+func TestRenderRejectsFlavorConfigThatInjectsAnOwnedKey(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		FlavorConfig:        map[string]string{"flannel-iface": injectingFlavorConfigValue},
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err == nil {
+		t.Fatalf("a line break routed around the owned-key rejection, got:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--flavor-config") {
+		t.Errorf("error is %q, want it to name the flag", err)
+	}
+}
+
+func TestRenderRejectsFlavorConfigTheDocumentCannotCarry(t *testing.T) {
+	tests := []struct {
+		name   string
+		config map[string]string
+	}{
+		{name: "a value spanning lines", config: map[string]string{"flannel-iface": injectingFlavorConfigValue}},
+		{name: "a value carrying a carriage return", config: map[string]string{"flannel-iface": "tailscale0\rnode-label: injected=true"}},
+		{name: "a key spanning lines", config: map[string]string{"flannel-iface: tailscale0\nnode-label": "injected=true"}},
+		{name: "a key carrying a colon", config: map[string]string{"flannel-iface: tailscale0": "x"}},
+		{name: "a key carrying surrounding whitespace", config: map[string]string{"  flannel-iface": "tailscale0"}},
+		{name: "an empty key", config: map[string]string{"": "tailscale0"}},
+		{name: "an empty value", config: map[string]string{"flannel-iface": ""}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := Render(Options{
+				Flavor:              "k3s",
+				Server:              "https://10.20.0.10:6443",
+				FlavorConfig:        tc.config,
+				InstallWatchdogUnit: boolPtr(true),
+			})
+			if err == nil {
+				t.Fatalf("the flavour configuration was accepted, got:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "--flavor-config") {
+				t.Errorf("error is %q, want it to name the flag", err)
+			}
+		})
+	}
+}
+
 func TestRenderProducesAParsableDocument(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",
