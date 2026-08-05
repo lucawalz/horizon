@@ -36,6 +36,7 @@ type Options struct {
 	Labels              []string
 	Taints              []string
 	Files               []File
+	FlavorConfig        map[string]string
 	PreCommands         []string
 	PostCommands        []string
 	InstallKubernetes   *bool

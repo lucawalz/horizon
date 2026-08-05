@@ -220,6 +220,41 @@ func TestRenderProbesTheInstalledBinary(t *testing.T) {
 	}
 }
 
+func TestK3sFilesCarryExtraConfigKeys(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		FlavorConfig:        map[string]string{"node-ip": "10.0.0.5", "flannel-iface": "tailscale0"},
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if !strings.Contains(out, "flannel-iface: tailscale0") {
+		t.Fatalf("expected the extra key in the flavour config, got:\n%s", out)
+	}
+	if strings.Index(out, "flannel-iface: tailscale0") > strings.Index(out, "node-ip: 10.0.0.5") {
+		t.Fatalf("extra keys must be sorted so the document is deterministic, got:\n%s", out)
+	}
+}
+
+func TestRenderRejectsExtraConfigForOwnedKeys(t *testing.T) {
+	for _, key := range []string{"server", "token", "node-label", "node-taint"} {
+		_, err := Render(Options{
+			Flavor:              "k3s",
+			Server:              "https://10.20.0.10:6443",
+			FlavorConfig:        map[string]string{key: "anything"},
+			InstallWatchdogUnit: boolPtr(true),
+		})
+		if err == nil {
+			t.Fatalf("expected %q to be rejected as a generator-owned key", key)
+		}
+		if !strings.Contains(err.Error(), key) {
+			t.Errorf("error is %q, want it to name the rejected key %q", err, key)
+		}
+	}
+}
+
 func TestRenderProducesAParsableDocument(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",
