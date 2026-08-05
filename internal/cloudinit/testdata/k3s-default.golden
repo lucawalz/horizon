@@ -9,7 +9,7 @@ write_files:
       node-label:
         - horizon.dev/pool=reserved
       node-taint:
-        - horizon.dev/burst=true:NoSchedule
+        - example.dev/dedicated=batch:NoSchedule
   - path: /etc/horizon/token
     permissions: '0600'
     owner: root:root

@@ -19,7 +19,7 @@ func TestRenderK3sIncludesTheContract(t *testing.T) {
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
 		Labels:              []string{"horizon.dev/pool=reserved"},
-		Taints:              []string{"horizon.dev/burst=true:NoSchedule"},
+		Taints:              []string{"example.dev/dedicated=batch:NoSchedule"},
 		InstallWatchdogUnit: boolPtr(true),
 	})
 	if err != nil {
@@ -31,7 +31,7 @@ func TestRenderK3sIncludesTheContract(t *testing.T) {
 		"server: https://10.20.0.10:6443",
 		"token: ${HORIZON_JOIN_TOKEN}",
 		"horizon.dev/pool=reserved",
-		"horizon.dev/burst=true:NoSchedule",
+		"example.dev/dedicated=batch:NoSchedule",
 		"${HORIZON_NODE_TOKEN}",
 		"--max-lifetime=${HORIZON_MAX_LIFETIME}",
 	} {
@@ -193,7 +193,7 @@ func TestRenderGolden(t *testing.T) {
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
 		Labels:              []string{"horizon.dev/pool=reserved"},
-		Taints:              []string{"horizon.dev/burst=true:NoSchedule"},
+		Taints:              []string{"example.dev/dedicated=batch:NoSchedule"},
 		InstallWatchdogUnit: boolPtr(true),
 	})
 	if err != nil {
