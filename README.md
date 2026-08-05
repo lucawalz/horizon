@@ -265,7 +265,7 @@ kubectl apply -f capacitylease.yaml
 kubectl get capacityleases -w
 ```
 
-Every command above was run while writing this document: the chart installs, the CLI renders the file shown, and the manifests were confirmed to validate, `image: {name: ...}` included, against a real API server. Step 6 needs a Hetzner server to actually boot, and that step alone was not repeated for this document. It has been proven end to end before: a stock `ubuntu-24.04` node registered within 90 seconds of boot on 5 August, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matched it to a lease named `batch-run`.
+Every command above was run while writing this document: the chart installs, the CLI renders the file shown, and the manifests were confirmed to validate, `image: {name: ...}` included, against a real API server. Step 6 needs a Hetzner server to actually boot, and that step alone was not repeated for this document. It has been proven end to end before: a stock `ubuntu-24.04` node registered within 90 seconds of boot on 4 August, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matched it to a lease named `batch-run`.
 
 `horizon cloud-init --passthrough` emits none of the flavour content above, for an adopter who wants to own the whole cloud-init and take only the pool-label default and the watchdog files.
 
