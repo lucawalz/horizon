@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -358,7 +359,7 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 			name:     "the token sentinel is used without a node credential",
 			spec:     hetznerSpec(nil),
 			template: sentinelCloudInit,
-			wantErr:  "hetzner: cloud-init leaves " + hetzner.NodeTokenSentinel + " unresolved",
+			wantErr:  "cloud-init needs " + hetzner.NodeTokenSentinel + " but spec.hetzner sets no nodeCredentialSecretRef",
 		},
 		{
 			name:     "the max lifetime always resolves from the watchdog policy",
@@ -383,10 +384,10 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 			wantErr:  `read secret ` + testOperatorNS + `/absent: secrets "absent" not found`,
 		},
 		{
-			name:     "the join token sentinel is left untouched without a join token secret",
+			name:     "the join token sentinel is refused without a join token secret",
 			spec:     hetznerSpec(nil),
 			template: "#cloud-config\nnode-label: " + poolLabelAssignment + "\njoin-token: " + hetzner.JoinTokenSentinel + "\n",
-			wantErr:  "hetzner: cloud-init leaves " + hetzner.JoinTokenSentinel + " unresolved",
+			wantErr:  "cloud-init needs " + hetzner.JoinTokenSentinel + " but spec.hetzner sets no joinTokenSecretRef",
 		},
 	}
 
@@ -398,6 +399,22 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 				t.Errorf("rendered cloud-init is %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRenderCloudInitSuppliesEverySentinelInTheVocabulary(t *testing.T) {
+	spec := hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+		s.NodeCredentialSecretRef = secretRefPtr("hcloud-node", "token")
+		s.JoinTokenSecretRef = secretRefPtr("hcloud-join", "token")
+	})
+
+	template := "#cloud-config\nnode-label: " + poolLabelAssignment + "\n"
+	for i, sentinel := range provider.Sentinels() {
+		template += "field-" + strconv.Itoa(i) + ": " + sentinel + "\n"
+	}
+
+	if _, err := renderCloudInit(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, spec, testWatchdog, template); err != nil {
+		t.Fatalf("a fully configured specification left a sentinel without a supplier: %v", err)
 	}
 }
 

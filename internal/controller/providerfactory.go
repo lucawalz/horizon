@@ -91,24 +91,36 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	})
 }
 
+type sentinelSource struct {
+	sentinel string
+	field    string
+	ref      *corev1.SecretKeySelector
+}
+
+func secretBackedSentinels(spec *v1alpha1.HetznerProviderSpec) []sentinelSource {
+	return []sentinelSource{
+		{hetzner.NodeTokenSentinel, "nodeCredentialSecretRef", spec.NodeCredentialSecretRef},
+		{hetzner.JoinTokenSentinel, "joinTokenSecretRef", spec.JoinTokenSecretRef},
+	}
+}
+
 func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy, template string) (string, error) {
 	values := map[string]string{
 		hetzner.VersionSentinel:     version.Version(),
 		hetzner.MaxLifetimeSentinel: watchdog.MaxLifetime.Duration.String(),
 	}
-	if spec.NodeCredentialSecretRef != nil {
-		nodeToken, err := secretValue(ctx, kc, namespace, "nodeCredentialSecretRef", *spec.NodeCredentialSecretRef)
+	for _, source := range secretBackedSentinels(spec) {
+		if source.ref == nil {
+			if strings.Contains(template, source.sentinel) {
+				return "", fmt.Errorf("cloud-init needs %s but spec.hetzner sets no %s", source.sentinel, source.field)
+			}
+			continue
+		}
+		value, err := secretValue(ctx, kc, namespace, source.field, *source.ref)
 		if err != nil {
 			return "", err
 		}
-		values[hetzner.NodeTokenSentinel] = nodeToken
-	}
-	if spec.JoinTokenSecretRef != nil {
-		joinToken, err := secretValue(ctx, kc, namespace, "joinTokenSecretRef", *spec.JoinTokenSecretRef)
-		if err != nil {
-			return "", err
-		}
-		values[hetzner.JoinTokenSentinel] = joinToken
+		values[source.sentinel] = value
 	}
 	return hetzner.RenderUserData(template, values)
 }
