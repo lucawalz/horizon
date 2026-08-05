@@ -10,7 +10,6 @@ sources:
   - https://github.com/lucawalz/horizon
 keywords:
   - capacity
-  - autoscaling
   - hetzner
   - operator
 maintainers:
