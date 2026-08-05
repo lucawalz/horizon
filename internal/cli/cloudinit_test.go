@@ -125,6 +125,26 @@ func TestCloudInitCommandWriteFileContentKeepsColons(t *testing.T) {
 	}
 }
 
+func TestCloudInitCommandKeepsCommasInContentAndCommands(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--write-file", "/etc/horizon/list:0644:alpha,beta",
+		"--post-command", "echo alpha,beta",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if !strings.Contains(out, "alpha,beta") {
+		t.Fatalf("a comma in file content was split, got:\n%s", out)
+	}
+	if !strings.Contains(out, "echo alpha,beta") {
+		t.Fatalf("a comma in a command was split, got:\n%s", out)
+	}
+	if strings.Count(out, "alpha,beta") != 2 {
+		t.Fatalf("both the file and the command must survive intact, got:\n%s", out)
+	}
+}
+
 func TestCloudInitCommandInstallWatchdogUnitDefaultsToTrue(t *testing.T) {
 	flag := cli.NewCloudInitCmdForTest().Flags().Lookup("install-watchdog-unit")
 	if flag == nil {

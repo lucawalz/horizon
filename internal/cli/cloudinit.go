@@ -53,11 +53,11 @@ func newCloudInitCmd() *cobra.Command {
 		"Node label, repeatable; the reserved pool label is added automatically and conflicting values are rejected")
 	flags.StringSliceVar(&opts.Taints, "taint", nil,
 		"Node taint, repeatable")
-	flags.StringSliceVar(&files, "write-file", nil,
+	flags.StringArrayVar(&files, "write-file", nil,
 		"Extra file as path:permissions:content, repeatable")
-	flags.StringSliceVar(&opts.PreCommands, "pre-command", nil,
+	flags.StringArrayVar(&opts.PreCommands, "pre-command", nil,
 		"Command to run before the join, repeatable")
-	flags.StringSliceVar(&opts.PostCommands, "post-command", nil,
+	flags.StringArrayVar(&opts.PostCommands, "post-command", nil,
 		"Command to run after the join, repeatable")
 	flags.BoolVar(&installWatchdogUnit, "install-watchdog-unit", true,
 		"Write and enable the self-destruct watchdog systemd unit")
