@@ -2,12 +2,31 @@ package cloudinit
 
 import "strings"
 
-func watchdogFiles(Options) []File {
-	return []File{{
-		Path:        "/etc/horizon/token",
-		Permissions: "0600",
+const (
+	watchdogBinaryPath         = "/var/lib/horizon/bin/horizon"
+	watchdogTokenPath          = "/etc/horizon/token"
+	watchdogUnitName           = "horizon-watchdog.service"
+	persistentWatchdogUnitPath = "/etc/systemd/system/" + watchdogUnitName
+	transientWatchdogUnitPath  = "/run/systemd/system/" + watchdogUnitName
+	perBootWatchdogScriptPath  = "/var/lib/cloud/scripts/per-boot/horizon-watchdog"
+	perBootScriptPermissions   = "0755"
+	secretFilePermissions      = "0600"
+)
+
+func watchdogFiles(opts Options) []File {
+	files := []File{{
+		Path:        watchdogTokenPath,
+		Permissions: secretFilePermissions,
 		Content:     nodeTokenSentinel,
 	}}
+	if opts.TransientWatchdogUnit {
+		files = append(files, File{
+			Path:        perBootWatchdogScriptPath,
+			Permissions: perBootScriptPermissions,
+			Content:     perBootWatchdogScript(),
+		})
+	}
+	return files
 }
 
 func watchdogCommands(opts Options) []string {
@@ -26,31 +45,52 @@ func watchdogCommands(opts Options) []string {
 		"grep \" ${TARBALL}$\" \"horizon_${NUM}_checksums.txt\" > expected.txt",
 		"sha256sum -c expected.txt",
 		"tar -xzf \"$TARBALL\" horizon",
-		"install -D -m0755 horizon /var/lib/horizon/bin/horizon",
-		"/var/lib/horizon/bin/horizon version >/dev/null",
+		"install -D -m0755 horizon " + watchdogBinaryPath,
+		watchdogBinaryPath + " version >/dev/null",
 		"rm -rf \"$TMP\"",
 	}, "\n")
 
 	commands := []string{install}
-	if *opts.InstallWatchdogUnit {
-		commands = append(commands, strings.Join([]string{
-			"set -eu",
-			"cat > /etc/systemd/system/horizon-watchdog.service <<'UNIT'",
-			"[Unit]",
-			"Description=horizon node watchdog",
-			"After=network-online.target",
-			"Wants=network-online.target",
-			"[Service]",
-			"Type=simple",
-			"Restart=always",
-			"RestartSec=5",
-			"ExecStart=/var/lib/horizon/bin/horizon watchdog --max-lifetime=" + maxLifetimeSentinel + " --token-file=/etc/horizon/token --state-dir=/run/horizon",
-			"[Install]",
-			"WantedBy=multi-user.target",
-			"UNIT",
-			"systemctl daemon-reload",
-			"systemctl enable --now horizon-watchdog.service",
-		}, "\n"))
+	if !*opts.InstallWatchdogUnit {
+		return commands
 	}
-	return commands
+	if opts.TransientWatchdogUnit {
+		return append(commands, strings.Join([]string{"set -eu", perBootWatchdogScriptPath}, "\n"))
+	}
+
+	enabled := append(watchdogUnit(), "[Install]", "WantedBy=multi-user.target")
+	lines := []string{"set -eu"}
+	lines = append(lines, armWatchdog(persistentWatchdogUnitPath, enabled, "enable --now")...)
+	return append(commands, strings.Join(lines, "\n"))
+}
+
+func perBootWatchdogScript() string {
+	lines := []string{
+		"#!/bin/sh",
+		"set -eu",
+		"[ -x " + watchdogBinaryPath + " ] || exit 0",
+	}
+	lines = append(lines, armWatchdog(transientWatchdogUnitPath, watchdogUnit(), "start")...)
+	return strings.Join(lines, "\n")
+}
+
+func armWatchdog(path string, unit []string, activation string) []string {
+	lines := []string{"cat > " + path + " <<'UNIT'"}
+	lines = append(lines, unit...)
+	return append(lines, "UNIT", "systemctl daemon-reload", "systemctl "+activation+" "+watchdogUnitName)
+}
+
+func watchdogUnit() []string {
+	return []string{
+		"[Unit]",
+		"Description=horizon node watchdog",
+		"After=network-online.target",
+		"Wants=network-online.target",
+		"[Service]",
+		"Type=simple",
+		"Restart=always",
+		"RestartSec=5",
+		"ExecStart=" + watchdogBinaryPath + " watchdog --max-lifetime=" + maxLifetimeSentinel +
+			" --token-file=" + watchdogTokenPath + " --state-dir=/run/horizon",
+	}
 }

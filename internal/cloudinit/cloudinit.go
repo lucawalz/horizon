@@ -40,8 +40,10 @@ type Options struct {
 	PostCommands        []string
 	InstallKubernetes   *bool
 	InstallWatchdogUnit *bool
-	BinaryBaseURL       string
-	Passthrough         bool
+	// The unit lives in /run because a read-only /etc/systemd/system cannot hold it or the symlink enabling it creates.
+	TransientWatchdogUnit bool
+	BinaryBaseURL         string
+	Passthrough           bool
 }
 
 func (o Options) installsKubernetes() bool {
@@ -71,6 +73,9 @@ func Flavors() []string {
 func Render(opts Options) (string, error) {
 	if opts.InstallWatchdogUnit == nil {
 		return "", fmt.Errorf("cloudinit: Options.InstallWatchdogUnit must be set explicitly to true or false")
+	}
+	if opts.TransientWatchdogUnit && !*opts.InstallWatchdogUnit {
+		return "", fmt.Errorf("--transient-watchdog-unit writes the watchdog unit to /run, so it needs --install-watchdog-unit to stay true")
 	}
 	if opts.BinaryBaseURL == "" {
 		opts.BinaryBaseURL = DefaultBinaryBaseURL

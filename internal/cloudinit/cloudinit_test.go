@@ -121,6 +121,69 @@ func TestRenderOmitsWatchdogUnitWhenDisabled(t *testing.T) {
 	}
 }
 
+func TestRenderWritesTransientWatchdogUnitPerBoot(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:                "k3s",
+		Server:                "https://10.20.0.10:6443",
+		InstallWatchdogUnit:   boolPtr(true),
+		TransientWatchdogUnit: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if strings.Contains(out, "/etc/systemd/system/horizon-watchdog.service") {
+		t.Fatalf("expected no persistent unit path, got:\n%s", out)
+	}
+	if !strings.Contains(out, "/run/systemd/system/horizon-watchdog.service") {
+		t.Fatalf("expected a transient unit path, got:\n%s", out)
+	}
+	if strings.Contains(out, "systemctl enable") {
+		t.Fatalf("a transient unit cannot be enabled, got:\n%s", out)
+	}
+	if !strings.Contains(out, "path: /var/lib/cloud/scripts/per-boot/horizon-watchdog") {
+		t.Fatalf("expected the unit to be rewritten on every boot, got:\n%s", out)
+	}
+	if !strings.Contains(out, "permissions: '0755'") {
+		t.Fatalf("expected the per-boot script to be executable, got:\n%s", out)
+	}
+}
+
+func TestRenderRejectsTransientUnitWithoutAUnit(t *testing.T) {
+	_, err := Render(Options{
+		Flavor:                "k3s",
+		Server:                "https://10.20.0.10:6443",
+		InstallWatchdogUnit:   boolPtr(false),
+		TransientWatchdogUnit: true,
+	})
+	if err == nil {
+		t.Fatal("expected a generation-time error for a transient unit that is also suppressed")
+	}
+	for _, want := range []string{"--transient-watchdog-unit", "--install-watchdog-unit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error is %q, want it to name %s", err, want)
+		}
+	}
+}
+
+func TestRenderArmsTheTransientUnitOnTheFirstBoot(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:                "k3s",
+		Server:                "https://10.20.0.10:6443",
+		InstallWatchdogUnit:   boolPtr(true),
+		TransientWatchdogUnit: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	script := "/var/lib/cloud/scripts/per-boot/horizon-watchdog"
+	if strings.Count(out, script) != 2 {
+		t.Fatalf("the per-boot script must be written and then run once the binary exists, got:\n%s", out)
+	}
+	if !strings.Contains(out, "systemctl start horizon-watchdog.service") {
+		t.Fatalf("expected the transient unit to be started, got:\n%s", out)
+	}
+}
+
 func TestRenderUsesConfiguredBinaryBaseURL(t *testing.T) {
 	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", BinaryBaseURL: "https://mirror.internal/horizon", InstallWatchdogUnit: boolPtr(true)})
 	if !strings.Contains(out, "https://mirror.internal/horizon") {
