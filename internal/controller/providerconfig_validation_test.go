@@ -23,7 +23,7 @@ func hetznerBlock() *v1alpha1.HetznerProviderSpec {
 	return &v1alpha1.HetznerProviderSpec{
 		CredentialsSecretRef: secretKeyRef("hcloud", "token"),
 		CloudInitSecretRef:   secretKeyRef("cloud-init", "user-data"),
-		ImageSelector:        map[string]string{"name": "bedrock-cluster-node"},
+		ImageSelector:        map[string]string{"caph-image-name": "bedrock-cluster-node"},
 	}
 }
 

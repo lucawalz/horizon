@@ -100,7 +100,7 @@ func (h *harness) createProviderConfig() {
 					LocalObjectReference: corev1.LocalObjectReference{Name: "hcloud"},
 					Key:                  "node-token",
 				},
-				ImageSelector: map[string]string{"name": "bedrock-cluster-node"},
+				ImageSelector: map[string]string{"caph-image-name": "bedrock-cluster-node"},
 			},
 			Watchdog: testPolicy(testRenewInterval, testSlack),
 		},
