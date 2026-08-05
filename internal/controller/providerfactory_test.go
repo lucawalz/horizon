@@ -139,6 +139,15 @@ func TestImageRefRejectsNeither(t *testing.T) {
 	}
 }
 
+func TestImageRefRejectsBoth(t *testing.T) {
+	spec := &v1alpha1.HetznerProviderSpec{
+		Image:         &v1alpha1.ImageSpec{Name: "ubuntu-24.04"},
+		ImageSelector: map[string]string{"caph-image-name": "bedrock-cluster-node"},
+	}
+	_, err := imageRef(spec)
+	assertErrorMessage(t, err, "spec.hetzner sets both image and the deprecated imageSelector")
+}
+
 func TestSecretValueNamesWhatIsMissing(t *testing.T) {
 	tests := []struct {
 		name    string

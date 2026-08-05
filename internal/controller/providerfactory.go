@@ -104,6 +104,9 @@ func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace str
 }
 
 func imageRef(spec *v1alpha1.HetznerProviderSpec) (hetzner.ImageRef, error) {
+	if spec.Image != nil && len(spec.ImageSelector) > 0 {
+		return hetzner.ImageRef{}, fmt.Errorf("spec.hetzner sets both image and the deprecated imageSelector")
+	}
 	if spec.Image != nil {
 		return hetzner.ImageRef{
 			Name:     spec.Image.Name,
