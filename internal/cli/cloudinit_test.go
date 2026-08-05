@@ -79,6 +79,19 @@ func TestCloudInitCommandDoesNotDuplicateAnExplicitPoolLabel(t *testing.T) {
 	}
 }
 
+func TestCloudInitCommandRejectsAConflictingPoolLabel(t *testing.T) {
+	_, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--label", "horizon.dev/pool=spot",
+	})
+	if err == nil {
+		t.Fatal("expected an error when the pool label carries a conflicting value")
+	}
+	if !strings.Contains(err.Error(), "horizon.dev/pool") || !strings.Contains(err.Error(), "spot") {
+		t.Errorf("error = %q, want it to name the key and the conflicting value", err)
+	}
+}
+
 func TestCloudInitCommandRejectsMalformedWriteFile(t *testing.T) {
 	_, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
@@ -89,6 +102,26 @@ func TestCloudInitCommandRejectsMalformedWriteFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--write-file") {
 		t.Errorf("error = %q, want it to name the flag", err)
+	}
+}
+
+func TestCloudInitCommandWriteFileContentKeepsColons(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--passthrough",
+		"--write-file", "/etc/hosts:0644:10.20.0.10:6443 server.local",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if !strings.Contains(out, "path: /etc/hosts") {
+		t.Fatalf("path did not parse correctly, got:\n%s", out)
+	}
+	if !strings.Contains(out, "permissions: '0644'") {
+		t.Fatalf("permissions did not parse correctly, got:\n%s", out)
+	}
+	if !strings.Contains(out, "10.20.0.10:6443 server.local") {
+		t.Fatalf("content with colons did not survive intact, got:\n%s", out)
 	}
 }
 

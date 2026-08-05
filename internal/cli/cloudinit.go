@@ -28,7 +28,11 @@ func newCloudInitCmd() *cobra.Command {
 				return err
 			}
 			opts.Files = parsed
-			opts.Labels = ensurePoolLabel(opts.Labels)
+			labels, err := ensurePoolLabel(opts.Labels)
+			if err != nil {
+				return err
+			}
+			opts.Labels = labels
 			opts.InstallWatchdogUnit = &installWatchdogUnit
 
 			rendered, err := cloudinit.Render(opts)
@@ -48,7 +52,7 @@ func newCloudInitCmd() *cobra.Command {
 	flags.StringVar(&opts.Architecture, "arch", "",
 		"Node CPU architecture, amd64 or arm64, defaulting to amd64")
 	flags.StringSliceVar(&opts.Labels, "label", nil,
-		"Node label, repeatable; the reserved pool label is always added")
+		"Node label, repeatable; the reserved pool label is added automatically and conflicting values are rejected")
 	flags.StringSliceVar(&opts.Taints, "taint", nil,
 		"Node taint, repeatable")
 	flags.StringSliceVar(&files, "write-file", nil,
@@ -67,14 +71,20 @@ func newCloudInitCmd() *cobra.Command {
 	return cmd
 }
 
-func ensurePoolLabel(labels []string) []string {
-	poolLabel := provider.PoolLabelKey + "=" + provider.ReservedPoolValue
+func ensurePoolLabel(labels []string) ([]string, error) {
 	for _, label := range labels {
-		if label == poolLabel {
-			return labels
+		key, value, _ := strings.Cut(label, "=")
+		if key != provider.PoolLabelKey {
+			continue
 		}
+		if value != provider.ReservedPoolValue {
+			return nil, fmt.Errorf("label %s is set to %q, the burst node contract requires %q",
+				provider.PoolLabelKey, value, provider.ReservedPoolValue)
+		}
+		return labels, nil
 	}
-	return append(labels, poolLabel)
+	poolLabel := provider.PoolLabelKey + "=" + provider.ReservedPoolValue
+	return append(labels, poolLabel), nil
 }
 
 func parseFileFlags(specs []string) ([]cloudinit.File, error) {
