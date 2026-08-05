@@ -39,7 +39,7 @@ Both definitions are cluster-scoped and live in the `horizon.dev/v1alpha1` group
 
 ### CapacityLease
 
-`spec.providerRef`, `spec.region`, `spec.size`, `spec.replicas`, and `spec.duration` are required. `spec.workload.namespace` names the namespace to migrate onto the leased nodes and omitting it adds bare capacity. Status carries `phase` (`Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`), the per-instance provider id and node name, and conditions. Printer columns expose replicas, region, phase, expiry, and age, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client; the short name is `cl`.
+`spec.providerRef`, `spec.region`, `spec.size`, `spec.replicas`, and `spec.duration` are required. `spec.workload.namespace` names the namespace to migrate onto the leased nodes and omitting it adds bare capacity. Status carries `phase` (`Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`), the per-instance provider id and node name, and conditions. Printer columns expose replicas, region, phase, expiry, readiness, and age, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client; the short name is `cl`.
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -58,7 +58,7 @@ spec:
 
 ### ProviderConfig
 
-`spec.type` is `hetzner`, the only accepted value. `spec.hetzner.credentialsSecretRef` and `spec.hetzner.cloudInitSecretRef` are required, along with exactly one of `spec.hetzner.image` (by `name`, `id`, or `selector`) or the deprecated `spec.hetzner.imageSelector`. `spec.hetzner.nodeCredentialSecretRef` is optional in the schema but required in practice: Hetzner cannot stop billing by self-terminating, so a lease is refused while it is unset. `spec.watchdog` is required and cross-validates `renewInterval`, `slack`, and `maxLifetime` against each other.
+`spec.type` is `hetzner`, the only accepted value. `spec.hetzner.credentialsSecretRef` and `spec.hetzner.cloudInitSecretRef` are required, along with exactly one of `spec.hetzner.image` (by `name`, `id`, or `selector`) or the deprecated `spec.hetzner.imageSelector`. `spec.hetzner.nodeCredentialSecretRef` is optional in the schema but required in practice: Hetzner cannot stop billing by self-terminating, so a lease is refused while it is unset. `spec.hetzner.joinTokenSecretRef` is likewise optional in the schema but required whenever the cloud-init behind `cloudInitSecretRef` uses `${HORIZON_JOIN_TOKEN}`, and every document the `k3s` flavour of `horizon cloud-init` renders does; the provider build fails, naming the field, if the sentinel is present and the reference is unset. `spec.watchdog` is required and cross-validates `renewInterval`, `slack`, and `maxLifetime` against each other.
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -76,6 +76,9 @@ spec:
       key: cloud-init
     nodeCredentialSecretRef:
       name: horizon-hetzner-node
+      key: token
+    joinTokenSecretRef:
+      name: horizon-join-token
       key: token
     image:
       name: ubuntu-24.04
@@ -129,6 +132,7 @@ Hard requirements:
 - A Kubernetes cluster at 1.29 or newer, and permission to install cluster-scoped custom resource definitions and RBAC into it.
 - A Hetzner Cloud API token and a cloud-init that joins the cluster and applies the `horizon.dev/pool=reserved` node label, each stored in a Secret in the controller's namespace. `horizon cloud-init` generates the second; see [Usage](#usage).
 - A delete-capable Hetzner Cloud API token for the leased machines, stored in a Secret in the controller's namespace and named by `nodeCredentialSecretRef`. Hetzner cannot stop billing by self-terminating, so no lease is accepted while that reference is unset.
+- A k3s join token, stored in a Secret in the controller's namespace and named by `joinTokenSecretRef`. Every cloud-init `horizon cloud-init` generates needs it, and the provider build fails before any instance is created while the reference is unset.
 - A boot image in the Hetzner project, selected by exact id, exact name, or one or more labels.
 
 ## Installation
@@ -176,7 +180,23 @@ kubectl create secret generic horizon-hetzner \
   --from-literal=token=<hetzner-api-token>
 ```
 
-**3. Render the cloud-init:**
+**3. Create a second Hetzner credential Secret for the node.** Hetzner Cloud API tokens are read-write per project rather than scoped to individual permissions, so the narrowing this token gets is organisational: mint a second token rather than reusing the one from step 2, so the node credential can be revoked on its own, without touching the operator's:
+
+```
+kubectl create secret generic horizon-hetzner-node \
+  --namespace horizon-system \
+  --from-literal=token=<hetzner-api-token-node>
+```
+
+**4. Create the join-token Secret**, holding the k3s token an agent presents to join the cluster. On the control plane, this is `/var/lib/rancher/k3s/server/node-token`:
+
+```
+kubectl create secret generic horizon-join-token \
+  --namespace horizon-system \
+  --from-literal=token=<k3s-join-token>
+```
+
+**5. Render the cloud-init:**
 
 ```
 horizon cloud-init --server https://<control-plane>:6443 > cloud-init.yaml
@@ -219,7 +239,7 @@ runcmd:
 
 The two elided `runcmd` blocks download and checksum-verify the horizon binary at `${HORIZON_VERSION}`, then write and enable `horizon-watchdog.service`; the `${HORIZON_...}` placeholders are correct as printed, since they resolve when `ProviderConfig` builds the provider, not when the CLI renders the template.
 
-**4. Create the cloud-init Secret from that file:**
+**6. Create the cloud-init Secret from that file:**
 
 ```
 kubectl create secret generic horizon-cloud-init \
@@ -227,7 +247,7 @@ kubectl create secret generic horizon-cloud-init \
   --from-file=cloud-init=cloud-init.yaml
 ```
 
-**5. Apply a `ProviderConfig`** naming the image by name (a custom image works identically with `image: {selector: {...}}`):
+**7. Apply a `ProviderConfig`** naming the image by name (a custom image works identically with `image: {selector: {...}}`):
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -239,13 +259,14 @@ spec:
   hetzner:
     credentialsSecretRef: {name: horizon-hetzner, key: token}
     cloudInitSecretRef: {name: horizon-cloud-init, key: cloud-init}
-    nodeCredentialSecretRef: {name: horizon-hetzner, key: token}
+    nodeCredentialSecretRef: {name: horizon-hetzner-node, key: token}
+    joinTokenSecretRef: {name: horizon-join-token, key: token}
     image:
       name: ubuntu-24.04
   watchdog: {renewInterval: 1m, slack: 2m, maxLifetime: 8h}
 ```
 
-**6. Apply a `CapacityLease` and watch the node register:**
+**8. Apply a `CapacityLease` and watch the node register:**
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -265,7 +286,7 @@ kubectl apply -f capacitylease.yaml
 kubectl get capacityleases -w
 ```
 
-Every command above was run while writing this document: the chart installs, the CLI renders the file shown, and the manifests were confirmed to validate, `image: {name: ...}` included, against a real API server. Step 6 needs a Hetzner server to actually boot, and that step alone was not repeated for this document. It has been proven end to end before: a stock `ubuntu-24.04` node registered within 90 seconds of boot on 4 August, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matched it to a lease named `batch-run`.
+The chart install, the CLI render, and the manifest validation against a real API server, `image`, `nodeCredentialSecretRef`, and `joinTokenSecretRef` included, were confirmed while writing this document. Steps 3 and 4, the node credential and join-token Secrets, are the same `kubectl create secret generic` shape as step 2 and were not separately re-run with live tokens. Step 8 needs a Hetzner server to actually boot, and that step alone was not repeated for this document. It has been proven end to end before: a stock `ubuntu-24.04` node registered within 90 seconds of boot on 4 August, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matched it to a lease named `batch-run`.
 
 `horizon cloud-init --passthrough` emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init. The flags that feed the generated content, `--flavor`, `--server`, `--label`, `--taint`, `--install-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself.
 
@@ -275,7 +296,7 @@ Every command above was run while writing this document: the chart installs, the
 horizon controller   Run the in-cluster capacity lease controller
 horizon watchdog     Enforce the node-side teardown deadline from the leased server itself
 horizon cloud-init   Render the cloud-init a burst node needs to join a cluster
-horizon version      Print the build stamp
+horizon version      Print the build version
 ```
 
 `horizon` with no subcommand prints help. `horizon controller` takes three flags:
