@@ -25,3 +25,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0019. Replace the terminal interface with a web interface and printer columns](0019-replace-terminal-interface-with-web-and-printer-columns.md) (accepted)
 - [0020. Make Chart.yaml the source of truth for the release version](0020-chart-yaml-as-the-release-version-source-of-truth.md) (accepted)
 - [0021. Guarantee teardown with a node-side dead man's switch on two clocks](0021-node-side-dead-mans-switch-on-two-clocks.md) (accepted)
+- [0022. Generate cloud-init rather than build a node image](0022-generate-cloud-init-rather-than-build-images.md) (accepted)

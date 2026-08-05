@@ -61,4 +61,6 @@ Until the agent is baked into the node image, cloud-init is a single point of fa
 
 An agent restart resets the monotonic backstop. A sentinel file written before the first delete call makes a restart resume the teardown instead of arming a fresh lifetime, so the window is narrow: only a crash before the switch fires resets the clock. This is accepted, because a crash-looping agent is a loud symptom that the operator-side layers still see.
 
+The watchdog's delete retries back off from 5 seconds, doubling, capped at a minute apart, and continue for as long as the process lives; giving up leaves the server billing. Identity is proved by reading the instance back exactly as the controller does, and the provider client the watchdog builds carries no server-create specification, so it can delete but never create.
+
 This record extends [0018](0018-provider-seam-around-instance-lifecycle.md) and supersedes nothing. It adds the layer that record's capability reporting was designed to describe, and it implements the refusal that record specified.
