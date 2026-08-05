@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -21,8 +22,7 @@ import (
 const (
 	testOperatorNS      = "horizon-system"
 	testHetznerToken    = "hcloud-token"
-	testImageLabel      = "name"
-	testImageValue      = "ubuntu-24.04"
+	testImageName       = "ubuntu-24.04"
 	blankTokenSecret    = "blank-token"
 	unlabelledInitName  = "plain-cloud-init"
 	sentinelInitName    = "watchdog-cloud-init"
@@ -90,51 +90,52 @@ func nodeCredentialRef(name, key string) *corev1.SecretKeySelector {
 
 func hetznerSpec(mutate func(*v1alpha1.HetznerProviderSpec)) *v1alpha1.HetznerProviderSpec {
 	spec := hetznerBlock()
-	spec.ImageSelector = map[string]string{testImageLabel: testImageValue}
+	spec.ImageSelector = nil
+	spec.Image = &v1alpha1.ImageSpec{Name: testImageName}
 	if mutate != nil {
 		mutate(spec)
 	}
 	return spec
 }
 
-func TestImageSelectorAcceptsExactlyOneLabel(t *testing.T) {
-	tests := []struct {
-		name      string
-		selector  map[string]string
-		wantLabel string
-		wantValue string
-		wantErr   string
+func TestImageRef(t *testing.T) {
+	cases := []struct {
+		name string
+		spec v1alpha1.HetznerProviderSpec
+		want hetzner.ImageRef
 	}{
 		{
-			name:    "unset selector",
-			wantErr: "imageSelector must carry exactly one label, got 0",
+			name: "legacy selector maps onto the selector variant",
+			spec: v1alpha1.HetznerProviderSpec{ImageSelector: map[string]string{"caph-image-name": "bedrock-cluster-node"}},
+			want: hetzner.ImageRef{Selector: map[string]string{"caph-image-name": "bedrock-cluster-node"}},
 		},
 		{
-			name:     "empty selector",
-			selector: map[string]string{},
-			wantErr:  "imageSelector must carry exactly one label, got 0",
+			name: "image name",
+			spec: v1alpha1.HetznerProviderSpec{Image: &v1alpha1.ImageSpec{Name: "ubuntu-24.04"}},
+			want: hetzner.ImageRef{Name: "ubuntu-24.04"},
 		},
 		{
-			name:      "one label",
-			selector:  map[string]string{testImageLabel: testImageValue},
-			wantLabel: testImageLabel,
-			wantValue: testImageValue,
-		},
-		{
-			name:     "two labels",
-			selector: map[string]string{testImageLabel: testImageValue, "architecture": "arm"},
-			wantErr:  "imageSelector must carry exactly one label, got 2",
+			name: "image id",
+			spec: v1alpha1.HetznerProviderSpec{Image: &v1alpha1.ImageSpec{ID: 161547269}},
+			want: hetzner.ImageRef{ID: 161547269},
 		},
 	}
-
-	for _, tc := range tests {
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			label, value, err := imageSelector(tc.selector)
-			assertErrorMessage(t, err, tc.wantErr)
-			if label != tc.wantLabel || value != tc.wantValue {
-				t.Errorf("selector resolved to %q=%q, want %q=%q", label, value, tc.wantLabel, tc.wantValue)
+			got, err := imageRef(&tc.spec)
+			if err != nil {
+				t.Fatalf("unexpected error %v", err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("want %+v, got %+v", tc.want, got)
 			}
 		})
+	}
+}
+
+func TestImageRefRejectsNeither(t *testing.T) {
+	if _, err := imageRef(&v1alpha1.HetznerProviderSpec{}); err == nil {
+		t.Fatal("expected an error when no image is configured")
 	}
 }
 
@@ -258,11 +259,18 @@ func TestHetznerProviderReportsEveryConstructionFailure(t *testing.T) {
 			wantErr: `secret ` + testOperatorNS + `/cloud-init has no key "absent"`,
 		},
 		{
-			name: "image selector carries no label",
+			name: "neither image nor the legacy selector is configured",
 			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
-				s.ImageSelector = nil
+				s.Image = nil
 			}),
-			wantErr: "imageSelector must carry exactly one label, got 0",
+			wantErr: "spec.hetzner needs either image or the deprecated imageSelector",
+		},
+		{
+			name: "legacy image selector still resolves",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.Image = nil
+				s.ImageSelector = map[string]string{"caph-image-name": "bedrock-cluster-node"}
+			}),
 		},
 		{
 			name: "token is blank",

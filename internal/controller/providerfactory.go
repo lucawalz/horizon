@@ -79,12 +79,12 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	if err != nil {
 		return nil, err
 	}
-	label, value, err := imageSelector(spec.ImageSelector)
+	ref, err := imageRef(spec)
 	if err != nil {
 		return nil, err
 	}
 	return hetzner.NewClient(token, hetzner.ServerSpec{
-		Image:     hetzner.ImageRef{Selector: map[string]string{label: value}},
+		Image:     ref,
 		SSHKeys:   slices.Clone(spec.SSHKeys),
 		Firewalls: slices.Clone(spec.Firewalls),
 		UserData:  userData,
@@ -103,12 +103,18 @@ func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace str
 	return hetzner.RenderUserData(template, values)
 }
 
-func imageSelector(selector map[string]string) (label, value string, err error) {
-	keys := slices.Sorted(maps.Keys(selector))
-	if len(keys) != 1 {
-		return "", "", fmt.Errorf("imageSelector must carry exactly one label, got %d", len(keys))
+func imageRef(spec *v1alpha1.HetznerProviderSpec) (hetzner.ImageRef, error) {
+	if spec.Image != nil {
+		return hetzner.ImageRef{
+			Name:     spec.Image.Name,
+			ID:       spec.Image.ID,
+			Selector: maps.Clone(spec.Image.Selector),
+		}, nil
 	}
-	return keys[0], selector[keys[0]], nil
+	if len(spec.ImageSelector) > 0 {
+		return hetzner.ImageRef{Selector: maps.Clone(spec.ImageSelector)}, nil
+	}
+	return hetzner.ImageRef{}, fmt.Errorf("spec.hetzner needs either image or the deprecated imageSelector")
 }
 
 func secretValue(ctx context.Context, kc kubernetes.Interface, namespace, field string, ref corev1.SecretKeySelector) (string, error) {
