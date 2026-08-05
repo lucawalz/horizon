@@ -20,6 +20,13 @@ const (
 	LeaseUIDLabelKey = "horizon.dev/lease-uid"
 )
 
+const (
+	NodeTokenSentinel   = "${HORIZON_NODE_TOKEN}"
+	VersionSentinel     = "${HORIZON_VERSION}"
+	MaxLifetimeSentinel = "${HORIZON_MAX_LIFETIME}"
+	JoinTokenSentinel   = "${HORIZON_JOIN_TOKEN}"
+)
+
 var ErrNotFound = errors.New("provider: instance not found")
 
 type InstanceState string

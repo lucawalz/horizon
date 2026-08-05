@@ -10,11 +10,13 @@ import (
 const (
 	sentinelPrefix = "${HORIZON_"
 	sentinelSuffix = "}"
+)
 
-	NodeTokenSentinel   = sentinelPrefix + "NODE_TOKEN" + sentinelSuffix
-	VersionSentinel     = sentinelPrefix + "VERSION" + sentinelSuffix
-	MaxLifetimeSentinel = sentinelPrefix + "MAX_LIFETIME" + sentinelSuffix
-	JoinTokenSentinel   = sentinelPrefix + "JOIN_TOKEN" + sentinelSuffix
+const (
+	NodeTokenSentinel   = provider.NodeTokenSentinel
+	VersionSentinel     = provider.VersionSentinel
+	MaxLifetimeSentinel = provider.MaxLifetimeSentinel
+	JoinTokenSentinel   = provider.JoinTokenSentinel
 )
 
 func RenderUserData(template string, values map[string]string) (string, error) {
