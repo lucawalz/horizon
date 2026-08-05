@@ -94,26 +94,22 @@ func TestRenderUsesConfiguredBinaryBaseURL(t *testing.T) {
 	}
 }
 
-func TestRenderDefaultsArchitectureToAMD64(t *testing.T) {
+func TestRenderResolvesTheArchitectureOnTheNode(t *testing.T) {
 	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", InstallWatchdogUnit: boolPtr(true)})
-	if !strings.Contains(out, "horizon_${NUM}_linux_amd64.tar.gz") {
-		t.Fatal("an unset architecture must default to amd64")
+	for _, want := range []string{
+		"ARCH=$(uname -m)",
+		"x86_64) ARCH=amd64 ;;",
+		"aarch64) ARCH=arm64 ;;",
+		"TARBALL=horizon_${NUM}_linux_${ARCH}.tar.gz",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the install block is missing %q", want)
+		}
 	}
-}
-
-func TestRenderUsesConfiguredArchitecture(t *testing.T) {
-	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", Architecture: "arm64", InstallWatchdogUnit: boolPtr(true)})
-	if !strings.Contains(out, "horizon_${NUM}_linux_arm64.tar.gz") {
-		t.Fatal("the configured architecture must be used")
-	}
-	if strings.Contains(out, "linux_amd64") {
-		t.Fatal("the amd64 default must not leak through when overridden")
-	}
-}
-
-func TestRenderRejectsUnknownArchitecture(t *testing.T) {
-	if _, err := Render(Options{Flavor: "k3s", Server: "https://x:6443", Architecture: "mips", InstallWatchdogUnit: boolPtr(true)}); err == nil {
-		t.Fatal("expected an error for an unknown architecture")
+	for _, unwanted := range []string{"linux_amd64", "linux_arm64"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("the install block pins %q instead of resolving the architecture on the node", unwanted)
+		}
 	}
 }
 

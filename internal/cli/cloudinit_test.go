@@ -148,35 +148,19 @@ func TestCloudInitCommandCanDisableTheWatchdogUnit(t *testing.T) {
 	}
 }
 
-func TestCloudInitCommandDefaultsArchitectureToAMD64(t *testing.T) {
+func TestCloudInitCommandCarriesNoArchitectureFlag(t *testing.T) {
+	if flag := cli.NewCloudInitCmdForTest().Flags().Lookup("arch"); flag != nil {
+		t.Error("the rendered document resolves the architecture on the node, so no --arch flag belongs")
+	}
+}
+
+func TestCloudInitCommandPinsNoArchitecture(t *testing.T) {
 	out, err := runCloudInit(t, []string{"--server", "https://10.20.0.10:6443"})
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
 	}
-	if !strings.Contains(out, "linux_amd64") {
-		t.Fatal("an unset --arch must default to amd64")
-	}
-}
-
-func TestCloudInitCommandAcceptsAnArchitecture(t *testing.T) {
-	out, err := runCloudInit(t, []string{
-		"--server", "https://10.20.0.10:6443",
-		"--arch", "arm64",
-	})
-	if err != nil {
-		t.Fatalf("unexpected error %v", err)
-	}
-	if !strings.Contains(out, "linux_arm64") {
-		t.Fatal("--arch arm64 must select the arm64 binary")
-	}
-}
-
-func TestCloudInitCommandRejectsAnUnknownArchitecture(t *testing.T) {
-	if _, err := runCloudInit(t, []string{
-		"--server", "https://10.20.0.10:6443",
-		"--arch", "mips",
-	}); err == nil {
-		t.Fatal("expected an error for an unknown architecture")
+	if !strings.Contains(out, "ARCH=$(uname -m)") {
+		t.Fatal("the rendered document must resolve the architecture on the node")
 	}
 }
 

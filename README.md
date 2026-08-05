@@ -298,7 +298,7 @@ horizon version      Print the build stamp
 | `--metadata-url` | `http://169.254.169.254/hetzner/v1/metadata` | Base URL of the instance metadata service. |
 | `--state-dir` | `/run/horizon` | Directory holding the sentinel that records a teardown in progress. |
 
-`horizon cloud-init` renders the join document shown in the quick start. `--server` is required unless `--passthrough`; `--flavor` (`k3s`, the only one implemented), `--arch` (`amd64` or `arm64`), `--label` and `--taint` (both repeatable), `--install-watchdog-unit` (default `true`), `--binary-base-url`, `--write-file` (`path:permissions:content`, repeatable), `--pre-command`/`--post-command` (repeatable), and `--passthrough` cover the rest; `horizon cloud-init --help` lists all of them with their defaults.
+`horizon cloud-init` renders the join document shown in the quick start. `--server` is required unless `--passthrough`; `--flavor` (`k3s`, the only one implemented), `--label` and `--taint` (both repeatable), `--install-watchdog-unit` (default `true`), `--binary-base-url`, `--write-file` (`path:permissions:content`, repeatable), `--pre-command`/`--post-command` (repeatable), and `--passthrough` cover the rest; `horizon cloud-init --help` lists all of them with their defaults. The document names no CPU architecture: the install block reads `uname -m` on the booted server and downloads the matching release archive, so one blob serves both a `cx` and a `cax` server type.
 
 ## Releases
 

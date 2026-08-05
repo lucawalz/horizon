@@ -49,8 +49,6 @@ func newCloudInitCmd() *cobra.Command {
 		"Kubernetes distribution, one of "+strings.Join(cloudinit.Flavors(), ", "))
 	flags.StringVar(&opts.Server, "server", "",
 		"Control plane URL the node joins")
-	flags.StringVar(&opts.Architecture, "arch", "",
-		"Node CPU architecture, amd64 or arm64, defaulting to amd64")
 	flags.StringSliceVar(&opts.Labels, "label", nil,
 		"Node label, repeatable; the reserved pool label is added automatically and conflicting values are rejected")
 	flags.StringSliceVar(&opts.Taints, "taint", nil,

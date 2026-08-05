@@ -21,13 +21,6 @@ const defaultFilePermissions = "0644"
 
 const defaultFileOwner = "root:root"
 
-const (
-	ArchitectureAMD64 = "amd64"
-	ArchitectureARM64 = "arm64"
-)
-
-var knownArchitectures = []string{ArchitectureAMD64, ArchitectureARM64}
-
 type File struct {
 	Path        string
 	Permissions string
@@ -38,7 +31,6 @@ type File struct {
 type Options struct {
 	Flavor              string
 	Server              string
-	Architecture        string
 	Labels              []string
 	Taints              []string
 	Files               []File
@@ -73,12 +65,6 @@ func Render(opts Options) (string, error) {
 	if opts.InstallWatchdogUnit == nil {
 		return "", fmt.Errorf("cloudinit: Options.InstallWatchdogUnit must be set explicitly to true or false")
 	}
-	architecture, err := normalizedArchitecture(opts.Architecture)
-	if err != nil {
-		return "", err
-	}
-	opts.Architecture = architecture
-
 	if opts.BinaryBaseURL == "" {
 		opts.BinaryBaseURL = DefaultBinaryBaseURL
 	}
@@ -143,16 +129,4 @@ func defaulted(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func normalizedArchitecture(architecture string) (string, error) {
-	if architecture == "" {
-		return ArchitectureAMD64, nil
-	}
-	for _, known := range knownArchitectures {
-		if architecture == known {
-			return architecture, nil
-		}
-	}
-	return "", fmt.Errorf("cloudinit: Options.Architecture %q is invalid, want one of %s", architecture, strings.Join(knownArchitectures, ", "))
 }

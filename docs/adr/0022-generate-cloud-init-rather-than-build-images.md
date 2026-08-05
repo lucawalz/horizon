@@ -36,4 +36,6 @@ horizon now depends on the image it boots running cloud-init and an init system 
 
 The image axis and the join axis are independent by construction. Swapping `spec.hetzner.image` changes what the server boots from without touching the cloud-init, and regenerating the cloud-init with `horizon cloud-init` changes how the server joins without touching the image. Neither requires a rebuild of the other.
 
+Independence holds only while the generated document names no architecture. The image is resolved per lease against the architecture of the server type, so a `cax` size boots an arm image and a `cx` size boots an x86 one from the same `ProviderConfig`. The document therefore resolves the architecture on the booted server, mapping `uname -m` onto the release archive suffix, rather than carrying a choice made at render time. A blob that named an architecture would silently mismatch every server type of the other one: the agent would still join, because the k3s installer detects the architecture itself, and only the watchdog binary would fail to execute, which is the one failure the whole project exists to prevent.
+
 Adding a second flavour, `kubeadm` or otherwise, is a new file implementing the `cloudinit.Flavor` interface, not a new image pipeline. The generator, not an image, is now the place a second Kubernetes distribution gets added.

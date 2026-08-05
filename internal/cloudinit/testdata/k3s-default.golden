@@ -23,7 +23,9 @@ runcmd:
     V=${HORIZON_VERSION}
     NUM=${V#v}
     BASE=https://github.com/lucawalz/horizon/releases/download/${V}
-    TARBALL=horizon_${NUM}_linux_amd64.tar.gz
+    ARCH=$(uname -m)
+    case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; *) echo "horizon: unsupported architecture $ARCH" >&2; exit 1 ;; esac
+    TARBALL=horizon_${NUM}_linux_${ARCH}.tar.gz
     TMP=$(mktemp -d)
     cd "$TMP"
     curl -fsSL --max-time 120 -O "$BASE/$TARBALL"
