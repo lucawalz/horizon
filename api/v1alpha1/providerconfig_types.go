@@ -35,6 +35,7 @@ type HetznerProviderSpec struct {
 	JoinTokenSecretRef *corev1.SecretKeySelector `json:"joinTokenSecretRef,omitempty"`
 
 	// +optional
+	// +kubebuilder:validation:MinProperties=1
 	ImageSelector map[string]string `json:"imageSelector,omitempty"`
 
 	// +optional

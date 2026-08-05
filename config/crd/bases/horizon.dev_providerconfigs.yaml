@@ -126,6 +126,7 @@ spec:
                   imageSelector:
                     additionalProperties:
                       type: string
+                    minProperties: 1
                     type: object
                   joinTokenSecretRef:
                     description: SecretKeySelector selects a key of a Secret.
