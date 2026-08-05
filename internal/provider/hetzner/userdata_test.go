@@ -169,3 +169,23 @@ func TestBuildUserDataFailsFastWhenReservedLabelMissing(t *testing.T) {
 		t.Fatal("expected error when reserved node-label is absent")
 	}
 }
+
+func TestRenderUserDataSubstitutesMaxLifetime(t *testing.T) {
+	out, err := RenderUserData("--max-lifetime="+MaxLifetimeSentinel, map[string]string{MaxLifetimeSentinel: "8h0m0s"})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if out != "--max-lifetime=8h0m0s" {
+		t.Fatalf("got %q", out)
+	}
+}
+
+func TestRenderUserDataSubstitutesJoinToken(t *testing.T) {
+	out, err := RenderUserData("token: "+JoinTokenSentinel, map[string]string{JoinTokenSentinel: "K10abc::server:secret"})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if out != "token: K10abc::server:secret" {
+		t.Fatalf("got %q", out)
+	}
+}

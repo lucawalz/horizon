@@ -32,6 +32,9 @@ type HetznerProviderSpec struct {
 	NodeCredentialSecretRef *corev1.SecretKeySelector `json:"nodeCredentialSecretRef,omitempty"`
 
 	// +optional
+	JoinTokenSecretRef *corev1.SecretKeySelector `json:"joinTokenSecretRef,omitempty"`
+
+	// +optional
 	ImageSelector map[string]string `json:"imageSelector,omitempty"`
 
 	// +optional

@@ -27,10 +27,13 @@ const (
 	unlabelledInitName  = "plain-cloud-init"
 	sentinelInitName    = "watchdog-cloud-init"
 	testNodeToken       = "hcloud-node-token"
+	testJoinToken       = "hcloud-join-token"
 	namespaceFileName   = "namespace"
 	namespaceFilePerm   = 0o600
 	poolLabelAssignment = provider.PoolLabelKey + "=" + provider.ReservedPoolValue
 )
+
+var testWatchdog = testPolicy(testRenewInterval, testSlack)
 
 const sentinelCloudInit = "#cloud-config\nnode-label: " + poolLabelAssignment +
 	"\ntoken: " + hetzner.NodeTokenSentinel +
@@ -80,10 +83,11 @@ func credentialSecrets() []runtime.Object {
 		operatorSecret(unlabelledInitName, "user-data", "#cloud-config\n"),
 		operatorSecret(sentinelInitName, "user-data", sentinelCloudInit),
 		operatorSecret("hcloud-node", "token", testNodeToken),
+		operatorSecret("hcloud-join", "token", testJoinToken),
 	}
 }
 
-func nodeCredentialRef(name, key string) *corev1.SecretKeySelector {
+func secretRefPtr(name, key string) *corev1.SecretKeySelector {
 	ref := secretKeyRef(name, key)
 	return &ref
 }
@@ -299,7 +303,7 @@ func TestHetznerProviderReportsEveryConstructionFailure(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			prov, err := hetznerProvider(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, tc.spec)
+			prov, err := hetznerProvider(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, tc.spec, testWatchdog)
 			assertErrorMessage(t, err, tc.wantErr)
 			if tc.wantErr == "" && prov == nil {
 				t.Error("no provider returned for a fully resolved specification")
@@ -322,7 +326,7 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 		{
 			name: "node credential and version reach the cloud-init",
 			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
-				s.NodeCredentialSecretRef = nodeCredentialRef("hcloud-node", "token")
+				s.NodeCredentialSecretRef = secretRefPtr("hcloud-node", "token")
 			}),
 			template: sentinelCloudInit,
 			want: "#cloud-config\nnode-label: " + poolLabelAssignment +
@@ -337,7 +341,7 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 		{
 			name: "the node credential secret is absent",
 			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
-				s.NodeCredentialSecretRef = nodeCredentialRef("absent", "token")
+				s.NodeCredentialSecretRef = secretRefPtr("absent", "token")
 			}),
 			template: sentinelCloudInit,
 			wantErr:  `read secret ` + testOperatorNS + `/absent: secrets "absent" not found`,
@@ -345,7 +349,7 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 		{
 			name: "the node credential key is absent",
 			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
-				s.NodeCredentialSecretRef = nodeCredentialRef("hcloud-node", "absent")
+				s.NodeCredentialSecretRef = secretRefPtr("hcloud-node", "absent")
 			}),
 			template: sentinelCloudInit,
 			wantErr:  `secret ` + testOperatorNS + `/hcloud-node has no key "absent"`,
@@ -356,11 +360,39 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 			template: sentinelCloudInit,
 			wantErr:  "hetzner: cloud-init leaves " + hetzner.NodeTokenSentinel + " unresolved",
 		},
+		{
+			name:     "the max lifetime always resolves from the watchdog policy",
+			spec:     hetznerSpec(nil),
+			template: "#cloud-config\nnode-label: " + poolLabelAssignment + "\nmax-lifetime: " + hetzner.MaxLifetimeSentinel + "\n",
+			want:     "#cloud-config\nnode-label: " + poolLabelAssignment + "\nmax-lifetime: " + testWatchdog.MaxLifetime.Duration.String() + "\n",
+		},
+		{
+			name: "the join token reaches the cloud-init when configured",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.JoinTokenSecretRef = secretRefPtr("hcloud-join", "token")
+			}),
+			template: "#cloud-config\nnode-label: " + poolLabelAssignment + "\njoin-token: " + hetzner.JoinTokenSentinel + "\n",
+			want:     "#cloud-config\nnode-label: " + poolLabelAssignment + "\njoin-token: " + testJoinToken + "\n",
+		},
+		{
+			name: "the join token secret is absent",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.JoinTokenSecretRef = secretRefPtr("absent", "token")
+			}),
+			template: "#cloud-config\nnode-label: " + poolLabelAssignment + "\njoin-token: " + hetzner.JoinTokenSentinel + "\n",
+			wantErr:  `read secret ` + testOperatorNS + `/absent: secrets "absent" not found`,
+		},
+		{
+			name:     "the join token sentinel is left untouched without a join token secret",
+			spec:     hetznerSpec(nil),
+			template: "#cloud-config\nnode-label: " + poolLabelAssignment + "\njoin-token: " + hetzner.JoinTokenSentinel + "\n",
+			wantErr:  "hetzner: cloud-init leaves " + hetzner.JoinTokenSentinel + " unresolved",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := renderCloudInit(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, tc.spec, tc.template)
+			got, err := renderCloudInit(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, tc.spec, testWatchdog, tc.template)
 			assertErrorMessage(t, err, tc.wantErr)
 			if got != tc.want {
 				t.Errorf("rendered cloud-init is %q, want %q", got, tc.want)
@@ -372,10 +404,10 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 func TestHetznerProviderValidatesTheRenderedCloudInit(t *testing.T) {
 	spec := hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
 		s.CloudInitSecretRef = secretKeyRef(sentinelInitName, "user-data")
-		s.NodeCredentialSecretRef = nodeCredentialRef("hcloud-node", "token")
+		s.NodeCredentialSecretRef = secretRefPtr("hcloud-node", "token")
 	})
 
-	prov, err := hetznerProvider(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, spec)
+	prov, err := hetznerProvider(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, spec, testWatchdog)
 	assertErrorMessage(t, err, "")
 	if prov == nil {
 		t.Fatal("no provider returned for a cloud-init carrying sentinels")
@@ -395,7 +427,7 @@ func TestRequireTeardownGuaranteeRefusesOnlyWhatCannotBeTornDown(t *testing.T) {
 		},
 		{
 			name:           "a node credential covers a provider that cannot self-terminate",
-			nodeCredential: nodeCredentialRef("hcloud-node", "token"),
+			nodeCredential: secretRefPtr("hcloud-node", "token"),
 		},
 		{
 			name:    "neither the provider nor the configuration guarantees teardown",

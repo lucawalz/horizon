@@ -150,6 +150,11 @@ func (in *HetznerProviderSpec) DeepCopyInto(out *HetznerProviderSpec) {
 		*out = new(corev1.SecretKeySelector)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.JoinTokenSecretRef != nil {
+		in, out := &in.JoinTokenSecretRef, &out.JoinTokenSecretRef
+		*out = new(corev1.SecretKeySelector)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.ImageSelector != nil {
 		in, out := &in.ImageSelector, &out.ImageSelector
 		*out = make(map[string]string, len(*in))

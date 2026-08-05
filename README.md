@@ -111,7 +111,8 @@ spec:
 | `spec.hetzner.sshKeys` | no | Hetzner SSH key names, resolved to key ids at create time. |
 | `spec.hetzner.firewalls` | no | Names of existing Hetzner Cloud Firewalls attached to every created server, at most five. The firewalls are never created or reconciled by horizon, and a name that does not resolve fails the create. |
 | `spec.hetzner.nodeCredentialSecretRef` | no in the schema | Secret name and key holding the delete-capable Hetzner Cloud API token the watchdog uses to destroy its own server. It is substituted into the cloud-init rather than mounted. Hetzner cannot stop billing by self-terminating, so a lease is refused while this is unset, which makes it required in practice. |
-| `spec.watchdog` | yes | `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other. `renewInterval` is how often the controller rewrites the deadline on each leased node, `slack` is how long a node keeps running after the renewals stop, and `maxLifetime` bounds the whole policy. |
+| `spec.hetzner.joinTokenSecretRef` | no | Secret name and key holding a cluster join token. It is substituted into the cloud-init rather than mounted, and left unset when the cloud-init has another way to join. |
+| `spec.watchdog` | yes | `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other. `renewInterval` is how often the controller rewrites the deadline on each leased node, `slack` is how long a node keeps running after the renewals stop, and `maxLifetime` bounds the whole policy and is the value the `${HORIZON_MAX_LIFETIME}` sentinel carries into the cloud-init. |
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -140,14 +141,16 @@ spec:
 
 ### Cloud-init sentinels
 
-The cloud-init is substituted when the provider is built, so the watchdog can install and authenticate itself without anything placed on the machine by hand. Two placeholders are recognised:
+The cloud-init is substituted when the provider is built, so the watchdog can install and authenticate itself without anything placed on the machine by hand. Four placeholders are recognised:
 
 | Sentinel | Replaced with |
 | --- | --- |
 | `${HORIZON_NODE_TOKEN}` | The value behind `spec.hetzner.nodeCredentialSecretRef`. |
 | `${HORIZON_VERSION}` | The build stamp of the running controller, so a machine fetches the agent release that matches the operator that provisioned it. |
+| `${HORIZON_MAX_LIFETIME}` | `spec.watchdog.maxLifetime`, always substituted regardless of whether the cloud-init uses it. |
+| `${HORIZON_JOIN_TOKEN}` | The value behind `spec.hetzner.joinTokenSecretRef`, when set. |
 
-Substitution is a literal replacement and not a template evaluation, so braces and dollar signs that are not one of these two placeholders pass through untouched, and a cloud-init using neither placeholder is delivered byte for byte. Anything starting `${HORIZON_` still standing afterwards fails the provider build and is named in the error, so a machine never boots with a placeholder where a credential belongs. The `horizon.dev/pool=reserved` check runs on the substituted text.
+Substitution is a literal replacement and not a template evaluation, so braces and dollar signs that are not one of these four placeholders pass through untouched, and a cloud-init using none of them is delivered byte for byte. Anything starting `${HORIZON_` still standing afterwards fails the provider build and is named in the error, so a machine never boots with a placeholder where a credential belongs. The `horizon.dev/pool=reserved` check runs on the substituted text.
 
 ## Configuration
 
@@ -241,7 +244,7 @@ horizon version      Print the build stamp
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--max-lifetime` | none, required | Age at which the server deletes itself, between `5m` and `24h`. |
+| `--max-lifetime` | none, required | Age at which the server deletes itself, between `5m` and `24h`, written by the cloud-init from the `${HORIZON_MAX_LIFETIME}` sentinel. |
 | `--token-file` | `/etc/horizon/token` | File holding the provider token used to delete this server, written by the cloud-init from the `${HORIZON_NODE_TOKEN}` sentinel. |
 | `--kubeconfig` | `/var/lib/rancher/k3s/agent/kubelet.kubeconfig` | Kubelet credential used to read the renewed deadline from this node. A missing file is not an error, and leaves the deadline seeded from the instance label standing. |
 | `--node-name` | empty | Server and node to act on. Empty means the hostname reported by the metadata service. |

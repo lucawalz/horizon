@@ -30,7 +30,7 @@ func NewProviderFactory(kc kubernetes.Interface) (ProviderFactory, error) {
 	return func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error) {
 		switch cfg.Spec.Type {
 		case v1alpha1.ProviderTypeHetzner:
-			return hetznerProvider(ctx, kc, namespace, cfg.Spec.Hetzner)
+			return hetznerProvider(ctx, kc, namespace, cfg.Spec.Hetzner, cfg.Spec.Watchdog)
 		default:
 			return nil, fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
 		}
@@ -63,7 +63,7 @@ func operatorNamespace() (string, error) {
 	return namespace, nil
 }
 
-func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec) (provider.Provider, error) {
+func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy) (provider.Provider, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
 	}
@@ -75,7 +75,7 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	if err != nil {
 		return nil, err
 	}
-	userData, err := renderCloudInit(ctx, kc, namespace, spec, template)
+	userData, err := renderCloudInit(ctx, kc, namespace, spec, watchdog, template)
 	if err != nil {
 		return nil, err
 	}
@@ -91,14 +91,24 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	})
 }
 
-func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, template string) (string, error) {
-	values := map[string]string{hetzner.VersionSentinel: version.Version()}
+func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy, template string) (string, error) {
+	values := map[string]string{
+		hetzner.VersionSentinel:     version.Version(),
+		hetzner.MaxLifetimeSentinel: watchdog.MaxLifetime.Duration.String(),
+	}
 	if spec.NodeCredentialSecretRef != nil {
 		nodeToken, err := secretValue(ctx, kc, namespace, "nodeCredentialSecretRef", *spec.NodeCredentialSecretRef)
 		if err != nil {
 			return "", err
 		}
 		values[hetzner.NodeTokenSentinel] = nodeToken
+	}
+	if spec.JoinTokenSecretRef != nil {
+		joinToken, err := secretValue(ctx, kc, namespace, "joinTokenSecretRef", *spec.JoinTokenSecretRef)
+		if err != nil {
+			return "", err
+		}
+		values[hetzner.JoinTokenSentinel] = joinToken
 	}
 	return hetzner.RenderUserData(template, values)
 }
