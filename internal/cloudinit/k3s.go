@@ -51,7 +51,7 @@ func (k3sFlavor) Files(opts Options) ([]File, error) {
 	}
 	return []File{{
 		Path:        "/etc/rancher/k3s/config.yaml",
-		Permissions: "0600",
+		Permissions: secretFilePermissions,
 		Content:     b.String(),
 	}}, nil
 }

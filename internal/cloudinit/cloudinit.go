@@ -21,6 +21,8 @@ const (
 
 const defaultFilePermissions = "0644"
 
+const secretFilePermissions = "0600"
+
 const defaultFileOwner = "root:root"
 
 type File struct {
@@ -31,17 +33,16 @@ type File struct {
 }
 
 type Options struct {
-	Flavor              string
-	Server              string
-	Labels              []string
-	Taints              []string
-	Files               []File
-	FlavorConfig        map[string]string
-	PreCommands         []string
-	PostCommands        []string
-	InstallKubernetes   *bool
-	InstallWatchdogUnit *bool
-	// The unit lives in /run because a read-only /etc/systemd/system cannot hold it or the symlink enabling it creates.
+	Flavor                string
+	Server                string
+	Labels                []string
+	Taints                []string
+	Files                 []File
+	FlavorConfig          map[string]string
+	PreCommands           []string
+	PostCommands          []string
+	InstallKubernetes     *bool
+	InstallWatchdogUnit   *bool
 	TransientWatchdogUnit bool
 	BinaryBaseURL         string
 	Passthrough           bool

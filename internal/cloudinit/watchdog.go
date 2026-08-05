@@ -7,10 +7,10 @@ const (
 	watchdogTokenPath          = "/etc/horizon/token"
 	watchdogUnitName           = "horizon-watchdog.service"
 	persistentWatchdogUnitPath = "/etc/systemd/system/" + watchdogUnitName
-	transientWatchdogUnitPath  = "/run/systemd/system/" + watchdogUnitName
-	perBootWatchdogScriptPath  = "/var/lib/cloud/scripts/per-boot/horizon-watchdog"
-	perBootScriptPermissions   = "0755"
-	secretFilePermissions      = "0600"
+	// A read-only /etc/systemd/system holds neither the unit nor the symlink systemctl enable creates, so /run takes both.
+	transientWatchdogUnitPath = "/run/systemd/system/" + watchdogUnitName
+	perBootWatchdogScriptPath = "/var/lib/cloud/scripts/per-boot/horizon-watchdog"
+	perBootScriptPermissions  = "0755"
 )
 
 func watchdogFiles(opts Options) []File {
