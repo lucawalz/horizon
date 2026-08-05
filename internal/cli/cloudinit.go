@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/lucawalz/horizon/internal/cloudinit"
 	"github.com/lucawalz/horizon/internal/provider"
@@ -28,16 +29,27 @@ func newCloudInitCmd() *cobra.Command {
 				return err
 			}
 			opts.Files = parsed
-			labels, err := ensurePoolLabel(opts.Labels)
-			if err != nil {
-				return err
-			}
-			opts.Labels = labels
 			opts.InstallWatchdogUnit = &installWatchdogUnit
+
+			if opts.Passthrough {
+				if err := rejectGeneratedContentFlags(cmd.Flags()); err != nil {
+					return err
+				}
+			} else {
+				labels, err := ensurePoolLabel(opts.Labels)
+				if err != nil {
+					return err
+				}
+				opts.Labels = labels
+			}
 
 			rendered, err := cloudinit.Render(opts)
 			if err != nil {
 				return err
+			}
+			if !provider.HasPoolLabel(rendered) {
+				return fmt.Errorf("the rendered cloud-init carries no %s node label, and the provider build refuses a cloud-init without it",
+					provider.PoolLabelAssignment)
 			}
 			_, err = fmt.Fprint(cmd.OutOrStdout(), rendered)
 			return err
@@ -69,6 +81,22 @@ func newCloudInitCmd() *cobra.Command {
 	return cmd
 }
 
+var generatedContentFlags = []string{"flavor", "server", "label", "taint", "install-watchdog-unit", "binary-base-url"}
+
+func rejectGeneratedContentFlags(flags *pflag.FlagSet) error {
+	var discarded []string
+	for _, name := range generatedContentFlags {
+		if flags.Changed(name) {
+			discarded = append(discarded, "--"+name)
+		}
+	}
+	if len(discarded) == 0 {
+		return nil
+	}
+	return fmt.Errorf("--passthrough emits no flavour or watchdog content, so %s would be discarded",
+		strings.Join(discarded, ", "))
+}
+
 func ensurePoolLabel(labels []string) ([]string, error) {
 	for _, label := range labels {
 		key, value, _ := strings.Cut(label, "=")
@@ -81,8 +109,7 @@ func ensurePoolLabel(labels []string) ([]string, error) {
 		}
 		return labels, nil
 	}
-	poolLabel := provider.PoolLabelKey + "=" + provider.ReservedPoolValue
-	return append(labels, poolLabel), nil
+	return append(labels, provider.PoolLabelAssignment), nil
 }
 
 func parseFileFlags(specs []string) ([]cloudinit.File, error) {

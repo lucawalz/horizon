@@ -105,10 +105,12 @@ func TestCloudInitCommandRejectsMalformedWriteFile(t *testing.T) {
 	}
 }
 
+const passthroughPoolFile = "/etc/caller/join.yaml:0600:node-label: horizon.dev/pool=reserved"
+
 func TestCloudInitCommandWriteFileContentKeepsColons(t *testing.T) {
 	out, err := runCloudInit(t, []string{
-		"--server", "https://10.20.0.10:6443",
 		"--passthrough",
+		"--write-file", passthroughPoolFile,
 		"--write-file", "/etc/hosts:0644:10.20.0.10:6443 server.local",
 	})
 	if err != nil {
@@ -181,6 +183,59 @@ func TestCloudInitCommandPinsNoArchitecture(t *testing.T) {
 	}
 	if !strings.Contains(out, "ARCH=$(uname -m)") {
 		t.Fatal("the rendered document must resolve the architecture on the node")
+	}
+}
+
+func TestCloudInitCommandPassthroughRejectsFlagsItWouldDiscard(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "a label", args: []string{"--label", "team=platform"}, want: "--label"},
+		{name: "a taint", args: []string{"--taint", "team=platform:NoSchedule"}, want: "--taint"},
+		{name: "a server", args: []string{"--server", "https://10.20.0.10:6443"}, want: "--server"},
+		{name: "a flavour", args: []string{"--flavor", "k3s"}, want: "--flavor"},
+		{name: "the watchdog unit", args: []string{"--install-watchdog-unit=false"}, want: "--install-watchdog-unit"},
+		{name: "a binary base URL", args: []string{"--binary-base-url", "https://mirror.internal"}, want: "--binary-base-url"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--passthrough", "--write-file", passthroughPoolFile}, tc.args...)
+			out, err := runCloudInit(t, args)
+			if err == nil {
+				t.Fatalf("the flag was silently discarded, got:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error is %q, want it to name %s", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCloudInitCommandPassthroughRequiresThePoolLabel(t *testing.T) {
+	_, err := runCloudInit(t, []string{"--passthrough", "--write-file", "/etc/motd:0644:hello"})
+	if err == nil {
+		t.Fatal("expected an error when passthrough output carries no pool label")
+	}
+	if !strings.Contains(err.Error(), "horizon.dev/pool=reserved") {
+		t.Errorf("error is %q, want it to name the required label", err)
+	}
+}
+
+func TestCloudInitCommandPassthroughEmitsOnlyWhatTheCallerGave(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--passthrough",
+		"--write-file", passthroughPoolFile,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	for _, unwanted := range []string{"/etc/rancher", "get.k3s.io", "/etc/horizon/token", "horizon-watchdog.service"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("passthrough emitted %q, got:\n%s", unwanted, out)
+		}
 	}
 }
 

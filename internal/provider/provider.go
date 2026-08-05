@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,12 @@ const (
 
 	LeaseUIDLabelKey = "horizon.dev/lease-uid"
 )
+
+const PoolLabelAssignment = PoolLabelKey + "=" + ReservedPoolValue
+
+func HasPoolLabel(userData string) bool {
+	return strings.Contains(userData, PoolLabelAssignment)
+}
 
 const (
 	SentinelPrefix = "${HORIZON_"

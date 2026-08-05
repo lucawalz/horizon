@@ -31,7 +31,7 @@ const (
 	testJoinToken       = "hcloud-join-token"
 	namespaceFileName   = "namespace"
 	namespaceFilePerm   = 0o600
-	poolLabelAssignment = provider.PoolLabelKey + "=" + provider.ReservedPoolValue
+	poolLabelAssignment = provider.PoolLabelAssignment
 )
 
 var testWatchdog = testPolicy(testRenewInterval, testSlack)

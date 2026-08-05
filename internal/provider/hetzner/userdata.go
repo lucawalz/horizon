@@ -52,9 +52,8 @@ func buildUserData(userData string) (string, error) {
 	if strings.TrimSpace(userData) == "" {
 		return "", fmt.Errorf("hetzner: cloud-init is empty")
 	}
-	label := provider.PoolLabelKey + "=" + provider.ReservedPoolValue
-	if !strings.Contains(userData, label) {
-		return "", fmt.Errorf("hetzner: cloud-init missing node-label %q", label)
+	if !provider.HasPoolLabel(userData) {
+		return "", fmt.Errorf("hetzner: cloud-init missing node-label %q", provider.PoolLabelAssignment)
 	}
 	return userData, nil
 }
