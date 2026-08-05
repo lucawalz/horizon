@@ -16,6 +16,8 @@ func NewCloudInitCmdForTest() *cobra.Command { return newCloudInitCmd() }
 func newCloudInitCmd() *cobra.Command {
 	opts := cloudinit.Options{}
 	var files []string
+	var flavorConfig []string
+	var installKubernetes bool
 	var installWatchdogUnit bool
 
 	cmd := &cobra.Command{
@@ -29,6 +31,12 @@ func newCloudInitCmd() *cobra.Command {
 				return err
 			}
 			opts.Files = parsed
+			config, err := parseFlavorConfigFlags(flavorConfig)
+			if err != nil {
+				return err
+			}
+			opts.FlavorConfig = config
+			opts.InstallKubernetes = &installKubernetes
 			opts.InstallWatchdogUnit = &installWatchdogUnit
 
 			if opts.Passthrough {
@@ -71,8 +79,14 @@ func newCloudInitCmd() *cobra.Command {
 		"Command to run before the join, repeatable")
 	flags.StringArrayVar(&opts.PostCommands, "post-command", nil,
 		"Command to run after the join, repeatable")
+	flags.StringArrayVar(&flavorConfig, "flavor-config", nil,
+		"Extra flavour configuration as key=value, repeatable; the keys the flavour generates itself are rejected")
+	flags.BoolVar(&installKubernetes, "install-kubernetes", true,
+		"Emit the flavour's install command; false suits an image that already ships Kubernetes")
 	flags.BoolVar(&installWatchdogUnit, "install-watchdog-unit", true,
 		"Write and enable the self-destruct watchdog systemd unit")
+	flags.BoolVar(&opts.TransientWatchdogUnit, "transient-watchdog-unit", false,
+		"Write the watchdog unit to /run/systemd/system on every boot, for an image whose /etc/systemd/system is read-only")
 	flags.StringVar(&opts.BinaryBaseURL, "binary-base-url", cloudinit.DefaultBinaryBaseURL,
 		"Base URL the node downloads the horizon binary from")
 	flags.BoolVar(&opts.Passthrough, "passthrough", false,
@@ -81,7 +95,10 @@ func newCloudInitCmd() *cobra.Command {
 	return cmd
 }
 
-var generatedContentFlags = []string{"flavor", "server", "label", "taint", "install-watchdog-unit", "binary-base-url"}
+var generatedContentFlags = []string{
+	"flavor", "server", "label", "taint", "flavor-config",
+	"install-kubernetes", "install-watchdog-unit", "transient-watchdog-unit", "binary-base-url",
+}
 
 func rejectGeneratedContentFlags(flags *pflag.FlagSet) error {
 	var discarded []string
@@ -122,6 +139,24 @@ func parseFileFlags(specs []string) ([]cloudinit.File, error) {
 		files = append(files, cloudinit.File{Path: parts[0], Permissions: parts[1], Content: parts[2]})
 	}
 	return files, nil
+}
+
+func parseFlavorConfigFlags(specs []string) (map[string]string, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	config := make(map[string]string, len(specs))
+	for _, spec := range specs {
+		key, value, found := strings.Cut(spec, "=")
+		if !found || key == "" {
+			return nil, fmt.Errorf("--flavor-config needs key=value, got %q", spec)
+		}
+		if _, duplicate := config[key]; duplicate {
+			return nil, fmt.Errorf("--flavor-config sets %q more than once", key)
+		}
+		config[key] = value
+	}
+	return config, nil
 }
 
 func errWriteFileFormat(spec string) error {

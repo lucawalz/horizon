@@ -1,0 +1,61 @@
+#cloud-config
+write_files:
+  - path: /etc/rancher/k3s/config.yaml
+    permissions: '0600'
+    owner: root:root
+    content: |
+      server: https://10.20.0.10:6443
+      token: ${HORIZON_JOIN_TOKEN}
+      node-label:
+        - horizon.dev/pool=reserved
+      node-taint:
+        - example.dev/dedicated=batch:NoSchedule
+  - path: /etc/horizon/token
+    permissions: '0600'
+    owner: root:root
+    content: |
+      ${HORIZON_NODE_TOKEN}
+  - path: /var/lib/cloud/scripts/per-boot/horizon-watchdog
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/bin/sh
+      set -eu
+      [ -x /var/lib/horizon/bin/horizon ] || exit 0
+      cat > /run/systemd/system/horizon-watchdog.service <<'UNIT'
+      [Unit]
+      Description=horizon node watchdog
+      After=network-online.target
+      Wants=network-online.target
+      [Service]
+      Type=simple
+      Restart=always
+      RestartSec=5
+      ExecStart=/var/lib/horizon/bin/horizon watchdog --max-lifetime=${HORIZON_MAX_LIFETIME} --token-file=/etc/horizon/token --state-dir=/run/horizon
+      UNIT
+      systemctl daemon-reload
+      systemctl start horizon-watchdog.service
+runcmd:
+  - |
+    curl -sfL https://get.k3s.io | sh -s - agent
+  - |
+    set -eu
+    V=${HORIZON_VERSION}
+    NUM=${V#v}
+    BASE=https://github.com/lucawalz/horizon/releases/download/${V}
+    ARCH=$(uname -m)
+    case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; *) echo "horizon: unsupported architecture $ARCH" >&2; exit 1 ;; esac
+    TARBALL=horizon_${NUM}_linux_${ARCH}.tar.gz
+    TMP=$(mktemp -d)
+    cd "$TMP"
+    curl -fsSL --max-time 120 -O "$BASE/$TARBALL"
+    curl -fsSL --max-time 60 -O "$BASE/horizon_${NUM}_checksums.txt"
+    grep " ${TARBALL}$" "horizon_${NUM}_checksums.txt" > expected.txt
+    sha256sum -c expected.txt
+    tar -xzf "$TARBALL" horizon
+    install -D -m0755 horizon /var/lib/horizon/bin/horizon
+    /var/lib/horizon/bin/horizon version >/dev/null
+    rm -rf "$TMP"
+  - |
+    set -eu
+    /var/lib/cloud/scripts/per-boot/horizon-watchdog

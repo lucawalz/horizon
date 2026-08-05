@@ -170,6 +170,128 @@ func TestCloudInitCommandCanDisableTheWatchdogUnit(t *testing.T) {
 	}
 }
 
+func TestCloudInitCommandFlagDefaultsMatchTodaysBehaviour(t *testing.T) {
+	tests := []struct{ name, want string }{
+		{name: "install-kubernetes", want: "true"},
+		{name: "transient-watchdog-unit", want: "false"},
+	}
+
+	for _, tc := range tests {
+		flag := cli.NewCloudInitCmdForTest().Flags().Lookup(tc.name)
+		if flag == nil {
+			t.Fatalf("flag --%s is not registered", tc.name)
+		}
+		if flag.DefValue != tc.want {
+			t.Errorf("flag --%s default = %q, want %q", tc.name, flag.DefValue, tc.want)
+		}
+	}
+}
+
+func TestCloudInitCommandCanSkipTheKubernetesInstall(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--install-kubernetes=false",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if strings.Contains(out, "get.k3s.io") {
+		t.Fatalf("an image that already ships Kubernetes must not be told to install it, got:\n%s", out)
+	}
+}
+
+func TestCloudInitCommandCarriesExtraFlavorConfig(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--flavor-config", "flannel-iface=tailscale0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if !strings.Contains(out, "flannel-iface: tailscale0") {
+		t.Fatalf("the extra flavour configuration was dropped, got:\n%s", out)
+	}
+}
+
+func TestCloudInitCommandRejectsMalformedFlavorConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		spec string
+	}{
+		{name: "no assignment", spec: "flannel-iface"},
+		{name: "no key", spec: "=tailscale0"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := runCloudInit(t, []string{
+				"--server", "https://10.20.0.10:6443",
+				"--flavor-config", tc.spec,
+			})
+			if err == nil {
+				t.Fatal("expected an error for a malformed --flavor-config spec")
+			}
+			if !strings.Contains(err.Error(), "--flavor-config") {
+				t.Errorf("error = %q, want it to name the flag", err)
+			}
+		})
+	}
+}
+
+func TestCloudInitCommandFlavorConfigValueKeepsEqualsSigns(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--flavor-config", "kubelet-arg=config=/etc/kubelet.conf",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if !strings.Contains(out, "kubelet-arg: config=/etc/kubelet.conf") {
+		t.Fatalf("a value carrying an equals sign was split, got:\n%s", out)
+	}
+}
+
+func TestCloudInitCommandRejectsRepeatedFlavorConfigKey(t *testing.T) {
+	_, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--flavor-config", "flannel-iface=tailscale0",
+		"--flavor-config", "flannel-iface=eth0",
+	})
+	if err == nil {
+		t.Fatal("expected an error when the same key is set twice")
+	}
+	if !strings.Contains(err.Error(), "flannel-iface") {
+		t.Errorf("error = %q, want it to name the repeated key", err)
+	}
+}
+
+func TestCloudInitCommandArmsTheWatchdogFromAReadOnlyImage(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--transient-watchdog-unit",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	if strings.Contains(out, "/etc/systemd/system") {
+		t.Fatalf("a read-only image cannot hold the unit in /etc, got:\n%s", out)
+	}
+	if !strings.Contains(out, "/run/systemd/system/horizon-watchdog.service") {
+		t.Fatalf("the unit must land in /run, got:\n%s", out)
+	}
+}
+
+func TestCloudInitCommandRejectsATransientUnitItWouldNotWrite(t *testing.T) {
+	_, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--transient-watchdog-unit",
+		"--install-watchdog-unit=false",
+	})
+	if err == nil {
+		t.Fatal("expected an error when a transient unit is asked for and no unit is written")
+	}
+}
+
 func TestCloudInitCommandCarriesNoArchitectureFlag(t *testing.T) {
 	if flag := cli.NewCloudInitCmdForTest().Flags().Lookup("arch"); flag != nil {
 		t.Error("the rendered document resolves the architecture on the node, so no --arch flag belongs")
@@ -197,6 +319,9 @@ func TestCloudInitCommandPassthroughRejectsFlagsItWouldDiscard(t *testing.T) {
 		{name: "a server", args: []string{"--server", "https://10.20.0.10:6443"}, want: "--server"},
 		{name: "a flavour", args: []string{"--flavor", "k3s"}, want: "--flavor"},
 		{name: "the watchdog unit", args: []string{"--install-watchdog-unit=false"}, want: "--install-watchdog-unit"},
+		{name: "a transient watchdog unit", args: []string{"--transient-watchdog-unit"}, want: "--transient-watchdog-unit"},
+		{name: "the Kubernetes install", args: []string{"--install-kubernetes=false"}, want: "--install-kubernetes"},
+		{name: "extra flavour configuration", args: []string{"--flavor-config", "flannel-iface=tailscale0"}, want: "--flavor-config"},
 		{name: "a binary base URL", args: []string{"--binary-base-url", "https://mirror.internal"}, want: "--binary-base-url"},
 	}
 

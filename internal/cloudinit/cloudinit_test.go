@@ -322,27 +322,54 @@ func TestRenderRejectsContentTheDocumentCannotCarry(t *testing.T) {
 }
 
 func TestRenderGolden(t *testing.T) {
-	out, err := Render(Options{
+	base := Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
 		Labels:              []string{"horizon.dev/pool=reserved"},
 		Taints:              []string{"example.dev/dedicated=batch:NoSchedule"},
 		InstallWatchdogUnit: boolPtr(true),
-	})
-	if err != nil {
-		t.Fatalf("unexpected error %v", err)
 	}
-	golden := filepath.Join("testdata", "k3s-default.golden")
-	if *update {
-		if err := os.WriteFile(golden, []byte(out), 0o644); err != nil {
-			t.Fatalf("write golden: %v", err)
-		}
+	preinstalled := base
+	preinstalled.InstallKubernetes = boolPtr(false)
+	transient := base
+	transient.TransientWatchdogUnit = true
+	extraConfig := base
+	extraConfig.FlavorConfig = map[string]string{"flannel-iface": "tailscale0"}
+	prebaked := base
+	prebaked.InstallKubernetes = boolPtr(false)
+	prebaked.TransientWatchdogUnit = true
+	prebaked.FlavorConfig = map[string]string{"flannel-iface": "tailscale0"}
+
+	tests := []struct {
+		golden string
+		opts   Options
+	}{
+		{golden: "k3s-default", opts: base},
+		{golden: "k3s-preinstalled-kubernetes", opts: preinstalled},
+		{golden: "k3s-transient-watchdog-unit", opts: transient},
+		{golden: "k3s-flavor-config", opts: extraConfig},
+		{golden: "k3s-prebaked-image", opts: prebaked},
 	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if out != string(want) {
-		t.Fatalf("generated document changed; rerun with -update if intended")
+
+	for _, tc := range tests {
+		t.Run(tc.golden, func(t *testing.T) {
+			out, err := Render(tc.opts)
+			if err != nil {
+				t.Fatalf("unexpected error %v", err)
+			}
+			golden := filepath.Join("testdata", tc.golden+".golden")
+			if *update {
+				if err := os.WriteFile(golden, []byte(out), 0o644); err != nil {
+					t.Fatalf("write golden: %v", err)
+				}
+			}
+			want, err := os.ReadFile(golden)
+			if err != nil {
+				t.Fatalf("read golden: %v", err)
+			}
+			if out != string(want) {
+				t.Fatalf("generated document changed; rerun with -update if intended")
+			}
+		})
 	}
 }
