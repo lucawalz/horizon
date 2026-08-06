@@ -21,6 +21,8 @@ runcmd:
     curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.35.6+k3s1 sh -s - agent
   - |
     set -eu
+    mkdir -p /var/lib/horizon
+    touch /var/lib/horizon/install-incomplete
     V=${HORIZON_VERSION}
     NUM=${V#v}
     BASE=https://github.com/lucawalz/horizon/releases/download/${V}
@@ -37,6 +39,7 @@ runcmd:
     install -D -m0755 "$TMP/horizon" /var/lib/horizon/bin/horizon
     /var/lib/horizon/bin/horizon version >/dev/null
     rm -rf "$TMP"
+    rm -f /var/lib/horizon/install-incomplete
   - |
     set -eu
     cat > /etc/systemd/system/horizon-watchdog.service <<'UNIT'

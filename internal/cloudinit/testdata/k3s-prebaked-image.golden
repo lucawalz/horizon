@@ -22,7 +22,14 @@ write_files:
     content: |
       #!/bin/sh
       set -eu
-      [ -x /var/lib/horizon/bin/horizon ] || exit 0
+      if [ -x /var/lib/horizon/bin/horizon ]; then
+        :
+      elif [ -e /var/lib/horizon/install-incomplete ]; then
+        echo "horizon: watchdog install did not complete, marker /var/lib/horizon/install-incomplete; this node lost the layer that survives an unreachable control plane, the orphan reconciler still sweeps this instance at expiry" >&2
+        exit 1
+      else
+        exit 0
+      fi
       cat > /run/systemd/system/horizon-watchdog.service <<'UNIT'
       [Unit]
       Description=horizon node watchdog
@@ -39,6 +46,8 @@ write_files:
 runcmd:
   - |
     set -eu
+    mkdir -p /var/lib/horizon
+    touch /var/lib/horizon/install-incomplete
     V=${HORIZON_VERSION}
     NUM=${V#v}
     BASE=https://github.com/lucawalz/horizon/releases/download/${V}
@@ -55,6 +64,7 @@ runcmd:
     install -D -m0755 "$TMP/horizon" /var/lib/horizon/bin/horizon
     /var/lib/horizon/bin/horizon version >/dev/null
     rm -rf "$TMP"
+    rm -f /var/lib/horizon/install-incomplete
   - |
     set -eu
     /var/lib/cloud/scripts/per-boot/horizon-watchdog

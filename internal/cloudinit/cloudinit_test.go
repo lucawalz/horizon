@@ -335,6 +335,33 @@ func TestRenderProbesTheInstalledBinary(t *testing.T) {
 	}
 }
 
+func TestWatchdogInstallMarksProgressBeforeDownloadAndClearsItAfterVerification(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+
+	markerCreated := strings.Index(out, installIncompleteMarkerPath)
+	tarballDownload := strings.Index(out, `curl -fsSL --max-time 120 -o "$TMP/$TARBALL"`)
+	versionCheck := strings.Index(out, watchdogBinaryPath+" version >/dev/null")
+	markerCleared := strings.LastIndex(out, "rm -f "+installIncompleteMarkerPath)
+
+	if markerCreated == -1 || tarballDownload == -1 || versionCheck == -1 || markerCleared == -1 {
+		t.Fatalf("expected the marker lifecycle around the download and verification, got:\n%s", out)
+	}
+	if markerCreated > tarballDownload {
+		t.Fatalf("the in-progress marker must be created before the tarball download, got:\n%s", out)
+	}
+	if markerCleared < versionCheck {
+		t.Fatalf("the in-progress marker must be cleared after the binary is verified, got:\n%s", out)
+	}
+}
+
 func TestK3sFilesCarryExtraConfigKeys(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",

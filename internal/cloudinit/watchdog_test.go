@@ -206,13 +206,112 @@ func TestVerifyChecksumAcceptsOnlyThePublishedLineForTheTarball(t *testing.T) {
 	}
 }
 
+func TestPerBootWatchdogScriptDistinguishesPendingFromFailedInstalls(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no POSIX shell to run the emitted per-boot script: %v", err)
+	}
+	cat, err := exec.LookPath("cat")
+	if err != nil {
+		t.Skipf("no cat to write the unit file the emitted script embeds: %v", err)
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("as root the emitted unit redirection would reach the real /run/systemd/system")
+	}
+
+	tests := []struct {
+		name          string
+		writeBinary   bool
+		writeMarker   bool
+		wantExit      int
+		wantUnitFile  bool
+		wantSystemctl bool
+		wantStderr    bool
+	}{
+		{name: "install not yet run", wantExit: 0},
+		{name: "install did not complete", writeMarker: true, wantExit: 1, wantStderr: true},
+		{name: "install completed", writeBinary: true, writeMarker: true, wantExit: 0, wantUnitFile: true, wantSystemctl: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			binary := filepath.Join(root, "horizon")
+			marker := filepath.Join(root, "install-incomplete")
+			unit := filepath.Join(root, "horizon-watchdog.service")
+			systemctlLog := filepath.Join(root, "systemctl.log")
+
+			replacer := strings.NewReplacer(
+				watchdogBinaryPath, binary,
+				installIncompleteMarkerPath, marker,
+				transientWatchdogUnitPath, unit,
+			)
+			script := replacer.Replace(perBootWatchdogScript())
+
+			if tc.writeBinary {
+				if err := os.WriteFile(binary, nil, harnessPermissions); err != nil {
+					t.Fatalf("write the installed binary: %v", err)
+				}
+			}
+			if tc.writeMarker {
+				if err := os.WriteFile(marker, nil, harnessPermissions); err != nil {
+					t.Fatalf("write the in-progress marker: %v", err)
+				}
+			}
+
+			path := filepath.Join(root, "per-boot")
+			if err := os.WriteFile(path, []byte(script), harnessPermissions); err != nil {
+				t.Fatalf("write the per-boot script: %v", err)
+			}
+
+			cmd := exec.Command(shell, path)
+			cmd.Env = []string{"PATH=" + stubbedSystemctlPath(t, cat, systemctlLog)}
+			out, err := cmd.CombinedOutput()
+
+			exitCode := 0
+			if err != nil {
+				exitErr, ok := err.(*exec.ExitError)
+				if !ok {
+					t.Fatalf("the emitted script could not run: %v\n%s", err, out)
+				}
+				exitCode = exitErr.ExitCode()
+			}
+			if exitCode != tc.wantExit {
+				t.Fatalf("exit code = %d, want %d\n%s", exitCode, tc.wantExit, out)
+			}
+			if _, err := os.Stat(unit); (err == nil) != tc.wantUnitFile {
+				t.Fatalf("unit file present = %v, want %v", err == nil, tc.wantUnitFile)
+			}
+			if _, err := os.Stat(systemctlLog); (err == nil) != tc.wantSystemctl {
+				t.Fatalf("systemctl invoked = %v, want %v", err == nil, tc.wantSystemctl)
+			}
+			if tc.wantStderr && !strings.Contains(string(out), marker) {
+				t.Fatalf("expected the marker path in stderr, got:\n%s", out)
+			}
+		})
+	}
+}
+
+func stubbedSystemctlPath(t *testing.T, cat, log string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Symlink(cat, filepath.Join(dir, "cat")); err != nil {
+		t.Fatalf("link cat into the stubbed path: %v", err)
+	}
+	script := "#!/bin/sh\necho \"$@\" >> " + log + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "systemctl"), []byte(script), harnessPermissions); err != nil {
+		t.Fatalf("write the systemctl stub: %v", err)
+	}
+	return dir
+}
+
 func stubbedPath(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "uname"), []byte(architectureStub), harnessPermissions); err != nil {
 		t.Fatalf("write the architecture stub: %v", err)
 	}
-	for _, name := range []string{"mktemp", "rm"} {
+	for _, name := range []string{"mkdir", "mktemp", "rm"} {
 		resolved, err := exec.LookPath(name)
 		if err != nil {
 			t.Skipf("no %s to reproduce the temporary directory lifecycle: %v", name, err)

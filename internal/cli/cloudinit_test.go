@@ -386,6 +386,9 @@ func TestCloudInitCommandArmsTheWatchdogFromAReadOnlyImage(t *testing.T) {
 	if !strings.Contains(out, "/run/systemd/system/horizon-watchdog.service") {
 		t.Fatalf("the unit must land in /run, got:\n%s", out)
 	}
+	if !strings.Contains(out, "/var/lib/horizon/install-incomplete") {
+		t.Fatalf("the per-boot script must carry the in-progress marker path, got:\n%s", out)
+	}
 }
 
 func TestCloudInitCommandRejectsATransientUnitItWouldNotWrite(t *testing.T) {

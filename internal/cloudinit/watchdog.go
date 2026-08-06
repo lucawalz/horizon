@@ -1,6 +1,9 @@
 package cloudinit
 
-import "strings"
+import (
+	"path/filepath"
+	"strings"
+)
 
 const (
 	watchdogBinaryPath         = "/var/lib/horizon/bin/horizon"
@@ -12,6 +15,11 @@ const (
 	perBootWatchdogScriptPath = "/var/lib/cloud/scripts/per-boot/horizon-watchdog"
 	perBootScriptPermissions  = "0755"
 	checksumFileName          = "checksums.txt"
+)
+
+var (
+	watchdogStateDir            = filepath.Dir(filepath.Dir(watchdogBinaryPath))
+	installIncompleteMarkerPath = filepath.Join(watchdogStateDir, "install-incomplete")
 )
 
 func watchdogFiles(opts Options) []File {
@@ -33,6 +41,8 @@ func watchdogFiles(opts Options) []File {
 func watchdogCommands(opts Options) []string {
 	install := []string{
 		"set -eu",
+		"mkdir -p " + watchdogStateDir,
+		"touch " + installIncompleteMarkerPath,
 		"V=" + versionSentinel,
 		"NUM=${V#v}",
 		"BASE=" + opts.BinaryBaseURL + "/${V}",
@@ -49,6 +59,7 @@ func watchdogCommands(opts Options) []string {
 		"install -D -m0755 \"$TMP/horizon\" "+watchdogBinaryPath,
 		watchdogBinaryPath+" version >/dev/null",
 		"rm -rf \"$TMP\"",
+		"rm -f "+installIncompleteMarkerPath,
 	)
 
 	commands := []string{strings.Join(install, "\n")}
@@ -74,10 +85,19 @@ func verifyChecksum() []string {
 }
 
 func perBootWatchdogScript() string {
+	incompleteInstallMessage := "horizon: watchdog install did not complete, marker " + installIncompleteMarkerPath +
+		"; this node lost the layer that survives an unreachable control plane, the orphan reconciler still sweeps this instance at expiry"
 	lines := []string{
 		"#!/bin/sh",
 		"set -eu",
-		"[ -x " + watchdogBinaryPath + " ] || exit 0",
+		"if [ -x " + watchdogBinaryPath + " ]; then",
+		"  :",
+		"elif [ -e " + installIncompleteMarkerPath + " ]; then",
+		"  echo \"" + incompleteInstallMessage + "\" >&2",
+		"  exit 1",
+		"else",
+		"  exit 0",
+		"fi",
 	}
 	lines = append(lines, armWatchdog(transientWatchdogUnitPath, watchdogUnit(), "start")...)
 	return strings.Join(lines, "\n")
