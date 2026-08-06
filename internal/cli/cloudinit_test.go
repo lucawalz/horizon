@@ -424,7 +424,7 @@ func TestCloudInitCommandPassthroughRejectsFlagsItWouldDiscard(t *testing.T) {
 	}{
 		{name: "a label", args: []string{"--label", "team=platform"}, want: "--label"},
 		{name: "a taint", args: []string{"--taint", "team=platform:NoSchedule"}, want: "--taint"},
-		{name: "a server", args: []string{"--server", "https://10.20.0.10:6443", "--kubernetes-version", pinnedKubernetesVersion}, want: "--server"},
+		{name: "a server", args: []string{"--server", "https://10.20.0.10:6443"}, want: "--server"},
 		{name: "a flavour", args: []string{"--flavor", "k3s"}, want: "--flavor"},
 		{name: "the watchdog unit", args: []string{"--install-watchdog-unit=false"}, want: "--install-watchdog-unit"},
 		{name: "a transient watchdog unit", args: []string{"--transient-watchdog-unit"}, want: "--transient-watchdog-unit"},
