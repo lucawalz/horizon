@@ -89,6 +89,33 @@ func TestRenderRequiresAKubernetesVersionItWouldInstall(t *testing.T) {
 	}
 }
 
+func TestRenderSaysWhereEveryRejectedVersionIsReadFrom(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{name: "no version at all", version: ""},
+		{name: "an upstream version without the k3s suffix", version: "v1.35.6"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Render(Options{
+				Flavor:              "k3s",
+				Server:              "https://10.20.0.10:6443",
+				KubernetesVersion:   tc.version,
+				InstallWatchdogUnit: boolPtr(true),
+			})
+			if err == nil {
+				t.Fatal("expected an error for a version the flavour cannot install")
+			}
+			if !strings.Contains(err.Error(), "control plane") {
+				t.Errorf("error is %q, want it to say the value is read off the control plane", err)
+			}
+		})
+	}
+}
+
 func TestRenderRejectsAKubernetesVersionItWouldNotInstall(t *testing.T) {
 	_, err := Render(Options{
 		Flavor:              "k3s",

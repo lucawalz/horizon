@@ -10,7 +10,10 @@ import (
 
 var k3sGeneratedConfigKeys = []string{"server", "token", "node-label", "node-taint"}
 
-const k3sReleaseTagExample = "v1.35.6+k3s1"
+const (
+	k3sReleaseTagExample = "v1.35.6+k3s1"
+	k3sVersionMatchRule  = "it has to match the control plane the node joins, which reports its own on the server version line of kubectl version"
+)
 
 var k3sReleaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?\+k3s[0-9]+$`)
 
@@ -47,12 +50,12 @@ func validateK3sVersion(opts Options) error {
 		return nil
 	}
 	if opts.KubernetesVersion == "" {
-		return fmt.Errorf("flavor k3s needs --kubernetes-version, such as %s, and it has to match the control plane the node joins",
-			k3sReleaseTagExample)
+		return fmt.Errorf("flavor k3s needs --kubernetes-version, such as %s, and %s",
+			k3sReleaseTagExample, k3sVersionMatchRule)
 	}
 	if !k3sReleaseTag.MatchString(opts.KubernetesVersion) {
-		return fmt.Errorf("--kubernetes-version %q is not a k3s release tag, which looks like %s",
-			opts.KubernetesVersion, k3sReleaseTagExample)
+		return fmt.Errorf("--kubernetes-version %q is not a k3s release tag, which looks like %s, and %s",
+			opts.KubernetesVersion, k3sReleaseTagExample, k3sVersionMatchRule)
 	}
 	return nil
 }
