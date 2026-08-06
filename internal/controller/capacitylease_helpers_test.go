@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -25,11 +26,12 @@ import (
 )
 
 const (
-	testRegion        = "fake-a"
-	testSize          = "fake-small"
-	testLeaseDuration = time.Hour
-	testWorkloadNS    = "workloads"
-	maxSettlePasses   = 40
+	testRegion         = "fake-a"
+	testSize           = "fake-small"
+	testLeaseDuration  = time.Hour
+	testWorkloadNS     = "workloads"
+	maxSettlePasses    = 40
+	testEventBufferLen = 16
 )
 
 type stubClock struct {
@@ -59,6 +61,7 @@ type harness struct {
 	prov        *fake.Provider
 	kube        *k8sfake.Clientset
 	clock       *stubClock
+	recorder    *record.FakeRecorder
 	name        string
 	providerErr error
 	wrapAPI     func(client.Client) client.Client
@@ -67,11 +70,12 @@ type harness struct {
 func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harness {
 	t.Helper()
 	h := &harness{
-		t:     t,
-		api:   apiServerClient(t),
-		clock: newStubClock(),
-		name:  objectName(t),
-		kube:  newKubeClient(),
+		t:        t,
+		api:      apiServerClient(t),
+		clock:    newStubClock(),
+		name:     objectName(t),
+		kube:     newKubeClient(),
+		recorder: record.NewFakeRecorder(testEventBufferLen),
 	}
 	h.prov = fake.NewWithClock(h.clock.Now)
 
@@ -170,9 +174,10 @@ func (h *harness) reconciler() *CapacityLeaseReconciler {
 		api = h.wrapAPI(api)
 	}
 	return &CapacityLeaseReconciler{
-		Client: api,
-		Kube:   h.kube,
-		Clock:  h.clock.Now,
+		Client:   api,
+		Kube:     h.kube,
+		Clock:    h.clock.Now,
+		Recorder: h.recorder,
 		Provider: func(context.Context, *v1alpha1.ProviderConfig) (provider.Provider, error) {
 			if h.providerErr != nil {
 				return nil, h.providerErr
@@ -295,6 +300,34 @@ func (h *harness) node(name string) (*corev1.Node, bool) {
 		return nil, false
 	}
 	return node, true
+}
+
+func (h *harness) armNode(name string, at time.Time) {
+	h.t.Helper()
+	node, ok := h.node(name)
+	if !ok {
+		h.t.Fatalf("node %q disappeared", name)
+	}
+	if node.Annotations == nil {
+		node.Annotations = map[string]string{}
+	}
+	node.Annotations[provider.WatchdogArmedAnnotationKey] = at.UTC().Format(time.RFC3339)
+	if _, err := h.kube.CoreV1().Nodes().Update(h.t.Context(), node, metav1.UpdateOptions{}); err != nil {
+		h.t.Fatalf("arm node %q: %v", name, err)
+	}
+}
+
+func (h *harness) events() []string {
+	h.t.Helper()
+	var events []string
+	for {
+		select {
+		case event := <-h.recorder.Events:
+			events = append(events, event)
+		default:
+			return events
+		}
+	}
 }
 
 func (h *harness) instanceStatus(name string) v1alpha1.InstanceStatus {

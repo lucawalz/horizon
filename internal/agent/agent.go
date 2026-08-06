@@ -92,6 +92,7 @@ func Run(ctx context.Context, opts Options) error {
 	log.Info("armed", "instance", identity.Name, "maxLifetime", opts.MaxLifetime)
 	startedAt := time.Now()
 	wall := newNodeDeadline(opts.KubeconfigPath, identity.Name, seedWallDeadline(ctx, inst))
+	wall.markArmed(ctx, startedAt)
 	ticker := time.NewTicker(opts.PollInterval)
 	defer ticker.Stop()
 
@@ -100,6 +101,7 @@ func Run(ctx context.Context, opts Options) error {
 		case <-ctx.Done():
 			return nil
 		case now := <-ticker.C:
+			wall.markArmed(ctx, now)
 			reason, due := fired(startedAt, opts.MaxLifetime, wall.read(ctx), now)
 			if !due {
 				continue

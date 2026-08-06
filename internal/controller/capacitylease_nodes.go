@@ -59,6 +59,8 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 		changed = recordWatchdogDeadline(lease, renewal.deadline) || changed
 	}
 
+	changed = r.reconcileWatchdogArmed(lease, nodes.Items, policy) || changed
+
 	want := int(lease.Spec.Replicas)
 	if joined >= want {
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady,

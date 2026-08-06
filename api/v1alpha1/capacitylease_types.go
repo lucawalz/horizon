@@ -7,6 +7,7 @@ import (
 const (
 	ConditionAccepted         = "Accepted"
 	ConditionInstancesReady   = "InstancesReady"
+	ConditionWatchdogArmed    = "WatchdogArmed"
 	ConditionWorkloadMigrated = "WorkloadMigrated"
 	ConditionExpired          = "Expired"
 	ConditionReleased         = "Released"
@@ -122,6 +123,7 @@ type CapacityLeaseStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".status.expiresAt"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='InstancesReady')].status"
+// +kubebuilder:printcolumn:name="Armed",type="string",JSONPath=".status.conditions[?(@.type=='WatchdogArmed')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 type CapacityLease struct {
 	metav1.TypeMeta   `json:",inline"`

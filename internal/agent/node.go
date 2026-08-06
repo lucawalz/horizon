@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -61,6 +63,33 @@ func (d *nodeDeadline) fetch(ctx context.Context) (*time.Time, error) {
 		return nil, fmt.Errorf("agent: node %q carries the unreadable deadline %q", d.nodeName, raw)
 	}
 	return &deadline, nil
+}
+
+func (d *nodeDeadline) markArmed(ctx context.Context, at time.Time) {
+	if err := d.patchArmed(ctx, at); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "mark this node's watchdog armed", "node", d.nodeName)
+	}
+}
+
+func (d *nodeDeadline) patchArmed(ctx context.Context, at time.Time) error {
+	client, err := d.connect()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, nodeReadTimeout)
+	defer cancel()
+
+	patch, err := json.Marshal(map[string]map[string]map[string]string{
+		"metadata": {"annotations": {provider.WatchdogArmedAnnotationKey: at.UTC().Format(time.RFC3339)}},
+	})
+	if err != nil {
+		return fmt.Errorf("agent: build armed annotation patch for node %q: %w", d.nodeName, err)
+	}
+	if _, err := client.CoreV1().Nodes().Patch(ctx, d.nodeName, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("agent: patch node %q armed annotation: %w", d.nodeName, err)
+	}
+	return nil
 }
 
 func (d *nodeDeadline) connect() (kubernetes.Interface, error) {

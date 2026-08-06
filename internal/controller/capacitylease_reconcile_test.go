@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -433,5 +434,115 @@ func TestWorkloadMigrationRunsOnceInstancesAreReady(t *testing.T) {
 	}
 	if _, ok := h.deploymentAnnotations()[k8s.PrePlacementAnnotationKey]; !ok {
 		t.Error("the deployment carries no saved placement annotation")
+	}
+}
+
+func TestWatchdogArmedIsTrueWhenEveryJoinedNodeIsFresh(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.armNode(name, h.clock.Now())
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue)
+	if events := h.events(); len(events) != 0 {
+		t.Errorf("an armed node recorded %d events, want none", len(events))
+	}
+}
+
+func TestWatchdogArmedIsFalseWhenAJoinedNodeNeverArmed(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse)
+	h.assertConditionDetail(v1alpha1.ConditionWatchdogArmed, reasonWatchdogUnarmed, name)
+
+	events := h.events()
+	if len(events) != 1 {
+		t.Fatalf("recorded %d events on the false transition, want 1", len(events))
+	}
+	if !strings.Contains(events[0], reasonWatchdogUnarmed) {
+		t.Errorf("event %q does not mention reason %q", events[0], reasonWatchdogUnarmed)
+	}
+}
+
+func TestWatchdogArmedDoesNotReemitTheEventWhileStillFalse(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+	if events := h.events(); len(events) != 1 {
+		t.Fatalf("recorded %d events on the first false transition, want 1", len(events))
+	}
+
+	h.settle()
+	if events := h.events(); len(events) != 0 {
+		t.Errorf("staying false recorded %d more events, want none", len(events))
+	}
+}
+
+func TestWatchdogArmedIsFalseWhenTheAnnotationIsStaleBeyondTheWindow(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.armNode(name, h.clock.Now())
+	h.settle()
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue)
+
+	h.clock.Advance(watchdogArmedStalenessWindow(testPolicy(testRenewInterval, testSlack)))
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse)
+}
+
+func TestWatchdogArmedRecoversToTrueOnceRefreshed(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse)
+	h.events()
+
+	h.armNode(name, h.clock.Now())
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue)
+	if events := h.events(); len(events) != 0 {
+		t.Errorf("recovering to true recorded %d events, want none", len(events))
+	}
+}
+
+func TestWatchdogArmedRequiresEveryJoinedInstanceToBeFresh(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Replicas = 2
+	})
+	h.settle()
+
+	armedName := h.instanceName(0)
+	unarmedName := h.instanceName(1)
+	h.joinNode(armedName, true)
+	h.joinNode(unarmedName, true)
+	h.armNode(armedName, h.clock.Now())
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse)
+	current := h.condition(v1alpha1.ConditionWatchdogArmed)
+	if !strings.Contains(current.Message, unarmedName) {
+		t.Errorf("message %q does not name the unarmed instance %q", current.Message, unarmedName)
+	}
+	if strings.Contains(current.Message, armedName) {
+		t.Errorf("message %q unexpectedly names the armed instance %q", current.Message, armedName)
 	}
 }

@@ -17,6 +17,7 @@ const (
 	ExpiresAtLabelKey = "horizon.dev/expires-at"
 
 	WatchdogDeadlineAnnotationKey = "horizon.dev/watchdog-deadline"
+	WatchdogArmedAnnotationKey    = "horizon.dev/watchdog-armed"
 
 	LeaseUIDLabelKey = "horizon.dev/lease-uid"
 )

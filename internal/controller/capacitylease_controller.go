@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -48,6 +49,8 @@ const (
 	reasonReleaseFailed       = "ReleaseFailed"
 	reasonLaunchTimeout       = "LaunchTimeout"
 	reasonRegistrationTimeout = "RegistrationTimeout"
+	reasonWatchdogArmed       = "WatchdogArmed"
+	reasonWatchdogUnarmed     = "WatchdogUnarmed"
 )
 
 type ProviderFactory func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error)
@@ -57,6 +60,7 @@ type CapacityLeaseReconciler struct {
 	Kube     kubernetes.Interface
 	Provider ProviderFactory
 	Clock    func() time.Time
+	Recorder record.EventRecorder
 }
 
 func (r *CapacityLeaseReconciler) now() time.Time {
@@ -115,6 +119,7 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.Recorder = mgr.GetEventRecorderFor(capacityLeaseControllerName)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.CapacityLease{}).
 		Named(capacityLeaseControllerName).

@@ -3,15 +3,20 @@ package agent
 import (
 	"errors"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/lucawalz/horizon/internal/provider"
 )
@@ -39,6 +44,27 @@ func refuseNodeReads(client *k8sfake.Clientset, failure error) {
 	client.PrependReactor("get", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, failure
 	})
+}
+
+func refuseNodePatches(client *k8sfake.Clientset, failure error) {
+	client.PrependReactor("patch", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, failure
+	})
+}
+
+func capturedLogger() (logr.Logger, func() []string) {
+	var mu sync.Mutex
+	var lines []string
+	sink := funcr.New(func(prefix, args string) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, strings.TrimSpace(prefix+" "+args))
+	}, funcr.Options{})
+	return sink, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), lines...)
+	}
 }
 
 func armedDeadline() time.Time {
@@ -179,4 +205,59 @@ func TestNodeDeadlinePreservesTheSeedWhenTheNodeReadFails(t *testing.T) {
 
 	assertStuckAt(t, deadline, seed)
 	assertStuckAt(t, deadline, seed)
+}
+
+func armedAnnotation(t *testing.T, client *k8sfake.Clientset) string {
+	t.Helper()
+	node, err := client.CoreV1().Nodes().Get(t.Context(), testNodeName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("read the node back: %v", err)
+	}
+	return node.Annotations[provider.WatchdogArmedAnnotationKey]
+}
+
+func TestNodeDeadlineMarkArmedWritesAnRFC3339Timestamp(t *testing.T) {
+	deadline, client := nodeDeadlineFor(annotatedNode(""))
+	at := armedDeadline()
+
+	deadline.markArmed(t.Context(), at)
+
+	if got, want := armedAnnotation(t, client), at.Format(time.RFC3339); got != want {
+		t.Errorf("armed annotation = %q, want %q", got, want)
+	}
+}
+
+func TestNodeDeadlineMarkArmedRefreshesOnALaterTick(t *testing.T) {
+	deadline, client := nodeDeadlineFor(annotatedNode(""))
+	first := armedDeadline()
+	deadline.markArmed(t.Context(), first)
+
+	second := first.Add(time.Minute)
+	deadline.markArmed(t.Context(), second)
+
+	if got, want := armedAnnotation(t, client), second.Format(time.RFC3339); got != want {
+		t.Errorf("armed annotation = %q, want the refreshed %q", got, want)
+	}
+}
+
+func TestNodeDeadlineMarkArmedIsLoggedAndNonFatalOnAClientError(t *testing.T) {
+	previous := armedDeadline()
+	deadline, client := nodeDeadlineFor(annotatedNode(""))
+	deadline.markArmed(t.Context(), previous)
+	refuseNodePatches(client, errors.New("dial tcp 127.0.0.1:6444: connect: connection refused"))
+
+	log, capturedLines := capturedLogger()
+	ctx := ctrl.LoggerInto(t.Context(), log)
+	deadline.markArmed(ctx, previous.Add(time.Minute))
+
+	if got, want := armedAnnotation(t, client), previous.Format(time.RFC3339); got != want {
+		t.Errorf("armed annotation = %q, want the failed patch to leave it at %q", got, want)
+	}
+	lines := capturedLines()
+	if len(lines) == 0 {
+		t.Fatal("a failed patch logged nothing")
+	}
+	if !strings.Contains(lines[0], testNodeName) {
+		t.Errorf("logged line %q does not mention the node %q", lines[0], testNodeName)
+	}
 }
