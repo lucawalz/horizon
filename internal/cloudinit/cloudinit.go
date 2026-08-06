@@ -37,6 +37,7 @@ type File struct {
 type Options struct {
 	Flavor                string
 	Server                string
+	KubernetesVersion     string
 	Labels                []string
 	Taints                []string
 	Files                 []File

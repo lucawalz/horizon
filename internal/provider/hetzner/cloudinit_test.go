@@ -15,6 +15,7 @@ func generatedCloudInit(t *testing.T) string {
 	blob, err := cloudinit.Render(cloudinit.Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   "v1.35.6+k3s1",
 		Labels:              []string{provider.PoolLabelAssignment},
 		InstallWatchdogUnit: &installWatchdogUnit,
 	})

