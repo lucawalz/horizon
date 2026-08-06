@@ -27,9 +27,9 @@ runcmd:
     TMP=$(mktemp -d)
     curl -fsSL --max-time 120 -o "$TMP/$TARBALL" "$BASE/$TARBALL"
     curl -fsSL --max-time 60 -o "$TMP/checksums.txt" "$BASE/horizon_${NUM}_checksums.txt"
-    EXPECTED=$(grep " ${TARBALL}$" "$TMP/checksums.txt")
+    EXPECTED=$(awk -v want="$TARBALL" 'NF == 2 && $2 == want { hash = $1; found++ } END { if (found != 1) exit 1; print hash }' "$TMP/checksums.txt")
     ACTUAL=$(sha256sum "$TMP/$TARBALL")
-    [ "${EXPECTED%% *}" = "${ACTUAL%% *}" ] || { echo "horizon: checksum mismatch for $TARBALL" >&2; exit 1; }
+    [ "$EXPECTED" = "${ACTUAL%% *}" ] || { echo "horizon: checksum mismatch for $TARBALL" >&2; exit 1; }
     tar -xzf "$TMP/$TARBALL" -C "$TMP" horizon
     install -D -m0755 "$TMP/horizon" /var/lib/horizon/bin/horizon
     /var/lib/horizon/bin/horizon version >/dev/null

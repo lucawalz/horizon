@@ -1,6 +1,8 @@
 package cloudinit
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,8 @@ const (
 	architectureStub   = "#!/bin/sh\necho x86_64\n"
 	harnessPermissions = 0o755
 	harnessVersion     = "v0.0.0"
+	harnessTarball     = "horizon_0.0.0_linux_amd64.tar.gz"
+	unpublishedHash    = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 var directoryChange = regexp.MustCompile(`(^|[;&|(]\s*)cd\s`)
@@ -65,7 +69,6 @@ func TestWatchdogCommandsLeaveTheWorkingDirectoryResolvable(t *testing.T) {
 	if err != nil {
 		t.Skipf("no pwd to resolve the working directory the commands leave behind: %v", err)
 	}
-
 	opts := watchdogOptions()
 	opts.TransientWatchdogUnit = true
 	shellified := strings.Join(watchdogCommands(opts), "\n")
@@ -86,6 +89,110 @@ func TestWatchdogCommandsLeaveTheWorkingDirectoryResolvable(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("the emitted commands left no resolvable working directory: %v\n%s", err, out)
+	}
+}
+
+func TestVerifyChecksumAcceptsOnlyThePublishedLineForTheTarball(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no POSIX shell to run the emitted verification: %v", err)
+	}
+	if _, err := exec.LookPath("sha256sum"); err != nil {
+		t.Skipf("no sha256sum to hash the downloaded tarball: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		checksums func(published string) string
+		accepted  bool
+	}{
+		{
+			name:      "the published line",
+			checksums: func(published string) string { return published + "  " + harnessTarball + "\n" },
+			accepted:  true,
+		},
+		{
+			name: "the published line among the other artifacts",
+			checksums: func(published string) string {
+				return unpublishedHash + "  horizon_0.0.0_linux_arm64.tar.gz\n" +
+					published + "  " + harnessTarball + "\n" +
+					unpublishedHash + "  horizon_0.0.0_darwin_amd64.tar.gz\n"
+			},
+			accepted: true,
+		},
+		{
+			name:      "a tampered tarball",
+			checksums: func(string) string { return unpublishedHash + "  " + harnessTarball + "\n" },
+		},
+		{
+			name:      "no line for the tarball",
+			checksums: func(published string) string { return published + "  horizon_0.0.0_linux_arm64.tar.gz\n" },
+		},
+		{
+			name:      "an empty file",
+			checksums: func(string) string { return "" },
+		},
+		{
+			name: "the tarball listed twice with the published line first",
+			checksums: func(published string) string {
+				return published + "  " + harnessTarball + "\n" + unpublishedHash + "  " + harnessTarball + "\n"
+			},
+		},
+		{
+			name: "the tarball listed twice with the published line second",
+			checksums: func(published string) string {
+				return unpublishedHash + "  " + harnessTarball + "\n" + published + "  " + harnessTarball + "\n"
+			},
+		},
+		{
+			name: "a line naming another file whose name ends with the tarball",
+			checksums: func(published string) string {
+				return published + "  evil " + harnessTarball + "\n"
+			},
+		},
+		{
+			name:      "a line carrying a hash and no name",
+			checksums: func(published string) string { return published + "\n" },
+		},
+		{
+			name: "a line naming the tarball and trailing a further field",
+			checksums: func(published string) string {
+				return published + "  " + harnessTarball + " extra\n"
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			payload := []byte("horizon release payload")
+			if err := os.WriteFile(filepath.Join(dir, harnessTarball), payload, harnessPermissions); err != nil {
+				t.Fatalf("write the downloaded tarball: %v", err)
+			}
+			digest := sha256.Sum256(payload)
+			content := tc.checksums(hex.EncodeToString(digest[:]))
+			if err := os.WriteFile(filepath.Join(dir, checksumFileName), []byte(content), harnessPermissions); err != nil {
+				t.Fatalf("write the published checksums: %v", err)
+			}
+
+			script := strings.Join(append([]string{
+				abortOnAnyFailure,
+				"TMP=" + dir,
+				"TARBALL=" + harnessTarball,
+			}, verifyChecksum()...), "\n") + "\n"
+			path := filepath.Join(dir, "verify")
+			if err := os.WriteFile(path, []byte(script), harnessPermissions); err != nil {
+				t.Fatalf("write the verification script: %v", err)
+			}
+
+			out, err := exec.Command(shell, path).CombinedOutput()
+			if tc.accepted && err != nil {
+				t.Fatalf("the published tarball was rejected: %v\n%s", err, out)
+			}
+			if !tc.accepted && err == nil {
+				t.Fatalf("a tarball the checksums do not vouch for was accepted:\n%s", content)
+			}
+		})
 	}
 }
 

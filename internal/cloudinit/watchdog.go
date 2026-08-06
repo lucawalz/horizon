@@ -11,6 +11,7 @@ const (
 	transientWatchdogUnitPath = "/run/systemd/system/" + watchdogUnitName
 	perBootWatchdogScriptPath = "/var/lib/cloud/scripts/per-boot/horizon-watchdog"
 	perBootScriptPermissions  = "0755"
+	checksumFileName          = "checksums.txt"
 )
 
 func watchdogFiles(opts Options) []File {
@@ -30,7 +31,7 @@ func watchdogFiles(opts Options) []File {
 }
 
 func watchdogCommands(opts Options) []string {
-	install := strings.Join([]string{
+	install := []string{
 		"set -eu",
 		"V=" + versionSentinel,
 		"NUM=${V#v}",
@@ -40,17 +41,17 @@ func watchdogCommands(opts Options) []string {
 		"TARBALL=horizon_${NUM}_linux_${ARCH}.tar.gz",
 		"TMP=$(mktemp -d)",
 		"curl -fsSL --max-time 120 -o \"$TMP/$TARBALL\" \"$BASE/$TARBALL\"",
-		"curl -fsSL --max-time 60 -o \"$TMP/checksums.txt\" \"$BASE/horizon_${NUM}_checksums.txt\"",
-		"EXPECTED=$(grep \" ${TARBALL}$\" \"$TMP/checksums.txt\")",
-		"ACTUAL=$(sha256sum \"$TMP/$TARBALL\")",
-		"[ \"${EXPECTED%% *}\" = \"${ACTUAL%% *}\" ] || { echo \"horizon: checksum mismatch for $TARBALL\" >&2; exit 1; }",
+		"curl -fsSL --max-time 60 -o \"$TMP/" + checksumFileName + "\" \"$BASE/horizon_${NUM}_checksums.txt\"",
+	}
+	install = append(install, verifyChecksum()...)
+	install = append(install,
 		"tar -xzf \"$TMP/$TARBALL\" -C \"$TMP\" horizon",
-		"install -D -m0755 \"$TMP/horizon\" " + watchdogBinaryPath,
-		watchdogBinaryPath + " version >/dev/null",
+		"install -D -m0755 \"$TMP/horizon\" "+watchdogBinaryPath,
+		watchdogBinaryPath+" version >/dev/null",
 		"rm -rf \"$TMP\"",
-	}, "\n")
+	)
 
-	commands := []string{install}
+	commands := []string{strings.Join(install, "\n")}
 	if !*opts.InstallWatchdogUnit {
 		return commands
 	}
@@ -62,6 +63,14 @@ func watchdogCommands(opts Options) []string {
 	lines := []string{"set -eu"}
 	lines = append(lines, armWatchdog(persistentWatchdogUnitPath, enabled, "enable --now")...)
 	return append(commands, strings.Join(lines, "\n"))
+}
+
+func verifyChecksum() []string {
+	return []string{
+		`EXPECTED=$(awk -v want="$TARBALL" 'NF == 2 && $2 == want { hash = $1; found++ } END { if (found != 1) exit 1; print hash }' "$TMP/` + checksumFileName + `")`,
+		`ACTUAL=$(sha256sum "$TMP/$TARBALL")`,
+		`[ "$EXPECTED" = "${ACTUAL%% *}" ] || { echo "horizon: checksum mismatch for $TARBALL" >&2; exit 1; }`,
+	}
 }
 
 func perBootWatchdogScript() string {
