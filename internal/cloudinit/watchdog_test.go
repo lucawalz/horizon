@@ -32,22 +32,25 @@ func watchdogOptions() Options {
 	}
 }
 
-func TestWatchdogCommandsNeverChangeTheWorkingDirectory(t *testing.T) {
+type watchdogShape struct {
+	name string
+	opts Options
+}
+
+func watchdogShapes() []watchdogShape {
 	transient := watchdogOptions()
 	transient.TransientWatchdogUnit = true
 	suppressed := watchdogOptions()
 	suppressed.InstallWatchdogUnit = boolPtr(false)
-
-	tests := []struct {
-		name string
-		opts Options
-	}{
+	return []watchdogShape{
 		{name: "persistent unit", opts: watchdogOptions()},
 		{name: "transient unit", opts: transient},
 		{name: "no unit", opts: suppressed},
 	}
+}
 
-	for _, tc := range tests {
+func TestWatchdogCommandsNeverChangeTheWorkingDirectory(t *testing.T) {
+	for _, tc := range watchdogShapes() {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, command := range watchdogCommands(tc.opts) {
 				for _, line := range strings.Split(command, "\n") {
@@ -69,26 +72,33 @@ func TestWatchdogCommandsLeaveTheWorkingDirectoryResolvable(t *testing.T) {
 	if err != nil {
 		t.Skipf("no pwd to resolve the working directory the commands leave behind: %v", err)
 	}
-	opts := watchdogOptions()
-	opts.TransientWatchdogUnit = true
-	shellified := strings.Join(watchdogCommands(opts), "\n")
-	script := strings.ReplaceAll(shellified, abortOnAnyFailure, surviveAbsentStubs)
-
-	path := filepath.Join(t.TempDir(), "runcmd")
-	content := script + "\n" + getcwd + " >/dev/null\n"
-	if err := os.WriteFile(path, []byte(content), harnessPermissions); err != nil {
-		t.Fatalf("write the shellified commands: %v", err)
+	if os.Geteuid() == 0 {
+		t.Skip("as root the emitted unit redirection would reach the real /etc/systemd/system")
 	}
 
-	cmd := exec.Command(shell, path)
-	cmd.Dir = t.TempDir()
-	cmd.Env = []string{
-		"PATH=" + stubbedPath(t),
-		strings.Trim(versionSentinel, "${}") + "=" + harnessVersion,
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the emitted commands left no resolvable working directory: %v\n%s", err, out)
+	for _, tc := range watchdogShapes() {
+		t.Run(tc.name, func(t *testing.T) {
+			shellified := strings.Join(watchdogCommands(tc.opts), "\n")
+			script := strings.ReplaceAll(shellified, abortOnAnyFailure, surviveAbsentStubs)
+
+			path := filepath.Join(t.TempDir(), "runcmd")
+			content := script + "\n" + getcwd + " >/dev/null\n"
+			if err := os.WriteFile(path, []byte(content), harnessPermissions); err != nil {
+				t.Fatalf("write the shellified commands: %v", err)
+			}
+
+			cmd := exec.Command(shell, path)
+			cmd.Dir = t.TempDir()
+			cmd.Env = []string{
+				"PATH=" + stubbedPath(t),
+				"TMPDIR=" + t.TempDir(),
+				strings.Trim(versionSentinel, "${}") + "=" + harnessVersion,
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("the emitted commands left no resolvable working directory: %v\n%s", err, out)
+			}
+		})
 	}
 }
 
