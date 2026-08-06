@@ -92,7 +92,7 @@ spec:
 
 A burst node satisfies four requirements. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
 
-1. **Join as an agent.** The server runs a Kubernetes agent pointed at the control plane. `horizon cloud-init` renders this; see [Usage](#usage). An image that already ships the agent takes `--install-kubernetes=false`, which drops the install command and keeps the join configuration.
+1. **Join as an agent.** The server runs a Kubernetes agent pointed at the control plane, at the version `--kubernetes-version` names rather than whatever release is newest. That version has to match the control plane: a kubelet newer than the apiserver is outside the Kubernetes version skew policy, so a node that installs the latest release against an older control plane is unsupported the moment it joins. `horizon cloud-init` renders this; see [Usage](#usage). An image that already ships the agent takes `--install-kubernetes=false`, which drops the install command and keeps the join configuration.
 2. **Carry `horizon.dev/pool=reserved` and the burst taint.** The provider build rejects a cloud-init missing the pool label, before any instance is created. The taint, `horizon.dev/burst=<lease>:NoSchedule`, is applied by the controller once it matches the node to its lease, since its value is the lease name and one cloud-init blob serves every lease a `ProviderConfig` provisions.
 3. **Install and arm the watchdog.** `horizon cloud-init` writes the node token and a systemd unit that starts `horizon watchdog` on boot, unless `--install-watchdog-unit=false`. An image whose `/etc/systemd/system` is read-only, a NixOS image among them, takes `--transient-watchdog-unit` instead, which writes the unit to `/run/systemd/system` from a per-boot script and starts it rather than enabling it.
 4. **Reach the control plane.** horizon has no VPN, no firewall management, and no opinion about how a leased server reaches the cluster beyond the `--server` URL it is given; getting a packet from Hetzner's network to the control plane is the adopter's problem, the same way it is bedrock's Tailscale for the nodes it runs permanently. Where that path is a VPN, the agent also has to be told to run its pod network over the tunnel, which is `--flavor-config flannel-iface=<interface>` for k3s.
@@ -196,10 +196,11 @@ kubectl create secret generic horizon-join-token \
   --from-literal=token=<k3s-join-token>
 ```
 
-**5. Render the cloud-init:**
+**5. Render the cloud-init**, naming the k3s release the node installs. It has to match the control plane, which reports its own as `v1.35.6+k3s1` in `kubectl version`; a kubelet newer than the apiserver is outside the Kubernetes version skew policy, and an unpinned install would take whatever release is newest on the day the node boots:
 
 ```
-horizon cloud-init --server https://<control-plane>:6443 > cloud-init.yaml
+horizon cloud-init --server https://<control-plane>:6443 \
+  --kubernetes-version <k3s-release> > cloud-init.yaml
 ```
 
 which prints (the two longer `runcmd` blocks are elided with `...` below; nothing else is):
@@ -222,7 +223,7 @@ write_files:
       ${HORIZON_NODE_TOKEN}
 runcmd:
   - |
-    curl -sfL https://get.k3s.io | sh -s - agent
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=<k3s-release> sh -s - agent
   - |
     set -eu
     V=${HORIZON_VERSION}
@@ -292,7 +293,7 @@ The chart install, the CLI render, and the manifest validation against a real AP
 
 An unusual image is not a reason to leave the generator. A pre-baked image that already runs k3s, an immutable image that cannot take a unit in `/etc/systemd/system`, and a control plane reachable only over a VPN are each one flag: `--install-kubernetes=false`, `--transient-watchdog-unit`, and `--flavor-config flannel-iface=<interface>`. All three compose, and every one of them defaults to what the generator did before, so an existing rendered document is unchanged by their presence.
 
-`horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
+`horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--kubernetes-version`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
 
 ### Command line reference
 
@@ -323,11 +324,11 @@ horizon version      Print the build version
 | `--metadata-url` | `http://169.254.169.254/hetzner/v1/metadata` | Base URL of the instance metadata service. |
 | `--state-dir` | `/run/horizon` | Directory holding the sentinel that records a teardown in progress. |
 
-`horizon cloud-init` renders the join document shown in the quick start. `--server` is required unless `--passthrough`; `--flavor` (`k3s`, the only one implemented), `--label` and `--taint` (both repeatable), `--install-watchdog-unit` (default `true`), `--binary-base-url`, `--write-file` (`path:permissions:content`, repeatable), `--pre-command`/`--post-command` (repeatable), and `--passthrough` cover the rest; `horizon cloud-init --help` lists all of them with their defaults. Three further flags say what the image can and cannot do for itself:
+`horizon cloud-init` renders the join document shown in the quick start. `--server` and `--kubernetes-version` are required unless `--passthrough`, the version only while the flavour installs Kubernetes. It names an exact flavour release, `v1.35.6+k3s1` for k3s, and anything else is refused at render time, so an upstream `v1.35.6` pasted from `kubectl version` fails before a node ever boots on it. `--flavor` (`k3s`, the only one implemented), `--label` and `--taint` (both repeatable), `--install-watchdog-unit` (default `true`), `--binary-base-url`, `--write-file` (`path:permissions:content`, repeatable), `--pre-command`/`--post-command` (repeatable), and `--passthrough` cover the rest; `horizon cloud-init --help` lists all of them with their defaults. Three further flags say what the image can and cannot do for itself:
 
 | Flag | Default | The image or cluster it is for |
 | --- | --- | --- |
-| `--install-kubernetes` | `true` | An image that already ships Kubernetes. `false` drops the flavour's install command and keeps everything else, so the join configuration, the node token, and the watchdog are still written. |
+| `--install-kubernetes` | `true` | An image that already ships Kubernetes. `false` drops the flavour's install command and keeps everything else, so the join configuration, the node token, and the watchdog are still written. Nothing is left to install a version, so `--kubernetes-version` is rejected alongside it, and matching the control plane becomes the image's problem. |
 | `--transient-watchdog-unit` | `false` | An image whose `/etc/systemd/system` is read-only, such as a NixOS one, where a unit file cannot be written and `systemctl enable` cannot create its symlink. The unit is written to `/run/systemd/system` and started instead. Since `/run` is a tmpfs, the write happens from `/var/lib/cloud/scripts/per-boot/horizon-watchdog`, which cloud-init runs on every boot rather than once per instance. It cannot be combined with `--install-watchdog-unit=false`, which is rejected at render time. |
 | `--flavor-config key=value` | none | A control plane reached over a VPN, and anything else the flavour's own configuration file covers. Repeatable, merged into `/etc/rancher/k3s/config.yaml` in sorted order. The keys the flavour generates itself, `server`, `token`, `node-label`, and `node-taint`, are rejected, so a label or a taint has exactly one source. |
 
