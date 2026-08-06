@@ -228,7 +228,7 @@ runcmd:
     set -eu
     V=${HORIZON_VERSION}
     ...
-    install -D -m0755 horizon /var/lib/horizon/bin/horizon
+    install -D -m0755 "$TMP/horizon" /var/lib/horizon/bin/horizon
   - |
     set -eu
     cat > /etc/systemd/system/horizon-watchdog.service <<'UNIT'
