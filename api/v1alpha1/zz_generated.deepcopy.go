@@ -110,6 +110,14 @@ func (in *CapacityLeaseStatus) DeepCopyInto(out *CapacityLeaseStatus) {
 		in, out := &in.WatchdogDeadline, &out.WatchdogDeadline
 		*out = (*in).DeepCopy()
 	}
+	if in.ReadyAt != nil {
+		in, out := &in.ReadyAt, &out.ReadyAt
+		*out = (*in).DeepCopy()
+	}
+	if in.ReleasedAt != nil {
+		in, out := &in.ReleasedAt, &out.ReleasedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Instances != nil {
 		in, out := &in.Instances, &out.Instances
 		*out = make([]InstanceStatus, len(*in))

@@ -28,7 +28,7 @@ spec:
       type: string
     - jsonPath: .status.expiresAt
       name: Expires
-      type: date
+      type: string
     - jsonPath: .status.conditions[?(@.type=='InstancesReady')].status
       name: Ready
       type: string
@@ -37,6 +37,17 @@ spec:
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
+      type: date
+    - jsonPath: .status.instanceType
+      name: Type
+      type: string
+    - jsonPath: .status.readyAt
+      name: ReadyAt
+      priority: 1
+      type: date
+    - jsonPath: .status.releasedAt
+      name: ReleasedAt
+      priority: 1
       type: date
     name: v1alpha1
     schema:
@@ -169,6 +180,8 @@ spec:
               expiresAt:
                 format: date-time
                 type: string
+              instanceType:
+                type: string
               instances:
                 items:
                   properties:
@@ -200,6 +213,12 @@ spec:
                 format: int64
                 type: integer
               phase:
+                type: string
+              readyAt:
+                format: date-time
+                type: string
+              releasedAt:
+                format: date-time
                 type: string
               watchdogDeadline:
                 format: date-time

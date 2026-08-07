@@ -121,6 +121,10 @@ func (r *CapacityLeaseReconciler) drainNode(ctx context.Context, nodeName string
 func (r *CapacityLeaseReconciler) finishTeardown(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
 	changed := setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionTrue, reasonReleased, "every instance is confirmed absent")
 	changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonReleased, "capacity released") || changed
+	if lease.Status.ReleasedAt == nil {
+		lease.Status.ReleasedAt = &metav1.Time{Time: r.now()}
+		changed = true
+	}
 	if changed {
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, err

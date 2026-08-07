@@ -100,6 +100,15 @@ type CapacityLeaseStatus struct {
 	WatchdogDeadline *metav1.Time `json:"watchdogDeadline,omitempty"`
 
 	// +optional
+	InstanceType string `json:"instanceType,omitempty"`
+
+	// +optional
+	ReadyAt *metav1.Time `json:"readyAt,omitempty"`
+
+	// +optional
+	ReleasedAt *metav1.Time `json:"releasedAt,omitempty"`
+
+	// +optional
 	// +listType=atomic
 	Instances []InstanceStatus `json:"instances,omitempty"`
 
@@ -121,10 +130,13 @@ type CapacityLeaseStatus struct {
 // +kubebuilder:printcolumn:name="Replicas",type="integer",JSONPath=".spec.replicas"
 // +kubebuilder:printcolumn:name="Region",type="string",JSONPath=".spec.region"
 // +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
-// +kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".status.expiresAt"
+// +kubebuilder:printcolumn:name="Expires",type="string",JSONPath=".status.expiresAt"
 // +kubebuilder:printcolumn:name="Ready",type="string",JSONPath=".status.conditions[?(@.type=='InstancesReady')].status"
 // +kubebuilder:printcolumn:name="Armed",type="string",JSONPath=".status.conditions[?(@.type=='WatchdogArmed')].status"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".status.instanceType"
+// +kubebuilder:printcolumn:name="ReadyAt",type="date",JSONPath=".status.readyAt",priority=1
+// +kubebuilder:printcolumn:name="ReleasedAt",type="date",JSONPath=".status.releasedAt",priority=1
 type CapacityLease struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

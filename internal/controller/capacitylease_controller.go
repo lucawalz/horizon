@@ -164,6 +164,9 @@ func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alph
 	accepted := r.now()
 	lease.Status.AcceptedAt = &metav1.Time{Time: accepted}
 	lease.Status.ExpiresAt = &metav1.Time{Time: accepted.Add(lease.Spec.Duration.Duration)}
+	if lease.Status.InstanceType == "" {
+		lease.Status.InstanceType = lease.Spec.Size
+	}
 	setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionTrue, reasonAccepted, "lease accepted and deadline recorded")
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err

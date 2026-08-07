@@ -65,6 +65,10 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 	if joined >= want {
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady,
 			fmt.Sprintf("%d of %d nodes ready", joined, want)) || changed
+		if lease.Status.ReadyAt == nil {
+			lease.Status.ReadyAt = &metav1.Time{Time: r.now()}
+			changed = true
+		}
 	} else {
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonWaitingForNodes,
 			fmt.Sprintf("%d of %d nodes ready", joined, want)) || changed

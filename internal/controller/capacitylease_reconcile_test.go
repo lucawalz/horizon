@@ -546,3 +546,101 @@ func TestWatchdogArmedRequiresEveryJoinedInstanceToBeFresh(t *testing.T) {
 		t.Errorf("message %q unexpectedly names the armed instance %q", current.Message, armedName)
 	}
 }
+
+func TestInstanceTypeIsSetAtAcceptanceFromSpecSize(t *testing.T) {
+	h := newHarness(t)
+
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("finalizer pass: %v", err)
+	}
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("acceptance pass: %v", err)
+	}
+
+	lease := h.lease()
+	if lease.Status.AcceptedAt == nil {
+		t.Fatal("acceptance did not record a start time")
+	}
+	if got := lease.Status.InstanceType; got != testSize {
+		t.Errorf("instanceType is %q, want %q", got, testSize)
+	}
+}
+
+func TestReadyAtIsSetWhenInstancesFirstBecomeReady(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionTrue)
+	readyAt := h.lease().Status.ReadyAt
+	if readyAt == nil {
+		t.Fatal("readyAt was not set when instances first became ready")
+	}
+	if !readyAt.Time.Equal(h.clock.Now()) {
+		t.Errorf("readyAt is %s, want the current time %s", readyAt.Time, h.clock.Now())
+	}
+}
+
+func TestReadyAtIsNotRewrittenWhenANodeFlaps(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	first := h.lease().Status.ReadyAt
+	if first == nil {
+		t.Fatal("readyAt was not set on the first ready pass")
+	}
+
+	h.clock.Advance(time.Minute)
+	h.setNodeReady(name, false)
+	h.settle()
+	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionFalse)
+
+	h.clock.Advance(time.Minute)
+	h.setNodeReady(name, true)
+	h.settle()
+	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionTrue)
+
+	if got := h.lease().Status.ReadyAt; !got.Time.Equal(first.Time) {
+		t.Errorf("readyAt moved to %s after a flap, want it to stay at %s", got.Time, first.Time)
+	}
+}
+
+func TestCreateInstanceRecordsTheProvidersCreationTimestamp(t *testing.T) {
+	h := newHarness(t)
+
+	for pass := range 3 {
+		if _, err := h.reconcile(); err != nil {
+			t.Fatalf("pass %d: %v", pass+1, err)
+		}
+	}
+	intended := h.instanceStatus(h.instanceName(0)).CreatedAt
+	if intended == nil {
+		t.Fatal("the recorded intent carries no created time")
+	}
+
+	h.clock.Advance(time.Minute)
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("create pass: %v", err)
+	}
+
+	if calls := h.prov.CreateCalls(); len(calls) != 1 {
+		t.Fatalf("provider create was called %d times, want 1", len(calls))
+	}
+	created := h.instanceStatus(h.instanceName(0)).CreatedAt
+	if created == nil {
+		t.Fatal("the created instance carries no created time")
+	}
+	if created.Time.Equal(intended.Time) {
+		t.Error("createdAt still reflects the intent time, want the provider's create time")
+	}
+	if !created.Time.Equal(h.clock.Now()) {
+		t.Errorf("createdAt is %s, want the provider's create time %s", created.Time, h.clock.Now())
+	}
+}

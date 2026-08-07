@@ -255,6 +255,59 @@ func TestAZeroTeardownGraceSkipsTheDrainWindow(t *testing.T) {
 	}
 }
 
+func TestReadyAtSurvivesTeardown(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	readyAt := h.lease().Status.ReadyAt
+	if readyAt == nil {
+		t.Fatal("readyAt was not set before teardown")
+	}
+
+	h.clock.Advance(testLeaseDuration + time.Minute)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionFalse)
+	got := h.lease().Status.ReadyAt
+	if got == nil {
+		t.Fatal("readyAt was cleared by teardown")
+	}
+	if !got.Time.Equal(readyAt.Time) {
+		t.Errorf("readyAt is %s after teardown, want it to remain %s", got.Time, readyAt.Time)
+	}
+}
+
+func TestReleasedAtIsSetExactlyOnceWhenReleased(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.clock.Advance(testLeaseDuration + time.Minute)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionReleased, metav1.ConditionTrue)
+	releasedAt := h.lease().Status.ReleasedAt
+	if releasedAt == nil {
+		t.Fatal("releasedAt was not set when the lease reached Released")
+	}
+	if !releasedAt.Time.Equal(h.clock.Now()) {
+		t.Errorf("releasedAt is %s, want the current time %s", releasedAt.Time, h.clock.Now())
+	}
+
+	h.clock.Advance(time.Minute)
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("reconcile after release: %v", err)
+	}
+	if got := h.lease().Status.ReleasedAt; !got.Time.Equal(releasedAt.Time) {
+		t.Errorf("releasedAt moved to %s on a later pass, want it to stay at %s", got.Time, releasedAt.Time)
+	}
+}
+
 func TestADrainedNodeLosesItsPodsWithinTheGrace(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}

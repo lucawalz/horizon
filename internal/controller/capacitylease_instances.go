@@ -153,6 +153,7 @@ func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1a
 
 	entry.Phase = v1alpha1.InstancePhaseCreated
 	entry.ProviderID = inst.ProviderID
+	entry.CreatedAt = &metav1.Time{Time: inst.CreatedAt}
 	entry.LastError = ""
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err

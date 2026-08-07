@@ -293,6 +293,22 @@ func (h *harness) joinNode(name string, ready bool) *corev1.Node {
 	return created
 }
 
+func (h *harness) setNodeReady(name string, ready bool) {
+	h.t.Helper()
+	node, ok := h.node(name)
+	if !ok {
+		h.t.Fatalf("node %q disappeared", name)
+	}
+	status := corev1.ConditionFalse
+	if ready {
+		status = corev1.ConditionTrue
+	}
+	node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status}}
+	if _, err := h.kube.CoreV1().Nodes().Update(h.t.Context(), node, metav1.UpdateOptions{}); err != nil {
+		h.t.Fatalf("set node %q ready=%v: %v", name, ready, err)
+	}
+}
+
 func (h *harness) node(name string) (*corev1.Node, bool) {
 	h.t.Helper()
 	node, err := h.kube.CoreV1().Nodes().Get(h.t.Context(), name, metav1.GetOptions{})
