@@ -30,6 +30,11 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
 
+release:
+  header:
+    from_file:
+      path: .goreleaser/release-header.md
+
 changelog:
   use: git
   sort: asc
