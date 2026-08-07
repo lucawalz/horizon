@@ -26,3 +26,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0020. Make Chart.yaml the source of truth for the release version](0020-chart-yaml-as-the-release-version-source-of-truth.md) (accepted)
 - [0021. Guarantee teardown with a node-side dead man's switch on two clocks](0021-node-side-dead-mans-switch-on-two-clocks.md) (accepted)
 - [0022. Generate cloud-init rather than build a node image](0022-generate-cloud-init-rather-than-build-images.md) (accepted)
+- [0023. Observe the armed watchdog from the control plane](0023-observe-the-armed-watchdog-from-the-control-plane.md) (accepted)
