@@ -71,7 +71,7 @@ func (r *CapacityLeaseReconciler) reconcileWatchdogArmed(lease *v1alpha1.Capacit
 	message := fmt.Sprintf("watchdog not confirmed armed on: %s", strings.Join(unarmed, ", "))
 	changed := setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse, reasonWatchdogUnarmed, message)
 	if changed && !wasFalse {
-		r.Recorder.Event(lease, corev1.EventTypeWarning, reasonWatchdogUnarmed, message)
+		r.Recorder.Eventf(lease, nil, corev1.EventTypeWarning, reasonWatchdogUnarmed, actionMarkedWatchdogUnarmed, message)
 	}
 	return changed
 }

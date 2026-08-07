@@ -16,7 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -61,7 +61,7 @@ type harness struct {
 	prov        *fake.Provider
 	kube        *k8sfake.Clientset
 	clock       *stubClock
-	recorder    *record.FakeRecorder
+	recorder    *events.FakeRecorder
 	name        string
 	providerErr error
 	wrapAPI     func(client.Client) client.Client
@@ -75,7 +75,7 @@ func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harnes
 		clock:    newStubClock(),
 		name:     objectName(t),
 		kube:     newKubeClient(),
-		recorder: record.NewFakeRecorder(testEventBufferLen),
+		recorder: events.NewFakeRecorder(testEventBufferLen),
 	}
 	h.prov = fake.NewWithClock(h.clock.Now)
 

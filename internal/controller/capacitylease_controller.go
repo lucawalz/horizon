@@ -11,7 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,6 +51,8 @@ const (
 	reasonRegistrationTimeout = "RegistrationTimeout"
 	reasonWatchdogArmed       = "WatchdogArmed"
 	reasonWatchdogUnarmed     = "WatchdogUnarmed"
+
+	actionMarkedWatchdogUnarmed = "MarkedWatchdogUnarmed"
 )
 
 type ProviderFactory func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error)
@@ -60,7 +62,7 @@ type CapacityLeaseReconciler struct {
 	Kube     kubernetes.Interface
 	Provider ProviderFactory
 	Clock    func() time.Time
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 func (r *CapacityLeaseReconciler) now() time.Time {
