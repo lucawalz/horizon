@@ -112,3 +112,15 @@ func ParseExpiryValue(raw string) (time.Time, bool) {
 	}
 	return time.Unix(seconds, 0).UTC(), true
 }
+
+func FormatArmed(at time.Time) string {
+	return at.UTC().Format(time.RFC3339)
+}
+
+func ParseArmedValue(raw string) (time.Time, bool) {
+	at, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return at, true
+}

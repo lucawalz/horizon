@@ -99,6 +99,7 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		Client:   mgr.GetClient(),
 		Kube:     kube,
 		Provider: providers,
+		Recorder: mgr.GetEventRecorderFor(controller.CapacityLeaseControllerName),
 	}
 	if err := leases.SetupWithManager(mgr); err != nil {
 		return nil, fmt.Errorf("set up capacity lease controller: %w", err)

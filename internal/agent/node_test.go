@@ -222,7 +222,7 @@ func TestNodeDeadlineMarkArmedWritesAnRFC3339Timestamp(t *testing.T) {
 
 	deadline.markArmed(t.Context(), at)
 
-	if got, want := armedAnnotation(t, client), at.Format(time.RFC3339); got != want {
+	if got, want := armedAnnotation(t, client), provider.FormatArmed(at); got != want {
 		t.Errorf("armed annotation = %q, want %q", got, want)
 	}
 }
@@ -235,7 +235,7 @@ func TestNodeDeadlineMarkArmedRefreshesOnALaterTick(t *testing.T) {
 	second := first.Add(time.Minute)
 	deadline.markArmed(t.Context(), second)
 
-	if got, want := armedAnnotation(t, client), second.Format(time.RFC3339); got != want {
+	if got, want := armedAnnotation(t, client), provider.FormatArmed(second); got != want {
 		t.Errorf("armed annotation = %q, want the refreshed %q", got, want)
 	}
 }
@@ -250,7 +250,7 @@ func TestNodeDeadlineMarkArmedIsLoggedAndNonFatalOnAClientError(t *testing.T) {
 	ctx := ctrl.LoggerInto(t.Context(), log)
 	deadline.markArmed(ctx, previous.Add(time.Minute))
 
-	if got, want := armedAnnotation(t, client), previous.Format(time.RFC3339); got != want {
+	if got, want := armedAnnotation(t, client), provider.FormatArmed(previous); got != want {
 		t.Errorf("armed annotation = %q, want the failed patch to leave it at %q", got, want)
 	}
 	lines := capturedLines()

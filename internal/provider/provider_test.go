@@ -103,3 +103,29 @@ func TestParseExpiryValueRejectsWhatIsNotATimestamp(t *testing.T) {
 		}
 	}
 }
+
+func TestArmedRoundTripsThroughAnAnnotation(t *testing.T) {
+	at := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+
+	got, ok := provider.ParseArmedValue(provider.FormatArmed(at))
+	if !ok {
+		t.Fatal("ParseArmedValue reported no timestamp for a value FormatArmed produced")
+	}
+	if !got.Equal(at) {
+		t.Errorf("parsed armed timestamp = %v, want %v", got, at)
+	}
+}
+
+func TestParseArmedValueRejectsTheDeadlineAnnotationsEncoding(t *testing.T) {
+	if _, ok := provider.ParseArmedValue(provider.FormatExpiry(time.Now())); ok {
+		t.Error("ParseArmedValue must reject the sibling deadline annotation's decimal-seconds encoding")
+	}
+}
+
+func TestParseArmedValueRejectsWhatIsNotATimestamp(t *testing.T) {
+	for _, raw := range []string{"", " ", "tomorrow", "1754136000"} {
+		if _, ok := provider.ParseArmedValue(raw); ok {
+			t.Errorf("ParseArmedValue(%q) reported a timestamp, want none", raw)
+		}
+	}
+}

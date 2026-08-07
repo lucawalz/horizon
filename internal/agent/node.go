@@ -15,7 +15,7 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-const nodeReadTimeout = 10 * time.Second
+const nodeAPITimeout = 10 * time.Second
 
 type nodeDeadline struct {
 	kubeconfigPath string
@@ -46,7 +46,7 @@ func (d *nodeDeadline) fetch(ctx context.Context) (*time.Time, error) {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, nodeReadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, nodeAPITimeout)
 	defer cancel()
 
 	node, err := client.CoreV1().Nodes().Get(ctx, d.nodeName, metav1.GetOptions{})
@@ -77,11 +77,11 @@ func (d *nodeDeadline) patchArmed(ctx context.Context, at time.Time) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, nodeReadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, nodeAPITimeout)
 	defer cancel()
 
 	patch, err := json.Marshal(map[string]map[string]map[string]string{
-		"metadata": {"annotations": {provider.WatchdogArmedAnnotationKey: at.UTC().Format(time.RFC3339)}},
+		"metadata": {"annotations": {provider.WatchdogArmedAnnotationKey: provider.FormatArmed(at)}},
 	})
 	if err != nil {
 		return fmt.Errorf("agent: build armed annotation patch for node %q: %w", d.nodeName, err)

@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	capacityLeaseControllerName = "capacitylease"
+	CapacityLeaseControllerName = "capacitylease"
 	capacityLeaseFinalizer      = "horizon.dev/capacity-lease"
 
 	LeaseNameLabelKey = "horizon.dev/lease"
@@ -119,10 +119,9 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor(capacityLeaseControllerName)
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.CapacityLease{}).
-		Named(capacityLeaseControllerName).
+		Named(CapacityLeaseControllerName).
 		Complete(r)
 }
 

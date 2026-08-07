@@ -20,6 +20,8 @@ const (
 	minMaxLifetime      = 5 * time.Minute
 	maxMaxLifetime      = 24 * time.Hour
 	metadataHTTPTimeout = 10 * time.Second
+
+	DefaultPollInterval = 15 * time.Second
 )
 
 type Options struct {
@@ -101,13 +103,12 @@ func Run(ctx context.Context, opts Options) error {
 		case <-ctx.Done():
 			return nil
 		case now := <-ticker.C:
-			wall.markArmed(ctx, now)
 			reason, due := fired(startedAt, opts.MaxLifetime, wall.read(ctx), now)
-			if !due {
-				continue
+			if due {
+				log.Info("destroying this server", "instance", identity.Name, "reason", reason)
+				return destroy(ctx, prov, identity.Name, opts.StateDir, destroyBackoff())
 			}
-			log.Info("destroying this server", "instance", identity.Name, "reason", reason)
-			return destroy(ctx, prov, identity.Name, opts.StateDir, destroyBackoff())
+			wall.markArmed(ctx, now)
 		}
 	}
 }

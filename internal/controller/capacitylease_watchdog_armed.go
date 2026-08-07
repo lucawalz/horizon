@@ -10,13 +10,23 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/agent"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-const watchdogArmedStalenessRenewIntervalMultiple = 3
+const (
+	watchdogArmedStalenessRenewIntervalMultiple       = 3
+	watchdogArmedStalenessCeilingPollIntervalMultiple = 3
+
+	watchdogArmedStalenessCeiling = agent.DefaultPollInterval * watchdogArmedStalenessCeilingPollIntervalMultiple
+)
 
 func watchdogArmedStalenessWindow(policy v1alpha1.WatchdogPolicy) time.Duration {
-	return policy.RenewInterval.Duration * watchdogArmedStalenessRenewIntervalMultiple
+	window := policy.RenewInterval.Duration * watchdogArmedStalenessRenewIntervalMultiple
+	if window > watchdogArmedStalenessCeiling {
+		return watchdogArmedStalenessCeiling
+	}
+	return window
 }
 
 func watchdogArmedFresh(node *corev1.Node, now time.Time, staleAfter time.Duration) bool {
@@ -24,8 +34,8 @@ func watchdogArmedFresh(node *corev1.Node, now time.Time, staleAfter time.Durati
 	if !annotated {
 		return false
 	}
-	armedAt, err := time.Parse(time.RFC3339, raw)
-	if err != nil {
+	armedAt, readable := provider.ParseArmedValue(raw)
+	if !readable {
 		return false
 	}
 	return now.Sub(armedAt) < staleAfter

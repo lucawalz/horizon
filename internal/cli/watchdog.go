@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"time"
-
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -10,11 +8,10 @@ import (
 )
 
 const (
-	defaultTokenFile    = "/etc/horizon/token"
-	defaultKubeconfig   = "/var/lib/rancher/k3s/agent/kubelet.kubeconfig"
-	defaultPollInterval = 15 * time.Second
-	defaultMetadataURL  = "http://169.254.169.254/hetzner/v1/metadata"
-	defaultStateDir     = "/run/horizon"
+	defaultTokenFile   = "/etc/horizon/token"
+	defaultKubeconfig  = "/var/lib/rancher/k3s/agent/kubelet.kubeconfig"
+	defaultMetadataURL = "http://169.254.169.254/hetzner/v1/metadata"
+	defaultStateDir    = "/run/horizon"
 )
 
 func NewWatchdogCmdForTest() *cobra.Command { return newWatchdogCmd() }
@@ -41,10 +38,10 @@ func newWatchdogCmd() *cobra.Command {
 	flags.StringVar(&opts.TokenPath, "token-file", defaultTokenFile,
 		"File holding the provider token used to delete this server")
 	flags.StringVar(&opts.KubeconfigPath, "kubeconfig", defaultKubeconfig,
-		"Kubelet credential used to read the renewable deadline from this node")
+		"Kubelet credential used to read the renewable deadline and report the armed watchdog on this node")
 	flags.StringVar(&opts.NodeName, "node-name", "",
 		"Server and node to act on, defaulting to the hostname reported by the metadata service")
-	flags.DurationVar(&opts.PollInterval, "poll-interval", defaultPollInterval,
+	flags.DurationVar(&opts.PollInterval, "poll-interval", agent.DefaultPollInterval,
 		"Interval between deadline checks")
 	flags.StringVar(&opts.MetadataBaseURL, "metadata-url", defaultMetadataURL,
 		"Base URL of the instance metadata service")

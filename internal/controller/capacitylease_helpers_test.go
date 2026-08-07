@@ -311,7 +311,7 @@ func (h *harness) armNode(name string, at time.Time) {
 	if node.Annotations == nil {
 		node.Annotations = map[string]string{}
 	}
-	node.Annotations[provider.WatchdogArmedAnnotationKey] = at.UTC().Format(time.RFC3339)
+	node.Annotations[provider.WatchdogArmedAnnotationKey] = provider.FormatArmed(at)
 	if _, err := h.kube.CoreV1().Nodes().Update(h.t.Context(), node, metav1.UpdateOptions{}); err != nil {
 		h.t.Fatalf("arm node %q: %v", name, err)
 	}
