@@ -3,7 +3,7 @@ module github.com/lucawalz/horizon
 go 1.26.4
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/hetznercloud/hcloud-go/v2 v2.47.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
