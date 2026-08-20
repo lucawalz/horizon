@@ -62,7 +62,7 @@ func cacheOptions() cache.Options {
 	}
 }
 
-func New(restConfig *rest.Config, opts Options) (ctrl.Manager, catalogue.Reader, error) {
+func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:  Scheme(),
 		Cache:   cacheOptions(),
@@ -76,24 +76,24 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, catalogue.Reader,
 		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("build manager: %w", err)
+		return nil, fmt.Errorf("build manager: %w", err)
 	}
 
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
-		return nil, nil, fmt.Errorf("add liveness check: %w", err)
+		return nil, fmt.Errorf("add liveness check: %w", err)
 	}
 	if err := mgr.AddReadyzCheck("cache-sync", cacheSyncChecker(mgr)); err != nil {
-		return nil, nil, fmt.Errorf("add readiness check: %w", err)
+		return nil, fmt.Errorf("add readiness check: %w", err)
 	}
 
 	kube, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build kubernetes clientset: %w", err)
+		return nil, fmt.Errorf("build kubernetes clientset: %w", err)
 	}
 
 	providers, err := controller.NewProviderFactory(kube)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	leases := &controller.CapacityLeaseReconciler{
@@ -103,7 +103,7 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, catalogue.Reader,
 		Recorder: mgr.GetEventRecorder(controller.CapacityLeaseControllerName),
 	}
 	if err := leases.SetupWithManager(mgr); err != nil {
-		return nil, nil, fmt.Errorf("set up capacity lease controller: %w", err)
+		return nil, fmt.Errorf("set up capacity lease controller: %w", err)
 	}
 
 	orphans := &controller.OrphanReconciler{
@@ -111,33 +111,31 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, catalogue.Reader,
 		Provider: providers,
 	}
 	if err := orphans.SetupWithManager(mgr); err != nil {
-		return nil, nil, fmt.Errorf("set up orphan controller: %w", err)
+		return nil, fmt.Errorf("set up orphan controller: %w", err)
 	}
 
-	instanceTypes, err := addCatalogue(mgr, kube)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return mgr, instanceTypes, nil
-}
-
-func addCatalogue(mgr ctrl.Manager, kube kubernetes.Interface) (catalogue.Reader, error) {
-	listers, err := controller.NewCatalogueFactory(kube)
-	if err != nil {
+	if err := addCatalogue(mgr, kube); err != nil {
 		return nil, err
 	}
 
-	cache := catalogue.NewCache()
+	return mgr, nil
+}
+
+func addCatalogue(mgr ctrl.Manager, kube kubernetes.Interface) error {
+	listers, err := controller.NewCatalogueFactory(kube)
+	if err != nil {
+		return err
+	}
+
 	refresher := &catalogue.Refresher{
 		Client: mgr.GetClient(),
 		Lister: listers,
-		Cache:  cache,
+		Cache:  catalogue.NewCache(),
 	}
 	if err := refresher.SetupWithManager(mgr); err != nil {
-		return nil, fmt.Errorf("set up catalogue refresher: %w", err)
+		return fmt.Errorf("set up catalogue refresher: %w", err)
 	}
-	return cache, nil
+	return nil
 }
 
 func cacheSyncChecker(mgr ctrl.Manager) healthz.Checker {
@@ -157,7 +155,7 @@ func Run(ctx context.Context, opts Options) error {
 		return fmt.Errorf("resolve kubernetes config: %w", err)
 	}
 
-	mgr, _, err := New(restConfig, opts)
+	mgr, err := New(restConfig, opts)
 	if err != nil {
 		return err
 	}
