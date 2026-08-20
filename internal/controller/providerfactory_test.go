@@ -531,3 +531,75 @@ func TestNewProviderFactoryRefusesToBuildWithoutANamespace(t *testing.T) {
 		t.Errorf("error %v does not wrap the namespace lookup failure", err)
 	}
 }
+
+func catalogueSpec() *v1alpha1.HetznerProviderSpec {
+	return hetznerSpec(func(spec *v1alpha1.HetznerProviderSpec) {
+		spec.CloudInitSecretRef = secretKeyRef(sentinelInitName, "user-data")
+		spec.NodeCredentialSecretRef = nil
+	})
+}
+
+func TestNewCatalogueFactoryNeedsNothingBeyondTheToken(t *testing.T) {
+	t.Setenv(podNamespaceEnvVar, testOperatorNS)
+	cfg := &v1alpha1.ProviderConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "hetzner"},
+		Spec:       v1alpha1.ProviderConfigSpec{Type: v1alpha1.ProviderTypeHetzner, Hetzner: catalogueSpec()},
+	}
+
+	provisioning, err := NewProviderFactory(newKubeClient(credentialSecrets()...))
+	if err != nil {
+		t.Fatalf("building the provider factory failed: %v", err)
+	}
+	if _, err := provisioning(t.Context(), cfg); err == nil {
+		t.Fatal("the fixture no longer breaks cloud-init rendering, so it proves nothing")
+	}
+
+	factory, err := NewCatalogueFactory(newKubeClient(credentialSecrets()...))
+	if err != nil {
+		t.Fatalf("building the catalogue factory failed: %v", err)
+	}
+	lister, err := factory(t.Context(), cfg)
+	assertErrorMessage(t, err, "")
+	if lister == nil {
+		t.Fatal("no lister returned, so the catalogue could never be filled")
+	}
+}
+
+func TestNewCatalogueFactoryReportsAMissingToken(t *testing.T) {
+	t.Setenv(podNamespaceEnvVar, testOperatorNS)
+	factory, err := NewCatalogueFactory(newKubeClient())
+	if err != nil {
+		t.Fatalf("building the catalogue factory failed: %v", err)
+	}
+
+	_, err = factory(t.Context(), &v1alpha1.ProviderConfig{
+		Spec: v1alpha1.ProviderConfigSpec{Type: v1alpha1.ProviderTypeHetzner, Hetzner: hetznerSpec(nil)},
+	})
+	assertErrorMessage(t, err, `read secret horizon-system/hcloud: secrets "hcloud" not found`)
+}
+
+func TestNewCatalogueFactoryRejectsAnUnknownProviderType(t *testing.T) {
+	t.Setenv(podNamespaceEnvVar, testOperatorNS)
+	factory, err := NewCatalogueFactory(newKubeClient())
+	if err != nil {
+		t.Fatalf("building the catalogue factory failed: %v", err)
+	}
+
+	_, err = factory(t.Context(), &v1alpha1.ProviderConfig{
+		Spec: v1alpha1.ProviderConfigSpec{Type: "aws"},
+	})
+	assertErrorMessage(t, err, `unsupported provider type "aws"`)
+}
+
+func TestNewCatalogueFactoryRefusesToBuildWithoutANamespace(t *testing.T) {
+	t.Setenv(podNamespaceEnvVar, "")
+	setServiceAccountNSPath(t, filepath.Join(t.TempDir(), namespaceFileName))
+
+	factory, err := NewCatalogueFactory(newKubeClient(credentialSecrets()...))
+	if err == nil {
+		t.Fatal("a factory was built without a resolvable namespace")
+	}
+	if factory != nil {
+		t.Error("a factory was returned alongside an error")
+	}
+}

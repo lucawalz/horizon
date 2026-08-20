@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 	"github.com/lucawalz/horizon/internal/version"
@@ -35,6 +36,36 @@ func NewProviderFactory(kc kubernetes.Interface) (ProviderFactory, error) {
 			return nil, fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
 		}
 	}, nil
+}
+
+func NewCatalogueFactory(kc kubernetes.Interface) (catalogue.ListerFactory, error) {
+	namespace, err := operatorNamespace()
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (catalogue.Lister, error) {
+		switch cfg.Spec.Type {
+		case v1alpha1.ProviderTypeHetzner:
+			return hetznerCatalogue(ctx, kc, namespace, cfg.Spec.Hetzner)
+		default:
+			return nil, fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
+		}
+	}, nil
+}
+
+func hetznerCatalogue(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec) (catalogue.Lister, error) {
+	if spec == nil {
+		return nil, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
+	}
+	token, err := secretValue(ctx, kc, namespace, "credentialsSecretRef", spec.CredentialsSecretRef)
+	if err != nil {
+		return nil, err
+	}
+	client, err := hetzner.NewTokenClient(token)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 func nodeCredentialConfigured(spec v1alpha1.ProviderConfigSpec) bool {
