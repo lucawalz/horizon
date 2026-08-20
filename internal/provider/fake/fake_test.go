@@ -20,6 +20,9 @@ func clock() func() time.Time {
 func TestFakeSatisfiesTheProviderContract(t *testing.T) {
 	conformance.Run(t, func(t *testing.T) conformance.Fixture {
 		p := fake.New()
+		p.SeedInstanceType(provider.InstanceType{Name: "type-b", Region: "fake-a"})
+		p.SeedInstanceType(provider.InstanceType{Name: "type-a", Region: "fake-a"})
+		p.SeedInstanceType(provider.InstanceType{Name: "type-c", Region: "fake-b"})
 		return conformance.Fixture{
 			Provider: p,
 			NewRequest: func(name string) provider.CreateRequest {
@@ -29,6 +32,8 @@ func TestFakeSatisfiesTheProviderContract(t *testing.T) {
 				p.Seed(provider.Instance{Name: name})
 				return nil
 			},
+			InstanceTypeRegion:   "fake-a",
+			ExcludedInstanceType: "type-c",
 		}
 	})
 }
@@ -178,6 +183,28 @@ func TestSeededInstanceIsNotLedgered(t *testing.T) {
 
 	if events := p.Ledger.Events(); len(events) != 0 {
 		t.Errorf("events = %v, want seeding to stay off the ledger", events)
+	}
+}
+
+func TestListInstanceTypesRejectsAnEmptyRegion(t *testing.T) {
+	p := fake.New()
+	if _, err := p.ListInstanceTypes(context.Background(), ""); err == nil {
+		t.Fatal("ListInstanceTypes must reject an empty region")
+	}
+}
+
+func TestListInstanceTypesFiltersByRegionAndSortsByName(t *testing.T) {
+	p := fake.New()
+	p.SeedInstanceType(provider.InstanceType{Name: "type-b", Region: "fake-a"})
+	p.SeedInstanceType(provider.InstanceType{Name: "type-a", Region: "fake-a"})
+	p.SeedInstanceType(provider.InstanceType{Name: "type-c", Region: "fake-b"})
+
+	got, err := p.ListInstanceTypes(context.Background(), "fake-a")
+	if err != nil {
+		t.Fatalf("ListInstanceTypes: %v", err)
+	}
+	if len(got) != 2 || got[0].Name != "type-a" || got[1].Name != "type-b" {
+		t.Fatalf("got %+v, want [type-a type-b] sorted by name", got)
 	}
 }
 

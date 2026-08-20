@@ -64,6 +64,7 @@ type Instance struct {
 	Name       string
 	ProviderID string
 	Region     string
+	Size       string
 	State      InstanceState
 	Labels     map[string]string
 	CreatedAt  time.Time
@@ -77,12 +78,31 @@ type CreateRequest struct {
 	UserData string
 }
 
+type Rate struct {
+	Amount   float64
+	Currency string
+}
+
+type InstanceType struct {
+	Name         string
+	Architecture string
+	CPUType      string
+	CPUCores     int
+	MemoryBytes  int64
+	DiskBytes    int64
+	Region       string
+	Available    bool
+	Deprecated   bool
+	HourlyRate   Rate
+}
+
 type Provider interface {
 	Capabilities() Capabilities
 	Create(ctx context.Context, req CreateRequest) (Instance, error)
 	Get(ctx context.Context, name string) (Instance, error)
 	List(ctx context.Context, selector map[string]string) ([]Instance, error)
 	Delete(ctx context.Context, name string) error
+	ListInstanceTypes(ctx context.Context, region string) ([]InstanceType, error)
 }
 
 func ConfirmAbsent(ctx context.Context, p Provider, name string) (bool, error) {

@@ -143,6 +143,10 @@ func filterByName(servers []*hcloudgo.Server, name string) []*hcloudgo.Server {
 }
 
 func newFake(spec ServerSpec, images []*hcloudgo.Image, servers ...*hcloudgo.Server) (*Client, *fakeAPI) {
+	return newFakeWithServerTypes(spec, images, &fakeServerTypes{}, servers...)
+}
+
+func newFakeWithServerTypes(spec ServerSpec, images []*hcloudgo.Image, serverTypes *fakeServerTypes, servers ...*hcloudgo.Server) (*Client, *fakeAPI) {
 	f := &fakeAPI{
 		servers: servers,
 		images:  images,
@@ -157,7 +161,7 @@ func newFake(spec ServerSpec, images []*hcloudgo.Image, servers ...*hcloudgo.Ser
 			f.nextID = s.ID
 		}
 	}
-	return NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{f}, fakeFirewallAPI{f}, &fakeServerTypes{}, spec), f
+	return NewClientWithAPIs(f, fakeImageAPI{f}, fakeSSHKeyAPI{f}, fakeFirewallAPI{f}, serverTypes, spec), f
 }
 
 func server(id int64, name string, labels map[string]string) *hcloudgo.Server {
@@ -523,6 +527,22 @@ func TestCreateWithoutFirewallsAttachesNone(t *testing.T) {
 	}
 	if len(f.created[0].Firewalls) != 0 {
 		t.Errorf("firewalls = %+v, want none", f.created[0].Firewalls)
+	}
+}
+
+func TestToInstancePopulatesSizeFromServerType(t *testing.T) {
+	s := &hcloudgo.Server{ID: 1, Name: "reserved-abc", ServerType: &hcloudgo.ServerType{Name: "cpx22"}, Status: hcloudgo.ServerStatusRunning}
+	got := toInstance(s)
+	if got.Size != "cpx22" {
+		t.Errorf("Size = %q, want cpx22", got.Size)
+	}
+}
+
+func TestToInstanceLeavesSizeEmptyWithoutAServerType(t *testing.T) {
+	s := &hcloudgo.Server{ID: 1, Name: "reserved-abc", Status: hcloudgo.ServerStatusRunning}
+	got := toInstance(s)
+	if got.Size != "" {
+		t.Errorf("Size = %q, want empty when the server carries no type", got.Size)
 	}
 }
 

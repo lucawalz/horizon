@@ -28,6 +28,7 @@ type ImageAPI interface {
 
 type ServerTypeAPI interface {
 	GetByName(ctx context.Context, name string) (*hcloudgo.ServerType, *hcloudgo.Response, error)
+	All(ctx context.Context) ([]*hcloudgo.ServerType, error)
 }
 
 type SSHKeyAPI interface {

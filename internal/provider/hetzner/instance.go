@@ -60,10 +60,15 @@ func toInstance(s *hcloudgo.Server) provider.Instance {
 	if s.Location != nil {
 		region = s.Location.Name
 	}
+	size := ""
+	if s.ServerType != nil {
+		size = s.ServerType.Name
+	}
 	return provider.Instance{
 		Name:       s.Name,
 		ProviderID: ProviderIDPrefix + strconv.FormatInt(s.ID, 10),
 		Region:     region,
+		Size:       size,
 		State:      instanceState(s.Status),
 		Labels:     maps.Clone(s.Labels),
 		CreatedAt:  s.Created,

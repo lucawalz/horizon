@@ -19,13 +19,14 @@ type Provider struct {
 	FailDelete             func(name string) error
 	Ledger                 *Ledger
 
-	now         func() time.Time
-	mu          sync.Mutex
-	instances   map[string]provider.Instance
-	nextID      int64
-	createCalls []provider.CreateRequest
-	getCalls    []string
-	deleteCalls []string
+	now           func() time.Time
+	mu            sync.Mutex
+	instances     map[string]provider.Instance
+	instanceTypes []provider.InstanceType
+	nextID        int64
+	createCalls   []provider.CreateRequest
+	getCalls      []string
+	deleteCalls   []string
 }
 
 var _ provider.Provider = (*Provider)(nil)
@@ -203,4 +204,27 @@ func cloneInstance(inst provider.Instance) provider.Instance {
 func cloneRequest(req provider.CreateRequest) provider.CreateRequest {
 	req.Labels = maps.Clone(req.Labels)
 	return req
+}
+
+func (p *Provider) SeedInstanceType(it provider.InstanceType) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.instanceTypes = append(p.instanceTypes, it)
+}
+
+func (p *Provider) ListInstanceTypes(_ context.Context, region string) ([]provider.InstanceType, error) {
+	if region == "" {
+		return nil, fmt.Errorf("fake: instance type region is required")
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]provider.InstanceType, 0, len(p.instanceTypes))
+	for _, it := range p.instanceTypes {
+		if it.Region != region {
+			continue
+		}
+		out = append(out, it)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
 }

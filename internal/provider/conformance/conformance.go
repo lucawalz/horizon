@@ -3,6 +3,7 @@ package conformance
 import (
 	"errors"
 	"maps"
+	"sort"
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/provider"
@@ -19,6 +20,9 @@ type Fixture struct {
 	Provider      provider.Provider
 	NewRequest    func(name string) provider.CreateRequest
 	SeedUnmanaged func(name string) error
+
+	InstanceTypeRegion   string
+	ExcludedInstanceType string
 }
 
 type Factory func(t *testing.T) Fixture
@@ -40,6 +44,10 @@ func Run(t *testing.T, newFixture Factory) {
 		{"DeleteIsIdempotent", deleteIsIdempotent},
 		{"DeleteAbsentInstanceSucceeds", deleteAbsentInstanceSucceeds},
 		{"DeleteRefusesUnmanagedInstance", deleteRefusesUnmanagedInstance},
+		{"ListInstanceTypesRejectsEmptyRegion", listInstanceTypesRejectsEmptyRegion},
+		{"ListInstanceTypesSortsResultsByName", listInstanceTypesSortsResultsByName},
+		{"ListInstanceTypesEveryRowCarriesTheRequestedRegion", listInstanceTypesEveryRowCarriesTheRequestedRegion},
+		{"ListInstanceTypesExcludesAnUnavailableOffering", listInstanceTypesExcludesAnUnavailableOffering},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,6 +216,62 @@ func deleteRefusesUnmanagedInstance(t *testing.T, f Fixture) {
 	}
 	if _, err := f.Provider.Get(t.Context(), unmanagedName); err != nil {
 		t.Fatalf("a refused Delete must leave the instance in place, Get = %v", err)
+	}
+}
+
+func requireInstanceTypeRegion(t *testing.T, f Fixture) {
+	t.Helper()
+	if f.InstanceTypeRegion == "" {
+		t.Fatal("conformance fixture needs InstanceTypeRegion")
+	}
+}
+
+func listInstanceTypesRejectsEmptyRegion(t *testing.T, f Fixture) {
+	if _, err := f.Provider.ListInstanceTypes(t.Context(), ""); err == nil {
+		t.Fatal("ListInstanceTypes must reject an empty region")
+	}
+}
+
+func listInstanceTypesSortsResultsByName(t *testing.T, f Fixture) {
+	requireInstanceTypeRegion(t, f)
+	got, err := f.Provider.ListInstanceTypes(t.Context(), f.InstanceTypeRegion)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes: %v", err)
+	}
+	if len(got) < 2 {
+		t.Fatalf("fixture must offer at least two instance types in %q to prove sorting, got %d", f.InstanceTypeRegion, len(got))
+	}
+	if !sort.SliceIsSorted(got, func(i, j int) bool { return got[i].Name < got[j].Name }) {
+		t.Errorf("ListInstanceTypes = %+v, want sorted by name", got)
+	}
+}
+
+func listInstanceTypesEveryRowCarriesTheRequestedRegion(t *testing.T, f Fixture) {
+	requireInstanceTypeRegion(t, f)
+	got, err := f.Provider.ListInstanceTypes(t.Context(), f.InstanceTypeRegion)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes: %v", err)
+	}
+	for _, it := range got {
+		if it.Region != f.InstanceTypeRegion {
+			t.Errorf("row %+v carries region %q, want %q", it, it.Region, f.InstanceTypeRegion)
+		}
+	}
+}
+
+func listInstanceTypesExcludesAnUnavailableOffering(t *testing.T, f Fixture) {
+	requireInstanceTypeRegion(t, f)
+	if f.ExcludedInstanceType == "" {
+		t.Fatal("conformance fixture needs ExcludedInstanceType")
+	}
+	got, err := f.Provider.ListInstanceTypes(t.Context(), f.InstanceTypeRegion)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes: %v", err)
+	}
+	for _, it := range got {
+		if it.Name == f.ExcludedInstanceType {
+			t.Errorf("ListInstanceTypes = %+v, want %q excluded", got, f.ExcludedInstanceType)
+		}
 	}
 }
 

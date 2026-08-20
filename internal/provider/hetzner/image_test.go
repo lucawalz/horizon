@@ -21,8 +21,10 @@ func (f *fakeImages) AllWithOpts(_ context.Context, opts hcloudgo.ImageListOpts)
 }
 
 type fakeServerTypes struct {
-	arch hcloudgo.Architecture
-	err  error
+	arch   hcloudgo.Architecture
+	err    error
+	all    []*hcloudgo.ServerType
+	allErr error
 }
 
 func (f *fakeServerTypes) GetByName(_ context.Context, _ string) (*hcloudgo.ServerType, *hcloudgo.Response, error) {
@@ -30,6 +32,13 @@ func (f *fakeServerTypes) GetByName(_ context.Context, _ string) (*hcloudgo.Serv
 		return nil, nil, f.err
 	}
 	return &hcloudgo.ServerType{Architecture: f.arch}, nil, nil
+}
+
+func (f *fakeServerTypes) All(_ context.Context) ([]*hcloudgo.ServerType, error) {
+	if f.allErr != nil {
+		return nil, f.allErr
+	}
+	return f.all, nil
 }
 
 func TestResolveImage(t *testing.T) {
