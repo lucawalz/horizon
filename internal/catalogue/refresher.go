@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -70,7 +71,11 @@ func (r *Refresher) Counts() RefreshCounts {
 func (r *Refresher) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var cfg v1alpha1.ProviderConfig
 	if err := r.Client.Get(ctx, req.NamespacedName, &cfg); err != nil {
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+		if apierrors.IsNotFound(err) {
+			r.Cache.forget(req.Name)
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, r.refresh(ctx, &cfg)
 }

@@ -78,6 +78,12 @@ func (c *Cache) store(config string, types []provider.InstanceType) {
 	c.snapshots[config] = snapshot{types: slices.Clone(types), fetchedAt: c.now()}
 }
 
+func (c *Cache) forget(config string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.snapshots, config)
+}
+
 func (c *Cache) retain(configs []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -225,16 +225,25 @@ func TestReconcileRefreshesOnlyTheProviderConfigItIsGiven(t *testing.T) {
 	}
 }
 
-func TestReconcileIgnoresAProviderConfigThatIsGone(t *testing.T) {
+func TestReconcileEvictsAProviderConfigThatIsGone(t *testing.T) {
+	cache := NewCache()
 	refresher := &Refresher{
 		Client: apiClient(),
 		Lister: staticFactory(seededProvider(regionA)),
-		Cache:  NewCache(),
+		Cache:  cache,
 	}
+	cache.store(testConfig, []provider.InstanceType{instanceType("small", regionA)})
 
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: testConfig}}
 	if _, err := refresher.Reconcile(t.Context(), req); err != nil {
-		t.Errorf("Reconcile of a deleted provider config = %v, want no error", err)
+		t.Fatalf("Reconcile of a deleted provider config = %v, want no error", err)
+	}
+
+	if _, err := cache.List(testConfig, regionA); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("List of a deleted provider config = %v, want %v", err, ErrUnavailable)
+	}
+	if _, ok := cache.Age(testConfig); ok {
+		t.Error("Age must report no snapshot once the provider config is gone")
 	}
 }
 
