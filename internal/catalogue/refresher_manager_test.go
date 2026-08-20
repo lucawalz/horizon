@@ -10,18 +10,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
 
 const (
-	leaderElectionID        = "horizon-catalogue-test"
-	leaderElectionNamespace = "default"
-	otherReplica            = "another-replica"
+	leaderElectionID               = "horizon-catalogue-test"
+	leaderElectionNamespace        = "default"
+	otherReplica                   = "another-replica"
+	managedInterval                = 20 * time.Millisecond
+	refreshesTheWatchCannotExplain = 5
 )
 
-func TestTheCatalogueIsFilledAndRefreshedByAReplicaThatHoldsNoLease(t *testing.T) {
+func TestTheControllerRefreshesProviderConfigEventsWithoutTheLease(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
 	holdTheLeaderLease(t)
@@ -34,12 +37,32 @@ func TestTheCatalogueIsFilledAndRefreshedByAReplicaThatHoldsNoLease(t *testing.T
 	refresher := &Refresher{Lister: staticFactory(prov), Cache: cache}
 	startManagerWith(t, refresher)
 
-	waitFor(t, func() bool { return offers(cache, config.Name, "small") }, "the catalogue to fill on start")
+	waitFor(t, func() bool { return offers(cache, config.Name, "small") }, "the create event to fill the catalogue")
 
 	prov.SeedInstanceType(instanceType("large", regionA))
 	bumpGeneration(t, config)
 
 	waitFor(t, func() bool { return offers(cache, config.Name, "large") }, "a generation change to refresh out of band")
+
+	assertLeaseStillHeldElsewhere(t)
+}
+
+func TestTheManagerTicksTheRefresherWithoutTheLease(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	holdTheLeaderLease(t)
+	createProviderConfig(t, acceptedProviderConfig(testConfig, 8*time.Hour))
+
+	refresher := &Refresher{
+		Lister:   staticFactory(seededProvider(regionA)),
+		Cache:    NewCache(),
+		Interval: managedInterval,
+	}
+	startManagerWith(t, refresher)
+
+	waitFor(t, func() bool {
+		return refresher.Counts().Success >= refreshesTheWatchCannotExplain
+	}, "the refresher to keep refreshing while no provider config changes")
 
 	assertLeaseStillHeldElsewhere(t)
 }
@@ -104,6 +127,7 @@ func bumpGeneration(t *testing.T, config *v1alpha1.ProviderConfig) {
 
 func startManagerWith(t *testing.T, refresher *Refresher) {
 	t.Helper()
+	reusedAcrossTests := true
 	mgr, err := ctrl.NewManager(testEnv.Config, ctrl.Options{
 		Scheme:                  clusterScheme(),
 		Metrics:                 metricsserver.Options{BindAddress: "0"},
@@ -111,6 +135,7 @@ func startManagerWith(t *testing.T, refresher *Refresher) {
 		LeaderElection:          true,
 		LeaderElectionID:        leaderElectionID,
 		LeaderElectionNamespace: leaderElectionNamespace,
+		Controller:              ctrlconfig.Controller{SkipNameValidation: &reusedAcrossTests},
 	})
 	if err != nil {
 		t.Fatalf("build manager: %v", err)
