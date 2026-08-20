@@ -77,7 +77,7 @@ The Service port is named `metrics`, and a ServiceMonitor scraping the controlle
 | `serviceAccount.name` | `""` | ServiceAccount name; defaults to the release full name. |
 | `serviceAccount.annotations` | `{}` | ServiceAccount annotations. |
 
-The ClusterRole grants full access to `capacityleases` and `providerconfigs` including their status and finalizer subresources; get, list, watch, patch, update, and delete on nodes; get, list, and watch on pods; create on pod evictions; create and patch on events; and get, list, watch, and patch on Deployments and StatefulSets. The namespaced Role grants read access to Secrets and, when leader election is on, the Lease permissions it needs.
+The ClusterRole grants full access to `capacityleases` and `providerconfigs` including their status and finalizer subresources; get, list, watch, patch, update, and delete on nodes; get, list, and watch on pods; create on pod evictions; create and patch on events in both the core and `events.k8s.io` API groups; and get, list, watch, and patch on Deployments and StatefulSets. The namespaced Role grants read access to Secrets and, when leader election is on, the Lease permissions it needs.
 
 ### Scheduling and resources
 
