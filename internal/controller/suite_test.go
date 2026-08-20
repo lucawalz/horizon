@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -12,52 +11,24 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/testenv"
 )
 
-const (
-	envtestAssetsVar = "KUBEBUILDER_ASSETS"
-	envtestBinRoot   = "../../bin/k8s"
-	crdBasesDir      = "../../config/crd/bases"
-	envtestMissing   = "envtest binaries not installed; run `make envtest` or set " + envtestAssetsVar
-)
-
-var (
-	testClient client.Client
-	skipReason string
-)
+var testEnv *testenv.Environment
 
 func TestMain(m *testing.M) {
-	binDir, ok := envtestBinaryDir()
-	if !ok {
-		skipReason = envtestMissing
-		os.Exit(m.Run())
-	}
-
-	testEnv := &envtest.Environment{
-		CRDDirectoryPaths:     []string{crdBasesDir},
-		ErrorIfCRDPathMissing: true,
-		BinaryAssetsDirectory: binDir,
-	}
-
-	restConfig, err := testEnv.Start()
+	env, err := testenv.Start(testScheme())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start envtest: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-
-	testClient, err = client.New(restConfig, client.Options{Scheme: testScheme()})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build client: %v\n", err)
-		_ = testEnv.Stop()
-		os.Exit(1)
-	}
+	testEnv = env
 
 	code := m.Run()
 
-	if err := testEnv.Stop(); err != nil {
+	if err := env.Stop(); err != nil {
 		fmt.Fprintf(os.Stderr, "stop envtest: %v\n", err)
 	}
 	os.Exit(code)
@@ -69,28 +40,10 @@ func testScheme() *runtime.Scheme {
 	return s
 }
 
-func envtestBinaryDir() (string, bool) {
-	if os.Getenv(envtestAssetsVar) != "" {
-		return "", true
-	}
-	entries, err := os.ReadDir(envtestBinRoot)
-	if err != nil {
-		return "", false
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			return filepath.Join(envtestBinRoot, entry.Name()), true
-		}
-	}
-	return "", false
-}
-
 func apiServerClient(t *testing.T) client.Client {
 	t.Helper()
-	if skipReason != "" {
-		t.Skip(skipReason)
-	}
-	return testClient
+	testEnv.SkipUnlessRunning(t)
+	return testEnv.Client
 }
 
 var nonNameCharacters = regexp.MustCompile(`[^a-z0-9]+`)
