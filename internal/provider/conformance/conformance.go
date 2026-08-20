@@ -21,8 +21,9 @@ type Fixture struct {
 	NewRequest    func(name string) provider.CreateRequest
 	SeedUnmanaged func(name string) error
 
-	InstanceTypeRegion   string
-	ExcludedInstanceType string
+	InstanceTypeRegion         string
+	ExcludedInstanceType       string
+	AvailableFalseInstanceType string
 }
 
 type Factory func(t *testing.T) Fixture
@@ -47,7 +48,8 @@ func Run(t *testing.T, newFixture Factory) {
 		{"ListInstanceTypesRejectsEmptyRegion", listInstanceTypesRejectsEmptyRegion},
 		{"ListInstanceTypesSortsResultsByName", listInstanceTypesSortsResultsByName},
 		{"ListInstanceTypesEveryRowCarriesTheRequestedRegion", listInstanceTypesEveryRowCarriesTheRequestedRegion},
-		{"ListInstanceTypesExcludesAnUnavailableOffering", listInstanceTypesExcludesAnUnavailableOffering},
+		{"ListInstanceTypesExcludesAnOfferingNotInTheRegion", listInstanceTypesExcludesAnOfferingNotInTheRegion},
+		{"ListInstanceTypesIncludesAnOfferedButUnavailableRow", listInstanceTypesIncludesAnOfferedButUnavailableRow},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -259,7 +261,7 @@ func listInstanceTypesEveryRowCarriesTheRequestedRegion(t *testing.T, f Fixture)
 	}
 }
 
-func listInstanceTypesExcludesAnUnavailableOffering(t *testing.T, f Fixture) {
+func listInstanceTypesExcludesAnOfferingNotInTheRegion(t *testing.T, f Fixture) {
 	requireInstanceTypeRegion(t, f)
 	if f.ExcludedInstanceType == "" {
 		t.Fatal("conformance fixture needs ExcludedInstanceType")
@@ -273,6 +275,26 @@ func listInstanceTypesExcludesAnUnavailableOffering(t *testing.T, f Fixture) {
 			t.Errorf("ListInstanceTypes = %+v, want %q excluded", got, f.ExcludedInstanceType)
 		}
 	}
+}
+
+func listInstanceTypesIncludesAnOfferedButUnavailableRow(t *testing.T, f Fixture) {
+	requireInstanceTypeRegion(t, f)
+	if f.AvailableFalseInstanceType == "" {
+		t.Fatal("conformance fixture needs AvailableFalseInstanceType")
+	}
+	got, err := f.Provider.ListInstanceTypes(t.Context(), f.InstanceTypeRegion)
+	if err != nil {
+		t.Fatalf("ListInstanceTypes: %v", err)
+	}
+	for _, it := range got {
+		if it.Name == f.AvailableFalseInstanceType {
+			if it.Available {
+				t.Errorf("row %+v has Available = true, want false", it)
+			}
+			return
+		}
+	}
+	t.Errorf("ListInstanceTypes = %+v, want %q present but flagged unavailable, not excluded", got, f.AvailableFalseInstanceType)
 }
 
 func containsName(instances []provider.Instance, name string) bool {

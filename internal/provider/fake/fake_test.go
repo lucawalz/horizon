@@ -20,9 +20,10 @@ func clock() func() time.Time {
 func TestFakeSatisfiesTheProviderContract(t *testing.T) {
 	conformance.Run(t, func(t *testing.T) conformance.Fixture {
 		p := fake.New()
-		p.SeedInstanceType(provider.InstanceType{Name: "type-b", Region: "fake-a"})
-		p.SeedInstanceType(provider.InstanceType{Name: "type-a", Region: "fake-a"})
-		p.SeedInstanceType(provider.InstanceType{Name: "type-c", Region: "fake-b"})
+		p.SeedInstanceType(provider.InstanceType{Name: "type-b", Region: "fake-a", Available: true})
+		p.SeedInstanceType(provider.InstanceType{Name: "type-a", Region: "fake-a", Available: true})
+		p.SeedInstanceType(provider.InstanceType{Name: "type-c", Region: "fake-b", Available: true})
+		p.SeedInstanceType(provider.InstanceType{Name: "type-d", Region: "fake-a", Available: false})
 		return conformance.Fixture{
 			Provider: p,
 			NewRequest: func(name string) provider.CreateRequest {
@@ -32,8 +33,9 @@ func TestFakeSatisfiesTheProviderContract(t *testing.T) {
 				p.Seed(provider.Instance{Name: name})
 				return nil
 			},
-			InstanceTypeRegion:   "fake-a",
-			ExcludedInstanceType: "type-c",
+			InstanceTypeRegion:         "fake-a",
+			ExcludedInstanceType:       "type-c",
+			AvailableFalseInstanceType: "type-d",
 		}
 	})
 }

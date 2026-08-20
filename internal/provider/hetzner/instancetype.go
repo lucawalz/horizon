@@ -7,11 +7,12 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/go-logr/logr"
 	hcloudgo "github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-const bytesPerGiB int64 = 1 << 30
+const hetznerBytesPerGB int64 = 1_000_000_000
 
 func (c *Client) ListInstanceTypes(ctx context.Context, region string) ([]provider.InstanceType, error) {
 	if region == "" {
@@ -23,7 +24,7 @@ func (c *Client) ListInstanceTypes(ctx context.Context, region string) ([]provid
 	}
 	out := make([]provider.InstanceType, 0, len(serverTypes))
 	for _, st := range serverTypes {
-		row, offered, err := instanceTypeForRegion(st, region)
+		row, offered, err := instanceTypeForRegion(ctx, st, region)
 		if err != nil {
 			return nil, err
 		}
@@ -36,14 +37,16 @@ func (c *Client) ListInstanceTypes(ctx context.Context, region string) ([]provid
 	return out, nil
 }
 
-func instanceTypeForRegion(st *hcloudgo.ServerType, region string) (provider.InstanceType, bool, error) {
+func instanceTypeForRegion(ctx context.Context, st *hcloudgo.ServerType, region string) (provider.InstanceType, bool, error) {
 	loc, ok := serverTypeLocation(st, region)
 	if !ok {
 		return provider.InstanceType{}, false, nil
 	}
 	pricing, ok := serverTypePricing(st, region)
 	if !ok {
-		return provider.InstanceType{}, false, fmt.Errorf("hetzner: server type %q has no pricing for region %q", st.Name, region)
+		logr.FromContextOrDiscard(ctx).Info("skipping server type with no pricing for region",
+			"serverType", st.Name, "region", region)
+		return provider.InstanceType{}, false, nil
 	}
 	rate, err := netHourlyRate(pricing.Hourly)
 	if err != nil {
@@ -54,8 +57,8 @@ func instanceTypeForRegion(st *hcloudgo.ServerType, region string) (provider.Ins
 		Architecture: string(st.Architecture),
 		CPUType:      string(st.CPUType),
 		CPUCores:     st.Cores,
-		MemoryBytes:  int64(math.Round(float64(st.Memory) * float64(bytesPerGiB))),
-		DiskBytes:    int64(st.Disk) * bytesPerGiB,
+		MemoryBytes:  int64(math.Round(float64(st.Memory) * float64(hetznerBytesPerGB))),
+		DiskBytes:    int64(st.Disk) * hetznerBytesPerGB,
 		Region:       region,
 		Available:    loc.Available,
 		Deprecated:   loc.IsDeprecated(),

@@ -25,6 +25,10 @@ func availableAt(region string) hcloudgo.ServerTypeLocation {
 	return hcloudgo.ServerTypeLocation{Location: &hcloudgo.Location{Name: region}, Available: true}
 }
 
+func unavailableAt(region string) hcloudgo.ServerTypeLocation {
+	return hcloudgo.ServerTypeLocation{Location: &hcloudgo.Location{Name: region}, Available: false}
+}
+
 func withPricing(st *hcloudgo.ServerType, region, net, currency string) *hcloudgo.ServerType {
 	st.Pricings = append(st.Pricings, hcloudgo.ServerTypeLocationPricing{
 		Location: &hcloudgo.Location{Name: region},
@@ -63,6 +67,20 @@ func TestListInstanceTypesMapsNetPriceNotGross(t *testing.T) {
 	}
 }
 
+func TestListInstanceTypesSkipsARowMissingPricingForTheRegion(t *testing.T) {
+	missingPricing := serverType("cpx31", availableAt("hel1"))
+	priced := withPricing(serverType("cpx22", availableAt("hel1")), "hel1", "0.0060", "EUR")
+	c := clientWithServerTypes([]*hcloudgo.ServerType{missingPricing, priced})
+
+	got, err := c.ListInstanceTypes(context.Background(), "hel1")
+	if err != nil {
+		t.Fatalf("ListInstanceTypes: %v, want the row without pricing skipped rather than an error", err)
+	}
+	if len(got) != 1 || got[0].Name != "cpx22" {
+		t.Fatalf("got %+v, want only cpx22, with cpx31 skipped for missing pricing", got)
+	}
+}
+
 func TestListInstanceTypesFailsFastOnAMalformedPrice(t *testing.T) {
 	st := withPricing(serverType("cpx22", availableAt("hel1")), "hel1", "not-a-number", "EUR")
 	c := clientWithServerTypes([]*hcloudgo.ServerType{st})
@@ -88,11 +106,11 @@ func TestListInstanceTypesConvertsCoresMemoryAndDisk(t *testing.T) {
 	if row.CPUCores != 4 {
 		t.Errorf("CPUCores = %d, want 4", row.CPUCores)
 	}
-	if row.MemoryBytes != 8*bytesPerGiB {
-		t.Errorf("MemoryBytes = %d, want %d", row.MemoryBytes, 8*bytesPerGiB)
+	if row.MemoryBytes != 8_000_000_000 {
+		t.Errorf("MemoryBytes = %d, want 8_000_000_000 (Hetzner reports memory in decimal GB)", row.MemoryBytes)
 	}
-	if row.DiskBytes != 80*bytesPerGiB {
-		t.Errorf("DiskBytes = %d, want %d", row.DiskBytes, 80*bytesPerGiB)
+	if row.DiskBytes != 80_000_000_000 {
+		t.Errorf("DiskBytes = %d, want 80_000_000_000 (Hetzner reports disk in decimal GB)", row.DiskBytes)
 	}
 	if row.Architecture != string(hcloudgo.ArchitectureX86) {
 		t.Errorf("Architecture = %q, want %q", row.Architecture, hcloudgo.ArchitectureX86)
@@ -176,8 +194,21 @@ func TestListInstanceTypesWrapsAServerTypeListingError(t *testing.T) {
 	}
 }
 
-func TestBytesPerGiBIsABinaryGibibyte(t *testing.T) {
-	if bytesPerGiB != 1<<30 {
-		t.Fatalf("bytesPerGiB = %d, want 1<<30", bytesPerGiB)
+func TestListInstanceTypesMapsAKnownMachinesMemoryToDecimalGigabytes(t *testing.T) {
+	st := serverType("cpx22", availableAt("hel1"))
+	st.Memory = 4
+	st.Disk = 40
+	st = withPricing(st, "hel1", "0.0060", "EUR")
+	c := clientWithServerTypes([]*hcloudgo.ServerType{st})
+
+	got, err := c.ListInstanceTypes(context.Background(), "hel1")
+	if err != nil {
+		t.Fatalf("ListInstanceTypes: %v", err)
+	}
+	if got[0].MemoryBytes != 4_000_000_000 {
+		t.Errorf("MemoryBytes = %d, want 4_000_000_000 for a machine hcloud reports as 4 GB", got[0].MemoryBytes)
+	}
+	if got[0].DiskBytes != 40_000_000_000 {
+		t.Errorf("DiskBytes = %d, want 40_000_000_000 for a machine hcloud reports as 40 GB", got[0].DiskBytes)
 	}
 }

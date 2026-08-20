@@ -14,6 +14,7 @@ func TestHetznerSatisfiesTheProviderContract(t *testing.T) {
 			withPricing(serverType("cpx31", availableAt("hel1")), "hel1", "0.0090", "EUR"),
 			withPricing(serverType("cpx22", availableAt("hel1")), "hel1", "0.0060", "EUR"),
 			withPricing(serverType("cpx41", availableAt("fsn1")), "fsn1", "0.0180", "EUR"),
+			withPricing(serverType("cpx51", unavailableAt("hel1")), "hel1", "0.0360", "EUR"),
 		}}
 		c, f := newFakeWithServerTypes(provisionableSpec(), poolImage(), serverTypes)
 		return conformance.Fixture{
@@ -26,8 +27,9 @@ func TestHetznerSatisfiesTheProviderContract(t *testing.T) {
 				f.servers = append(f.servers, &hcloudgo.Server{ID: f.nextID, Name: name, Status: hcloudgo.ServerStatusRunning})
 				return nil
 			},
-			InstanceTypeRegion:   "hel1",
-			ExcludedInstanceType: "cpx41",
+			InstanceTypeRegion:         "hel1",
+			ExcludedInstanceType:       "cpx41",
+			AvailableFalseInstanceType: "cpx51",
 		}
 	})
 }
