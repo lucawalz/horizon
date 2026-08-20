@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -45,6 +46,12 @@ func names(types []provider.InstanceType) []string {
 		out = append(out, it.Name)
 	}
 	return out
+}
+
+func TestTheUnavailableReasonMatchesTheMetricLabelValue(t *testing.T) {
+	if ReasonUnavailable != string(metrics.ReasonCatalogueUnavailable) {
+		t.Errorf("ReasonUnavailable = %q, want %q", ReasonUnavailable, metrics.ReasonCatalogueUnavailable)
+	}
 }
 
 func TestListReportsTheCatalogueUnavailableBeforeTheFirstFill(t *testing.T) {
