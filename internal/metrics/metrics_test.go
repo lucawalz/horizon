@@ -1,7 +1,9 @@
 package metrics
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,23 +112,51 @@ func TestRegisteredSurfaceMatchesTheDesignedMetricSet(t *testing.T) {
 	}
 }
 
-func TestEveryRegisteredCollectorIsDocumented(t *testing.T) {
-	descs := make(chan *prometheus.Desc, len(wantFamilies)*2)
-	for _, collector := range registered {
-		collector.Describe(descs)
-	}
-	close(descs)
+func describeAll(collectors []prometheus.Collector) []*prometheus.Desc {
+	descs := make(chan *prometheus.Desc)
+	go func() {
+		defer close(descs)
+		for _, collector := range collectors {
+			collector.Describe(descs)
+		}
+	}()
 
-	described := 0
-	for range descs {
-		described++
+	var described []*prometheus.Desc
+	for desc := range descs {
+		described = append(described, desc)
 	}
-	if described != len(wantFamilies) {
-		t.Errorf("the registered collectors describe %d metrics, want %d", described, len(wantFamilies))
+	return described
+}
+
+func TestEveryRegisteredCollectorIsDocumented(t *testing.T) {
+	documented := map[string]bool{}
+	for _, desc := range describeAll(registered) {
+		name, known := documentedName(desc)
+		if !known {
+			t.Errorf("a registered collector describes %s, which is not in the documented metric set", desc)
+			continue
+		}
+		documented[name] = true
+	}
+
+	for name := range wantFamilies {
+		if !documented[name] {
+			t.Errorf("metric %q is documented but no registered collector describes it", name)
+		}
 	}
 }
 
-func TestNoMetricCarriesAnUnboundedLabel(t *testing.T) {
+func documentedName(desc *prometheus.Desc) (string, bool) {
+	for name := range wantFamilies {
+		if strings.Contains(desc.String(), fmt.Sprintf("fqName: %q", name)) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+func TestNoMetricCarriesALabelOutsideTheDeclaredSet(t *testing.T) {
+	// adding to this set is a design decision about cardinality, not a fixture to keep in step with the code
 	bounded := []string{
 		"condition", "instance_type", "operation", "outcome", "path", "phase",
 		"provider", "reason", "region", "result", "selection", "status", "strategy",
@@ -135,7 +165,7 @@ func TestNoMetricCarriesAnUnboundedLabel(t *testing.T) {
 	for name, shape := range populate(t) {
 		for _, label := range shape.labels {
 			if !slices.Contains(bounded, label) {
-				t.Errorf("metric %q carries label %q, which has no bounded domain", name, label)
+				t.Errorf("metric %q carries label %q, which is not in the declared label set", name, label)
 			}
 		}
 	}
