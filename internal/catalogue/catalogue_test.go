@@ -2,6 +2,8 @@ package catalogue
 
 import (
 	"errors"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +15,15 @@ const (
 	regionA    = "fake-a"
 	regionB    = "fake-b"
 )
+
+var referenceKinds = []reflect.Kind{
+	reflect.Slice,
+	reflect.Map,
+	reflect.Pointer,
+	reflect.Chan,
+	reflect.Interface,
+	reflect.Func,
+}
 
 func instanceType(name, region string) provider.InstanceType {
 	return provider.InstanceType{
@@ -130,6 +141,23 @@ func TestStoreCopiesTheRowsItIsGiven(t *testing.T) {
 	}
 	if got[0].Name != "small" {
 		t.Errorf("cached row = %q, want %q", got[0].Name, "small")
+	}
+}
+
+func TestACachedRowSharesNothingWithTheCopyHandedOut(t *testing.T) {
+	assertNoReferenceFields(t, reflect.TypeFor[provider.InstanceType]())
+}
+
+func assertNoReferenceFields(t *testing.T, row reflect.Type) {
+	t.Helper()
+	for i := range row.NumField() {
+		field := row.Field(i)
+		if slices.Contains(referenceKinds, field.Type.Kind()) {
+			t.Errorf("field %s.%s is a reference kind, so the cache must copy it deeply", row.Name(), field.Name)
+		}
+		if field.Type.Kind() == reflect.Struct {
+			assertNoReferenceFields(t, field.Type)
+		}
 	}
 }
 

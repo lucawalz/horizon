@@ -273,8 +273,8 @@ func TestStartFillsTheCacheImmediatelyAndAgainOnEveryTick(t *testing.T) {
 }
 
 func TestAnUnsetIntervalRefreshesHourly(t *testing.T) {
-	if got := (&Refresher{}).interval(); got != RefreshInterval {
-		t.Errorf("interval = %s, want %s", got, RefreshInterval)
+	if got := (&Refresher{}).interval(); got != time.Hour {
+		t.Errorf("interval = %s, want %s", got, time.Hour)
 	}
 }
 
