@@ -17,6 +17,7 @@ type Provider struct {
 	FailCreate             func(name string) error
 	FailGet                func(name string) error
 	FailDelete             func(name string) error
+	FailListInstanceTypes  func(region string) error
 	Ledger                 *Ledger
 
 	now           func() time.Time
@@ -213,6 +214,9 @@ func (p *Provider) SeedInstanceType(it provider.InstanceType) {
 }
 
 func (p *Provider) ListInstanceTypes(_ context.Context, region string) ([]provider.InstanceType, error) {
+	if err := inject(p.FailListInstanceTypes, region); err != nil {
+		return nil, err
+	}
 	if region == "" {
 		return nil, fmt.Errorf("fake: instance type region is required")
 	}
