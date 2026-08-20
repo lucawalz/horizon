@@ -1,11 +1,15 @@
 package metrics
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
@@ -61,5 +65,33 @@ horizon_leases{phase="Pending"} 7
 func TestSetLeaseStateSourceRejectsAMissingSource(t *testing.T) {
 	if err := SetLeaseStateSource(nil); err == nil {
 		t.Error("a missing lease state source was accepted, want an error")
+	}
+}
+
+func TestAPanickingLeaseStateSourceCostsOnlyItsOwnFamilies(t *testing.T) {
+	restored := leaseState.source.Load()
+	t.Cleanup(func() { leaseState.source.Store(restored) })
+
+	if err := SetLeaseStateSource(func() LeaseState { panic("the lease informer has not started") }); err != nil {
+		t.Fatalf("set the lease state source: %v", err)
+	}
+	RecordOrphanInstanceDeleted("panicking", "hel1")
+
+	response := httptest.NewRecorder()
+	promhttp.HandlerFor(ctrlmetrics.Registry, promhttp.HandlerOpts{}).
+		ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("the scrape returned %d, want %d", response.Code, http.StatusOK)
+	}
+
+	body := response.Body.String()
+	for _, family := range []string{"horizon_leases", "horizon_lease_status_condition"} {
+		if strings.Contains(body, family) {
+			t.Errorf("a failing lease state source still emitted %s", family)
+		}
+	}
+	if !strings.Contains(body, "horizon_orphan_instances_deleted_total") {
+		t.Error("a failing lease state source suppressed an unrelated metric")
 	}
 }

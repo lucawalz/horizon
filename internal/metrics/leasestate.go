@@ -2,10 +2,12 @@ package metrics
 
 import (
 	"errors"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
@@ -20,6 +22,7 @@ type LeaseState struct {
 	Conditions map[LeaseCondition]int
 }
 
+// a source must return freshly built maps, because the collector ranges them outside any lock the source holds
 type LeaseStateSource func() LeaseState
 
 var (
@@ -61,11 +64,26 @@ func (c *leaseStateCollector) Collect(collected chan<- prometheus.Metric) {
 		return
 	}
 
-	state := (*source)()
+	state, ok := readLeaseState(*source)
+	if !ok {
+		return
+	}
+
 	for phase, count := range state.Phases {
 		collected <- prometheus.MustNewConstMetric(leasesDesc, prometheus.GaugeValue, float64(count), string(phase))
 	}
 	for condition, count := range state.Conditions {
 		collected <- prometheus.MustNewConstMetric(leaseStatusConditionDesc, prometheus.GaugeValue, float64(count), condition.Type, string(condition.Status))
 	}
+}
+
+// a scrape runs on a worker goroutine the registry never recovers, so an unguarded source would end the process
+func readLeaseState(source LeaseStateSource) (state LeaseState, ok bool) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			state, ok = LeaseState{}, false
+			ctrl.Log.WithName("metrics").Error(fmt.Errorf("%v", recovered), "read the lease state for a scrape")
+		}
+	}()
+	return source(), true
 }
