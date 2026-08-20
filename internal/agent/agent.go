@@ -77,7 +77,7 @@ func Run(ctx context.Context, opts Options) error {
 		identity.Name = opts.NodeName
 	}
 
-	prov, err := hetzner.NewNodeClient(token)
+	prov, err := hetzner.NewTokenClient(token)
 	if err != nil {
 		return err
 	}

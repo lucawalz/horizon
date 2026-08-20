@@ -7,19 +7,19 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-func TestNewNodeClientRejectsAnEmptyToken(t *testing.T) {
-	if _, err := NewNodeClient(""); err == nil {
-		t.Fatal("NewNodeClient must reject an empty token")
+func TestNewTokenClientRejectsAnEmptyToken(t *testing.T) {
+	if _, err := NewTokenClient(""); err == nil {
+		t.Fatal("NewTokenClient must reject an empty token")
 	}
 }
 
-func TestNewNodeClientNeedsNoCloudInit(t *testing.T) {
-	client, err := NewNodeClient("token")
+func TestNewTokenClientNeedsNoCloudInit(t *testing.T) {
+	client, err := NewTokenClient("token")
 	if err != nil {
-		t.Fatalf("NewNodeClient: %v", err)
+		t.Fatalf("NewTokenClient: %v", err)
 	}
 	if client == nil {
-		t.Fatal("NewNodeClient returned no provider")
+		t.Fatal("NewTokenClient returned no provider")
 	}
 }
 

@@ -61,7 +61,7 @@ func NewClient(token string, spec ServerSpec) (provider.Provider, error) {
 	return client, nil
 }
 
-func NewNodeClient(token string) (provider.Provider, error) {
+func NewTokenClient(token string) (provider.Provider, error) {
 	client, err := newClient(token, ServerSpec{})
 	if err != nil {
 		return nil, err
