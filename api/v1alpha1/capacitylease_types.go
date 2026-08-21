@@ -100,6 +100,12 @@ type CapacityLeaseStatus struct {
 	WatchdogDeadline *metav1.Time `json:"watchdogDeadline,omitempty"`
 
 	// +optional
+	ProviderConfig string `json:"providerConfig,omitempty"`
+
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// +optional
 	InstanceType string `json:"instanceType,omitempty"`
 
 	// +optional
