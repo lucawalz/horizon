@@ -9,11 +9,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
+var recordInstant = time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+
 func TestRecordInstanceReleasedMovesTheWholeCostTrio(t *testing.T) {
 	const config, region, instanceType = "cost", "hel1", "cx23"
 
-	RecordInstanceReleased(config, region, instanceType, PathController, 10*time.Minute)
-	RecordInstanceReleased(config, region, instanceType, PathController, 10*time.Minute)
+	RecordInstanceReleased(config, region, instanceType, PathController, recordInstant, recordInstant.Add(10*time.Minute))
+	RecordInstanceReleased(config, region, instanceType, PathController, recordInstant, recordInstant.Add(10*time.Minute))
 
 	released := testutil.ToFloat64(instanceReleasedTotal.WithLabelValues(config, region, instanceType, string(PathController)))
 	if released != 2 {
@@ -54,13 +56,44 @@ func TestBilledHoursRoundsUpToTheBillingIncrement(t *testing.T) {
 func TestRecordInstanceReleasedIgnoresANegativeLifetime(t *testing.T) {
 	const config, region, instanceType = "skewed", "hel1", "cx23"
 
-	RecordInstanceReleased(config, region, instanceType, PathNode, -time.Hour)
+	RecordInstanceReleased(config, region, instanceType, PathNode, recordInstant, recordInstant.Add(-time.Hour))
 
 	if seconds := testutil.ToFloat64(instanceSecondsTotal.WithLabelValues(config, region, instanceType)); seconds != 0 {
 		t.Errorf("instance seconds is %v, want 0", seconds)
 	}
 	if hours := testutil.ToFloat64(instanceBilledHoursTotal.WithLabelValues(config, region, instanceType)); hours != 0 {
 		t.Errorf("billed hours is %v, want 0", hours)
+	}
+}
+
+func TestRecordInstanceReleasedCountsAReleaseWhoseCreationInstantIsUnknown(t *testing.T) {
+	const config, region, instanceType = "undated", "hel1", "cx23"
+
+	RecordInstanceReleased(config, region, instanceType, PathOrphan, time.Time{}, recordInstant)
+
+	released := testutil.ToFloat64(instanceReleasedTotal.WithLabelValues(config, region, instanceType, string(PathOrphan)))
+	if released != 1 {
+		t.Errorf("released count is %v, want 1 because the release happened whatever the cost was", released)
+	}
+	unknown := testutil.ToFloat64(instanceLifetimeUnknownTotal.WithLabelValues(config, region, instanceType))
+	if unknown != 1 {
+		t.Errorf("unknown lifetime count is %v, want 1 so the missing cost is visible rather than silent", unknown)
+	}
+	if seconds := testutil.ToFloat64(instanceSecondsTotal.WithLabelValues(config, region, instanceType)); seconds != 0 {
+		t.Errorf("instance seconds is %v, want 0 because a zero cost would deflate the billed to theoretical ratio", seconds)
+	}
+	if hours := testutil.ToFloat64(instanceBilledHoursTotal.WithLabelValues(config, region, instanceType)); hours != 0 {
+		t.Errorf("billed hours is %v, want 0 because a zero cost would deflate the billed to theoretical ratio", hours)
+	}
+}
+
+func TestRecordInstanceReleasedLeavesTheUnknownCounterAloneForADatedRelease(t *testing.T) {
+	const config, region, instanceType = "dated", "hel1", "cx23"
+
+	RecordInstanceReleased(config, region, instanceType, PathNode, recordInstant, recordInstant.Add(time.Minute))
+
+	if unknown := testutil.ToFloat64(instanceLifetimeUnknownTotal.WithLabelValues(config, region, instanceType)); unknown != 0 {
+		t.Errorf("unknown lifetime count is %v, want 0", unknown)
 	}
 }
 

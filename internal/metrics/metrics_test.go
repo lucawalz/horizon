@@ -21,11 +21,12 @@ type familyShape struct {
 
 var wantFamilies = map[string]familyShape{
 	"horizon_lease_ready_seconds":                   {"HISTOGRAM", []string{"instance_type", "provider", "region", "selection"}},
-	"horizon_lease_release_seconds":                 {"HISTOGRAM", []string{"instance_type", "path", "provider", "region"}},
+	"horizon_lease_release_seconds":                 {"HISTOGRAM", []string{"instance_type", "provider", "region"}},
 	"horizon_lease_terminal_total":                  {"COUNTER", []string{"outcome", "provider", "region"}},
 	"horizon_instance_released_total":               {"COUNTER", []string{"instance_type", "path", "provider", "region"}},
 	"horizon_instance_seconds_total":                {"COUNTER", []string{"instance_type", "provider", "region"}},
 	"horizon_instance_billed_hours_total":           {"COUNTER", []string{"instance_type", "provider", "region"}},
+	"horizon_instance_lifetime_unknown_total":       {"COUNTER", []string{"instance_type", "provider", "region"}},
 	"horizon_instance_type_price_estimate":          {"GAUGE", []string{"instance_type", "provider", "region"}},
 	"horizon_instance_type_cpu_cores":               {"GAUGE", []string{"instance_type", "provider"}},
 	"horizon_instance_type_memory_bytes":            {"GAUGE", []string{"instance_type", "provider"}},
@@ -40,15 +41,18 @@ var wantFamilies = map[string]familyShape{
 	"horizon_provider_request_duration_seconds":     {"HISTOGRAM", []string{"operation", "provider", "result"}},
 }
 
+var surfaceInstant = time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+
 func populate(t *testing.T) map[string]familyShape {
 	t.Helper()
 
 	const config, region, instanceType = "surface", "hel1", "cx23"
 
 	ObserveLeaseReady(config, region, instanceType, SelectionPinned, 71*time.Second)
-	ObserveLeaseRelease(config, region, instanceType, PathController, 12*time.Second)
+	ObserveLeaseRelease(config, region, instanceType, 12*time.Second)
 	RecordLeaseTerminal(config, region, OutcomeReleased)
-	RecordInstanceReleased(config, region, instanceType, PathController, 10*time.Minute)
+	RecordInstanceReleased(config, region, instanceType, PathController, surfaceInstant, surfaceInstant.Add(10*time.Minute))
+	RecordInstanceReleased(config, region, instanceType, PathOrphan, time.Time{}, surfaceInstant)
 	SetInstanceTypePrice(config, region, instanceType, 0.0074)
 	SetInstanceTypeCapacity(config, instanceType, 2, 4<<30)
 	RecordInstanceTypeSelected(config, region, instanceType, SelectionLowestPrice)

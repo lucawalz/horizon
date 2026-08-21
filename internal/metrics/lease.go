@@ -17,9 +17,9 @@ var (
 	leaseReleaseSeconds = register(prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: namespace,
 		Name:      "lease_release_seconds",
-		Help:      "Time from the start of teardown to the last instance being released.",
+		Help:      "Time from a lease falling due for teardown to its last instance being confirmed absent.",
 		Buckets:   releaseSecondsBuckets,
-	}, []string{labelProvider, labelRegion, labelInstanceType, labelPath}))
+	}, []string{labelProvider, labelRegion, labelInstanceType}))
 
 	leaseTerminalTotal = register(prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: namespace,
@@ -32,8 +32,8 @@ func ObserveLeaseReady(providerConfig, region, instanceType string, selection Se
 	leaseReadySeconds.WithLabelValues(providerConfig, region, instanceType, string(selection)).Observe(took.Seconds())
 }
 
-func ObserveLeaseRelease(providerConfig, region, instanceType string, path Path, took time.Duration) {
-	leaseReleaseSeconds.WithLabelValues(providerConfig, region, instanceType, string(path)).Observe(took.Seconds())
+func ObserveLeaseRelease(providerConfig, region, instanceType string, took time.Duration) {
+	leaseReleaseSeconds.WithLabelValues(providerConfig, region, instanceType).Observe(took.Seconds())
 }
 
 func RecordLeaseTerminal(providerConfig, region string, outcome Outcome) {
