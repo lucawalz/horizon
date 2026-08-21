@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -352,5 +353,58 @@ func TestStartSweepsBeforeWaitingForItsFirstTick(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
+	f.assertNoLeaks()
+}
+
+func orphanLabels(config string, extra map[string]string) map[string]string {
+	labels := map[string]string{"provider": config, "region": orphanTestRegion, "instance_type": orphanTestSize}
+	maps.Copy(labels, extra)
+	return labels
+}
+
+func TestSweepingAnExpiredInstanceRecordsItsReleaseAndItsCost(t *testing.T) {
+	f := newOrphanFixture(t)
+	lease := f.createLease("gone")
+	f.createInstance("swept", string(lease.UID), f.instant.Add(-orphanExpiryGrace-time.Minute))
+	f.deleteLease(lease)
+	f.instant = f.instant.Add(10 * time.Minute)
+
+	f.mustSweep()
+
+	swept := orphanLabels(f.config, map[string]string{"path": "orphan"})
+	if got := counterFor(t, instanceReleasedMetric, swept); got != 1 {
+		t.Errorf("the orphan sweep recorded %v releases, want 1", got)
+	}
+	cost := orphanLabels(f.config, nil)
+	if got := counterFor(t, instanceSecondsMetric, cost); got != 600 {
+		t.Errorf("the swept instance booked %v seconds, want 600", got)
+	}
+	if got := counterFor(t, instanceBilledHoursMetric, cost); got != 1 {
+		t.Errorf("the swept instance booked %v billed hours, want 1", got)
+	}
+	if got := counterFor(t, instanceUndatedMetric, cost); got != 0 {
+		t.Errorf("the swept instance was booked as undated %v times, want 0", got)
+	}
+	f.assertNoLeaks()
+}
+
+func TestSweepRecordsNoReleaseWhileTheInstanceSurvives(t *testing.T) {
+	f := newOrphanFixture(t)
+	lease := f.createLease("gone")
+	f.createInstance("stubborn", string(lease.UID), f.instant.Add(-time.Hour))
+	f.deleteLease(lease)
+	f.provider.FailDelete = func(string) error { return errProviderUnavailable }
+
+	if err := f.sweep(); err == nil {
+		t.Fatal("sweep reported success while the delete failed")
+	}
+
+	swept := orphanLabels(f.config, map[string]string{"path": "orphan"})
+	if got := counterFor(t, instanceReleasedMetric, swept); got != 0 {
+		t.Errorf("a failed sweep recorded %v releases, want 0", got)
+	}
+
+	f.provider.FailDelete = nil
+	f.mustSweep()
 	f.assertNoLeaks()
 }

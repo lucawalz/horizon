@@ -14,6 +14,7 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -66,8 +67,11 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady,
 			fmt.Sprintf("%d of %d nodes ready", joined, want)) || changed
 		if lease.Status.ReadyAt == nil {
-			lease.Status.ReadyAt = &metav1.Time{Time: r.now()}
+			ready := r.now()
+			lease.Status.ReadyAt = &metav1.Time{Time: ready}
 			changed = true
+			metrics.ObserveLeaseReady(lease.Spec.ProviderRef, lease.Spec.Region, lease.Status.InstanceType,
+				metrics.SelectionPinned, ready.Sub(lease.Status.AcceptedAt.Time))
 		}
 	} else {
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonWaitingForNodes,

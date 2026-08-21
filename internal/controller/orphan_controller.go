@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -144,7 +145,9 @@ func (r *OrphanReconciler) sweepProvider(ctx context.Context, prov configuredPro
 		ctrl.LoggerFrom(ctx).Info("deleting expired instance", "instance", inst.Name, "providerConfig", prov.config)
 		if err := destroyInstance(ctx, prov, inst.Name); err != nil {
 			failures = append(failures, err)
+			continue
 		}
+		metrics.RecordInstanceReleased(prov.config, inst.Region, inst.Size, metrics.PathOrphan, inst.CreatedAt, r.now())
 	}
 	return errors.Join(failures...)
 }

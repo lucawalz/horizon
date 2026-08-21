@@ -25,6 +25,8 @@ const (
 	orphanWaitTimeout   = 5 * time.Second
 	orphanPollInterval  = 10 * time.Millisecond
 	primaryProviderName = "primary"
+	orphanTestRegion    = "fake-a"
+	orphanTestSize      = "fake-small"
 )
 
 var (
@@ -194,7 +196,8 @@ func (f *orphanFixture) createInstanceIn(prov *fake.Provider, name, leaseUID str
 	if !expiry.IsZero() {
 		labels[provider.ExpiresAtLabelKey] = provider.FormatExpiry(expiry)
 	}
-	if _, err := prov.Create(f.t.Context(), provider.CreateRequest{Name: name, Labels: labels}); err != nil {
+	req := provider.CreateRequest{Name: name, Region: orphanTestRegion, Size: orphanTestSize, Labels: labels}
+	if _, err := prov.Create(f.t.Context(), req); err != nil {
 		f.t.Fatalf("create instance: %v", err)
 	}
 }

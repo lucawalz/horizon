@@ -12,6 +12,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -26,7 +27,7 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 		return ctrl.Result{}, fmt.Errorf("list instances of lease %q: %w", lease.Name, err)
 	}
 
-	if adoptObservedInstances(lease, observed) {
+	if r.adoptObservedInstances(lease, observed) {
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -47,7 +48,7 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 	return r.createInstance(ctx, lease, prov, entry)
 }
 
-func adoptObservedInstances(lease *v1alpha1.CapacityLease, observed []provider.Instance) bool {
+func (r *CapacityLeaseReconciler) adoptObservedInstances(lease *v1alpha1.CapacityLease, observed []provider.Instance) bool {
 	unmatched := make(map[string]provider.Instance, len(observed))
 	for _, inst := range observed {
 		unmatched[inst.Name] = inst
@@ -64,6 +65,7 @@ func adoptObservedInstances(lease *v1alpha1.CapacityLease, observed []provider.I
 			if entry.Phase != v1alpha1.InstancePhaseIntended && entry.Phase != v1alpha1.InstancePhaseReleased {
 				entry.Phase = v1alpha1.InstancePhaseReleased
 				changed = true
+				r.recordInstanceRelease(lease, *entry, vanishedPath(lease, r.now()))
 			}
 		case entry.Phase == v1alpha1.InstancePhaseIntended || entry.Phase == v1alpha1.InstancePhaseReleased:
 			entry.Phase = v1alpha1.InstancePhaseCreated
@@ -87,6 +89,15 @@ func adoptObservedInstances(lease *v1alpha1.CapacityLease, observed []provider.I
 		changed = true
 	}
 	return changed
+}
+
+// the watchdog only fires once its own deadline has passed, so an earlier disappearance came from outside horizon
+func vanishedPath(lease *v1alpha1.CapacityLease, now time.Time) metrics.Path {
+	deadline := lease.Status.WatchdogDeadline
+	if deadline.IsZero() || !now.Before(deadline.Time) {
+		return metrics.PathNode
+	}
+	return metrics.PathExternal
 }
 
 func pendingSlot(lease *v1alpha1.CapacityLease) (string, *v1alpha1.InstanceStatus, bool) {

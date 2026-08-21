@@ -13,6 +13,7 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -99,6 +100,7 @@ func (r *CapacityLeaseReconciler) releaseInstance(ctx context.Context, lease *v1
 	}
 
 	entry.Phase = v1alpha1.InstancePhaseReleased
+	r.recordInstanceRelease(lease, *entry, metrics.PathController)
 	if skipped != nil {
 		entry.LastError = skipped.Error()
 		return skipped
@@ -120,10 +122,15 @@ func (r *CapacityLeaseReconciler) drainNode(ctx context.Context, nodeName string
 
 func (r *CapacityLeaseReconciler) finishTeardown(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
 	changed := setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionTrue, reasonReleased, "every instance is confirmed absent")
+	if changed && lease.Status.AcceptedAt != nil {
+		metrics.RecordLeaseTerminal(lease.Spec.ProviderRef, lease.Spec.Region, releaseOutcome(lease))
+	}
 	changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonReleased, "capacity released") || changed
 	if lease.Status.ReleasedAt == nil {
-		lease.Status.ReleasedAt = &metav1.Time{Time: r.now()}
+		released := r.now()
+		lease.Status.ReleasedAt = &metav1.Time{Time: released}
 		changed = true
+		r.observeRelease(lease, released)
 	}
 	if changed {
 		if err := r.writeStatus(ctx, lease); err != nil {
@@ -149,6 +156,64 @@ func (r *CapacityLeaseReconciler) degrade(ctx context.Context, lease *v1alpha1.C
 		return ctrl.Result{}, errors.Join(cause, err)
 	}
 	return ctrl.Result{}, cause
+}
+
+func releaseOutcome(lease *v1alpha1.CapacityLease) metrics.Outcome {
+	if conditionTrue(lease, v1alpha1.ConditionDegraded) {
+		return metrics.OutcomeReleasedDegraded
+	}
+	return metrics.OutcomeReleased
+}
+
+func (r *CapacityLeaseReconciler) observeRelease(lease *v1alpha1.CapacityLease, released time.Time) {
+	start, due := teardownStart(lease)
+	if !due || !heldCapacity(lease) {
+		return
+	}
+	// the deletion timestamp is stamped by the API server's clock, which can run ahead of the controller's
+	took := max(released.Sub(start), 0)
+	metrics.ObserveLeaseRelease(lease.Spec.ProviderRef, lease.Spec.Region, lease.Status.InstanceType, took)
+}
+
+func teardownStart(lease *v1alpha1.CapacityLease) (time.Time, bool) {
+	var start time.Time
+	for _, due := range []*metav1.Time{lease.DeletionTimestamp, lease.Status.ExpiresAt} {
+		if due.IsZero() {
+			continue
+		}
+		if start.IsZero() || due.Time.Before(start) {
+			start = due.Time
+		}
+	}
+	return start, !start.IsZero()
+}
+
+func (r *CapacityLeaseReconciler) recordInstanceRelease(lease *v1alpha1.CapacityLease, entry v1alpha1.InstanceStatus, path metrics.Path) {
+	if !existedAtProvider(entry) {
+		return
+	}
+	metrics.RecordInstanceReleased(lease.Spec.ProviderRef, lease.Spec.Region, lease.Status.InstanceType,
+		path, createdInstant(entry), r.now())
+}
+
+func createdInstant(entry v1alpha1.InstanceStatus) time.Time {
+	if entry.CreatedAt == nil {
+		return time.Time{}
+	}
+	return entry.CreatedAt.Time
+}
+
+func existedAtProvider(entry v1alpha1.InstanceStatus) bool {
+	return entry.ProviderID != ""
+}
+
+func heldCapacity(lease *v1alpha1.CapacityLease) bool {
+	for _, entry := range lease.Status.Instances {
+		if existedAtProvider(entry) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasUnreleasedInstances(lease *v1alpha1.CapacityLease) bool {
