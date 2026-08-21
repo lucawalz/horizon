@@ -282,3 +282,23 @@ func TestARefusedStatusWriteDoesNotCountTheReadyLeaseTwice(t *testing.T) {
 	h.assertObservations(leaseReadySecondsMetric,
 		map[string]string{"instance_type": testSize, "selection": pinnedSelection}, 1, 71)
 }
+
+func TestAnInstanceMissingFromOneListingIsNotCountedAsReleased(t *testing.T) {
+	h := newHarness(t)
+	name := h.becomeReady()
+
+	h.relabelInstance(name, func(labels map[string]string) { delete(labels, LeaseUIDLabelKey) })
+	h.settleIgnoringErrors(3)
+
+	if got := h.instanceStatus(name).Phase; got != v1alpha1.InstancePhaseJoined {
+		t.Errorf("instance phase is %q after one empty listing, want %q", got, v1alpha1.InstancePhaseJoined)
+	}
+	for _, path := range []string{"controller", "node", "external"} {
+		h.assertCounter(instanceReleasedMetric, map[string]string{"instance_type": testSize, "path": path}, 0)
+	}
+
+	uid := string(h.lease().UID)
+	h.relabelInstance(name, func(labels map[string]string) { labels[LeaseUIDLabelKey] = uid })
+	h.deleteLease()
+	h.settle()
+}

@@ -573,6 +573,16 @@ func newKubeClient(objects ...runtime.Object) *k8sfake.Clientset {
 	return kc
 }
 
+func (h *harness) relabelInstance(name string, mutate func(map[string]string)) {
+	h.t.Helper()
+	inst, err := h.prov.Get(h.t.Context(), name)
+	if err != nil {
+		h.t.Fatalf("get instance %q: %v", name, err)
+	}
+	mutate(inst.Labels)
+	h.prov.Seed(inst)
+}
+
 type refusingStatusWriter struct {
 	client.Client
 	refuseWrite int

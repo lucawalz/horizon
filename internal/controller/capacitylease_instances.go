@@ -28,7 +28,11 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 	}
 
 	var records metricWrites
-	if r.adoptObservedInstances(lease, observed, &records) {
+	changed, err := r.adoptObservedInstances(ctx, lease, prov, observed, &records)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if changed {
 		if err := r.writeStatus(ctx, lease, records...); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -49,7 +53,7 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 	return r.createInstance(ctx, lease, prov, entry)
 }
 
-func (r *CapacityLeaseReconciler) adoptObservedInstances(lease *v1alpha1.CapacityLease, observed []provider.Instance, records *metricWrites) bool {
+func (r *CapacityLeaseReconciler) adoptObservedInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, observed []provider.Instance, records *metricWrites) (bool, error) {
 	unmatched := make(map[string]provider.Instance, len(observed))
 	for _, inst := range observed {
 		unmatched[inst.Name] = inst
@@ -63,11 +67,11 @@ func (r *CapacityLeaseReconciler) adoptObservedInstances(lease *v1alpha1.Capacit
 
 		switch {
 		case !present:
-			if entry.Phase != v1alpha1.InstancePhaseIntended && entry.Phase != v1alpha1.InstancePhaseReleased {
-				entry.Phase = v1alpha1.InstancePhaseReleased
-				changed = true
-				records.add(r.instanceReleaseRecord(lease, *entry, vanishedPath(lease, r.now())))
+			vanished, err := r.adoptVanishedInstance(ctx, lease, prov, entry, records)
+			if err != nil {
+				return changed, err
 			}
+			changed = changed || vanished
 		case entry.Phase == v1alpha1.InstancePhaseIntended || entry.Phase == v1alpha1.InstancePhaseReleased:
 			entry.Phase = v1alpha1.InstancePhaseCreated
 			entry.ProviderID = inst.ProviderID
@@ -89,7 +93,25 @@ func (r *CapacityLeaseReconciler) adoptObservedInstances(lease *v1alpha1.Capacit
 		})
 		changed = true
 	}
-	return changed
+	return changed, nil
+}
+
+// an empty but successful listing would otherwise bill a lifetime the instance keeps accruing
+func (r *CapacityLeaseReconciler) adoptVanishedInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, entry *v1alpha1.InstanceStatus, records *metricWrites) (bool, error) {
+	if entry.Phase == v1alpha1.InstancePhaseIntended || entry.Phase == v1alpha1.InstancePhaseReleased {
+		return false, nil
+	}
+	absent, err := provider.ConfirmAbsent(ctx, prov, entry.Name)
+	if err != nil {
+		return false, fmt.Errorf("confirm instance %q of lease %q is gone: %w", entry.Name, lease.Name, err)
+	}
+	if !absent {
+		return false, nil
+	}
+
+	entry.Phase = v1alpha1.InstancePhaseReleased
+	records.add(r.instanceReleaseRecord(lease, *entry, vanishedPath(lease, r.now())))
+	return true, nil
 }
 
 // the watchdog only fires once its own deadline has passed, so an earlier disappearance came from outside horizon
