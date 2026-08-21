@@ -45,11 +45,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: development server stays bound to loopback
+      - name: every vite server stays bound to loopback
         run: |
           set -euo pipefail
-          if ! grep -qF "host: '127.0.0.1'" internal/web/site/vite.config.ts; then
-            echo "vite.config.ts no longer pins the dev server to host: '127.0.0.1'; the dashboard it proxies is unauthenticated and must not be reachable off the machine" >&2
+          config=internal/web/site/vite.config.ts
+          if ! grep -qF "host: '127.0.0.1'" "$config"; then
+            echo "$config no longer pins the dev server to host: '127.0.0.1'; the dashboard it proxies is unauthenticated and must not be reachable off the machine" >&2
+            exit 1
+          fi
+          widened="$(grep -oE "host[[:space:]]*:[[:space:]]*[^,}[:space:]]+" "$config" | grep -vE "^host[[:space:]]*:[[:space:]]*'127\.0\.0\.1'$" || true)"
+          if [ -n "$widened" ]; then
+            echo "$config carries a host binding that is not 127.0.0.1:" >&2
+            echo "$widened" >&2
+            echo "every server this file configures, dev and preview alike, proxies the unauthenticated dashboard and must not be reachable off the machine" >&2
             exit 1
           fi
       - name: no npm script widens the dev server binding

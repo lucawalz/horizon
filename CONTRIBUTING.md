@@ -52,7 +52,7 @@ The `site` job in CI rebuilds the bundle and fails when it differs from what is 
 
 That check is a byte comparison against a bundler, and it only holds while its inputs are pinned. `package-lock.json` pins the dependency graph and `.nvmrc` pins the Node version, which the local build and the CI job read from the same file. Building on another version can produce a difference that has nothing to do with the change.
 
-`npm run dev` serves the interface with hot reload and proxies `/api` to a `horizon dashboard` already running on its default port. The dev server binds `127.0.0.1`, and CI fails if that binding leaves `vite.config.ts` or an npm script overrides it, because the dashboard behind the proxy is unauthenticated. `npm test` runs the frontend unit tests and `npm run lint` runs oxlint.
+`npm run dev` serves the interface with hot reload and proxies `/api` to a `horizon dashboard` already running on its default port. The dev server binds `127.0.0.1`, and CI fails if that binding leaves `vite.config.ts`, if the file gains a `host` binding pointing anywhere else, or if an npm script passes `--host`, because the dashboard behind the proxy is unauthenticated. `npm test` runs the frontend unit tests and `npm run lint` runs oxlint.
 
 ## Branch naming
 
