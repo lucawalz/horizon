@@ -21,7 +21,7 @@ That comparison is the weaker of the two available contracts, and the difference
 
 The same reading corrects a sentence in 0019's own Consequences, which records that "a template library with a code generation step was rejected for the build step it imposes". That reasoning does not hold. templ's own continuous integration documentation recommends committing the generated files precisely so that no consumer needs the generator, which is the pattern this repository already runs for controller-gen. The build step templ imposes falls on whoever changes a template, not on whoever compiles the binary. Whatever the case against templ was, it was not that. The sentence stays in 0019 unaltered, because a superseded record is kept for the reasoning that was later overturned.
 
-Underneath the component layer sits a second choice. shadcn/ui components are copied into the consuming repository rather than depended on, and they sit on a headless primitive library. There are three candidates, because shadcn/ui supports Radix Primitives, Base UI, which became its default on 2 July 2026, and React Aria, which became a first-class base on 17 July 2026.
+Underneath the component layer sits a second choice, live from the moment a headless primitive is first needed. shadcn/ui components are copied into the consuming repository rather than depended on, and they sit on a headless primitive library. There are three candidates, because shadcn/ui supports Radix Primitives, Base UI, which became its default on 2 July 2026, and React Aria, which became a first-class base on 17 July 2026.
 
 Maintenance does not decide between them. Radix Primitives published nine stable versions in 2026, two of them minors, and its commit rate over the three months before this record ran 21, 90 and more than 100 a month, the most active it has been in over a year. Its repository has never used GitHub Releases at any point in its history, which is easy to mistake for an absence of releases; the npm registry and the git tags both show otherwise. Base UI releases roughly monthly. Both are alive, so the choice has to be made on something else.
 
@@ -33,7 +33,9 @@ Radix Colors is a separate package and is unaffected by any of this. Its latest 
 
 The web interface becomes a single-page application, built ahead of time and embedded in the binary.
 
-`internal/web/site` holds a Vite project in React and TypeScript, styled with Tailwind v4. shadcn/ui primitives are copied into `src/components/ui` and owned there rather than depended on, and they sit on Radix Primitives. A token layer at `src/lib/tokens.css` carries the project's own scale, so the components render horizon's typography, spacing and colour rather than shadcn's defaults. The defaults are a starting point for a project that has no look yet, and this one already has one to match.
+`internal/web/site` holds a Vite project in React and TypeScript, styled with Tailwind v4. Its components are written directly against a token layer at `src/lib/tokens.css`, which carries the project's own scale, so they render horizon's typography, spacing and colour rather than shadcn's defaults. The defaults are a starting point for a project that has no look yet, and this one already has one to match. No headless primitive library is used, because the read-only surface is three tables, a set of status pills, a `<time>` element, one native `<select>` and one `<input>`. A primitive library would add a dependency without removing any work.
+
+Radix Primitives remains the base for the first primitive that is genuinely needed, and the reasoning below stands unchanged for that moment. It has simply not bound anything yet. What needs one is the mutating half of the interface, where a dialog, a combobox and a menu all appear. `components.json` is kept because `shadcn add` is how such a component arrives, and `shadcn` stays a dependency because `src/index.css` imports `shadcn/tailwind.css`.
 
 Three routes are served, matching what the interface already shows: the lease list, one lease in full, and the instance type catalogue. `internal/web/api.go` serves the state behind them as JSON. The `html/template` files and the vendored copy of htmx are deleted.
 
@@ -88,7 +90,7 @@ Interface changes produce large diffs, and content-hashed filenames make them ch
 
 The `no_ui` tag gives a way to compile the operator without the interface, which keeps the controller buildable when the committed output is missing or broken. It also makes a nil filesystem a state the serving path has to handle rather than assume away.
 
-Owning the copied components means owning their upgrades. There is no dependency bump that brings a fixed primitive in; a fix upstream is a file to re-copy and re-read. That is the trade shadcn/ui exists to make, and it is accepted knowingly.
+Nothing is copied in yet, so nothing is owned yet. The first component to arrive through `shadcn add` brings that ownership with it: there is no dependency bump that brings a fixed primitive in, and a fix upstream is a file to re-copy and re-read. That is the trade shadcn/ui exists to make, and it is accepted in advance.
 
 Choosing Radix takes the larger body of existing answers over the library shadcn/ui now preselects, and it accepts that the default points elsewhere. If the centre of gravity moves to Base UI, the migration is a re-copy of the owned component files rather than a dependency swap, and the token layer and the frozen Radix Colors palette survive it either way.
 
