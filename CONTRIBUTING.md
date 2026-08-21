@@ -94,3 +94,28 @@ Significant design choices are documented as ADRs in [`docs/adr/`](docs/adr/). A
 2. Open a PR against `main`
 3. Fill in the PR template completely
 4. CI must pass before merging
+
+### Required status checks
+
+Branch protection on `main` currently requires only the `test` and `chart` checks. `lint`, `release-config`, `image` and `site` report their result but cannot block a merge.
+
+That gap matters most for the frontend. `.github/workflows/dependabot-automerge.yaml` merges any minor or patch Dependabot update as soon as the required checks pass, so an npm bump can land without `site` ever having built `internal/web/site` or compared the committed `dist/` against a fresh build. Until `site` is required, the freshness check cannot stop a stale bundle from reaching `main`.
+
+A repository admin closes the gap by adding `site` to the required checks:
+
+```bash
+gh api --method PATCH \
+  repos/lucawalz/horizon/branches/main/protection/required_status_checks \
+  --input - <<'JSON'
+{
+  "strict": false,
+  "checks": [
+    { "context": "test" },
+    { "context": "chart" },
+    { "context": "site" }
+  ]
+}
+JSON
+```
+
+The endpoint replaces the whole set, so the command restates `test` and `chart` alongside `site`.
