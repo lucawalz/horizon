@@ -148,6 +148,7 @@ func (r *OrphanReconciler) sweepProvider(ctx context.Context, prov configuredPro
 			continue
 		}
 		metrics.RecordInstanceReleased(prov.config, inst.Region, inst.Size, metrics.PathOrphan, inst.CreatedAt, r.now())
+		metrics.RecordOrphanInstanceDeleted(prov.config, inst.Region)
 	}
 	return errors.Join(failures...)
 }

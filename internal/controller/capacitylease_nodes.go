@@ -14,6 +14,7 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -115,7 +116,11 @@ func nodeReady(node *corev1.Node) bool {
 
 func (r *CapacityLeaseReconciler) adoptNode(ctx context.Context, lease *v1alpha1.CapacityLease, node *corev1.Node, renewal watchdogRenewal) (bool, error) {
 	annotations, renewed := renewal.annotationsFor(node)
-	if err := r.patchNodeMarks(ctx, lease, node, annotations); err != nil {
+	err := r.patchNodeMarks(ctx, lease, node, annotations)
+	if renewed {
+		metrics.RecordWatchdogRenewal(lease.Status.ProviderConfig, renewalResult(err))
+	}
+	if err != nil {
 		return false, err
 	}
 	if err := r.ensureBurstTaint(ctx, lease, node); err != nil {

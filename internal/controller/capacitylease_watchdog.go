@@ -7,6 +7,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -47,6 +48,13 @@ func shouldRenew(annotated string, deadline time.Time, policy v1alpha1.WatchdogP
 		return true
 	}
 	return !now.Before(current.Add(-policy.Slack.Duration))
+}
+
+func renewalResult(err error) metrics.Result {
+	if err != nil {
+		return metrics.ResultFailure
+	}
+	return metrics.ResultSuccess
 }
 
 func recordWatchdogDeadline(lease *v1alpha1.CapacityLease, deadline time.Time) bool {
