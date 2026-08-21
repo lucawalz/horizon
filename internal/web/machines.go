@@ -2,12 +2,11 @@ package web
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
-	"k8s.io/apimachinery/pkg/util/duration"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/catalogue"
@@ -15,17 +14,20 @@ import (
 )
 
 const (
-	machineTitle     = "horizon machine types"
 	configReadFailed = "the provider configs could not be read from the cluster"
-	chooseNotice     = "Choose a provider config and name a region to list the instance types it offers."
-	absentNotice     = "The instance type catalogue is filled by the operator inside the cluster. A local dashboard holds no copy of it, so no instance types are listed here."
-	unfilledNotice   = "The operator has not filled the instance type catalogue for provider config %q yet."
-	noMatchNotice    = "Provider config %q offers no instance types in region %q."
-	readFailedNotice = "The instance types for provider config %q could not be read: %v."
-	refreshedNotice  = "The catalogue for provider config %q was refreshed %s ago."
 	configQueryKey   = "config"
 	regionQueryKey   = "region"
-	rateForm         = "%.4f %s"
+)
+
+type catalogueState string
+
+const (
+	stateNoSelection       catalogueState = "NoSelection"
+	stateCatalogueAbsent   catalogueState = "CatalogueAbsent"
+	stateCatalogueUnfilled catalogueState = "CatalogueUnfilled"
+	stateNoMatch           catalogueState = "NoMatch"
+	stateReadFailed        catalogueState = "ReadFailed"
+	stateListed            catalogueState = "Listed"
 )
 
 var errAbsentCatalogue = errors.New("web: this process holds no instance type catalogue")
@@ -41,131 +43,142 @@ func (absentCatalogue) List(string, string) ([]provider.InstanceType, error) {
 
 func (absentCatalogue) Age(string) (time.Duration, bool) { return 0, false }
 
-type machineConfigRow struct {
-	Name  string
-	Type  string
-	Ready string
-	Age   string
+type providerConfigSummary struct {
+	Name      string                  `json:"name"`
+	Type      string                  `json:"type"`
+	Ready     *metav1.ConditionStatus `json:"ready"`
+	CreatedAt string                  `json:"createdAt"`
 }
 
-type machineTypeRow struct {
-	Name         string
-	Architecture string
-	CPUType      string
-	CPUCores     int
-	Memory       string
-	Disk         string
-	HourlyRate   string
-	Available    string
-	Deprecated   string
+type money struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
 }
 
-type machineView struct {
-	Configs   []machineConfigRow
-	Config    string
-	Region    string
-	Notice    string
-	Refreshed string
-	Types     []machineTypeRow
+type machineType struct {
+	Name         string  `json:"name"`
+	Architecture *string `json:"architecture"`
+	CPUType      *string `json:"cpuType"`
+	CPUCores     int     `json:"cpuCores"`
+	MemoryBytes  int64   `json:"memoryBytes"`
+	DiskBytes    int64   `json:"diskBytes"`
+	HourlyRate   *money  `json:"hourlyRate"`
+	Available    bool    `json:"available"`
+	Deprecated   bool    `json:"deprecated"`
 }
 
-func newMachineConfigRows(configs []v1alpha1.ProviderConfig, now time.Time) []machineConfigRow {
-	rows := make([]machineConfigRow, 0, len(configs))
+type machineCatalogueResponse struct {
+	Configs     []providerConfigSummary `json:"configs"`
+	Config      string                  `json:"config"`
+	Region      string                  `json:"region"`
+	State       catalogueState          `json:"state"`
+	Detail      *string                 `json:"detail"`
+	RefreshedAt *string                 `json:"refreshedAt"`
+	Types       []machineType           `json:"types"`
+	ObservedAt  string                  `json:"observedAt"`
+}
+
+type catalogueResult struct {
+	types  []machineType
+	state  catalogueState
+	detail *string
+}
+
+func newProviderConfigSummaries(configs []v1alpha1.ProviderConfig) []providerConfigSummary {
+	summaries := make([]providerConfigSummary, 0, len(configs))
 	for i := range configs {
 		config := &configs[i]
-		rows = append(rows, machineConfigRow{
-			Name:  config.Name,
-			Type:  config.Spec.Type,
-			Ready: conditionStatus(config.Status.Conditions, v1alpha1.ConditionReady),
-			Age:   age(&config.CreationTimestamp, now),
+		summaries = append(summaries, providerConfigSummary{
+			Name:      config.Name,
+			Type:      config.Spec.Type,
+			Ready:     conditionStatus(config.Status.Conditions, v1alpha1.ConditionReady),
+			CreatedAt: rfc3339(config.CreationTimestamp.Time),
 		})
 	}
-	return rows
+	return summaries
 }
 
-func newMachineTypeRow(offered provider.InstanceType) machineTypeRow {
-	return machineTypeRow{
+func newMachineType(offered provider.InstanceType) machineType {
+	return machineType{
 		Name:         offered.Name,
-		Architecture: text(offered.Architecture),
-		CPUType:      text(offered.CPUType),
+		Architecture: nullable(offered.Architecture),
+		CPUType:      nullable(offered.CPUType),
 		CPUCores:     offered.CPUCores,
-		Memory:       bytesQuantity(offered.MemoryBytes),
-		Disk:         bytesQuantity(offered.DiskBytes),
+		MemoryBytes:  offered.MemoryBytes,
+		DiskBytes:    offered.DiskBytes,
 		HourlyRate:   rate(offered.HourlyRate),
-		Available:    yesNo(offered.Available),
-		Deprecated:   yesNo(offered.Deprecated),
+		Available:    offered.Available,
+		Deprecated:   offered.Deprecated,
 	}
 }
 
-func rate(hourly provider.Rate) string {
+func rate(hourly provider.Rate) *money {
 	if hourly.Currency == "" {
-		return absent
+		return nil
 	}
-	return fmt.Sprintf(rateForm, hourly.Amount, hourly.Currency)
+	return &money{Amount: hourly.Amount, Currency: hourly.Currency}
 }
 
-func yesNo(flag bool) string {
-	if flag {
-		return "yes"
-	}
-	return "no"
-}
-
-func (s *Server) machineTypes(config, region string) ([]machineTypeRow, string) {
+func (s *Server) machineTypes(config, region string) catalogueResult {
 	if config == "" || region == "" {
-		return nil, chooseNotice
+		return catalogueResult{state: stateNoSelection}
 	}
 
 	offered, err := s.catalogue.List(config, region)
 	switch {
 	case errors.Is(err, errAbsentCatalogue):
-		return nil, absentNotice
+		return catalogueResult{state: stateCatalogueAbsent}
 	case errors.Is(err, catalogue.ErrUnavailable):
-		return nil, fmt.Sprintf(unfilledNotice, config)
+		return catalogueResult{state: stateCatalogueUnfilled}
 	case err != nil:
-		return nil, fmt.Sprintf(readFailedNotice, config, err)
+		return catalogueResult{state: stateReadFailed, detail: ptr(err.Error())}
 	case len(offered) == 0:
-		return nil, fmt.Sprintf(noMatchNotice, config, region)
+		return catalogueResult{state: stateNoMatch}
 	}
 
-	rows := make([]machineTypeRow, 0, len(offered))
+	types := make([]machineType, 0, len(offered))
 	for _, one := range offered {
-		rows = append(rows, newMachineTypeRow(one))
+		types = append(types, newMachineType(one))
 	}
-	return rows, ""
+	return catalogueResult{types: types, state: stateListed}
 }
 
-func (s *Server) refreshed(config string) string {
+func (s *Server) refreshed(config string, now time.Time) *string {
 	if config == "" {
-		return ""
+		return nil
 	}
 	since, filled := s.catalogue.Age(config)
 	if !filled {
-		return ""
+		return nil
 	}
-	return fmt.Sprintf(refreshedNotice, config, duration.HumanDuration(since))
+	return ptr(rfc3339(now.Add(-since)))
 }
 
-func (s *Server) machines(block string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var configs v1alpha1.ProviderConfigList
-		if err := s.client.List(r.Context(), &configs); err != nil {
-			slog.Error("list the provider configs", "error", err)
-			s.fail(w, block, http.StatusBadGateway, configReadFailed)
-			return
-		}
-
-		config := r.URL.Query().Get(configQueryKey)
-		region := r.URL.Query().Get(regionQueryKey)
-		types, notice := s.machineTypes(config, region)
-
-		s.render(w, machinesPage, block, http.StatusOK, newView(machineTitle, machineView{
-			Configs:   newMachineConfigRows(configs.Items, time.Now()),
-			Config:    config,
-			Region:    region,
-			Notice:    notice,
-			Refreshed: s.refreshed(config),
-			Types:     types,
-		}))
+func (s *Server) newMachineCatalogueResponse(
+	configs []v1alpha1.ProviderConfig, config, region string, now time.Time,
+) machineCatalogueResponse {
+	found := s.machineTypes(config, region)
+	return machineCatalogueResponse{
+		Configs:     newProviderConfigSummaries(configs),
+		Config:      config,
+		Region:      region,
+		State:       found.state,
+		Detail:      found.detail,
+		RefreshedAt: s.refreshed(config, now),
+		Types:       orEmpty(found.types),
+		ObservedAt:  rfc3339(now),
 	}
+}
+
+func (s *Server) machines(w http.ResponseWriter, r *http.Request) {
+	var configs v1alpha1.ProviderConfigList
+	if err := s.client.List(r.Context(), &configs); err != nil {
+		slog.Error("list the provider configs", "error", err)
+		writeAPIError(w, http.StatusBadGateway, configReadFailed)
+		return
+	}
+
+	config := r.URL.Query().Get(configQueryKey)
+	region := r.URL.Query().Get(regionQueryKey)
+	writeJSON(w, http.StatusOK, s.newMachineCatalogueResponse(configs.Items, config, region, time.Now()))
 }

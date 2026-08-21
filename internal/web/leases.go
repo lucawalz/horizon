@@ -13,185 +13,198 @@ import (
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
 
-const (
-	leaseListTitle  = "horizon capacity leases"
-	leaseReadFailed = "the capacity leases could not be read from the cluster"
-)
+const leaseReadFailed = "the capacity leases could not be read from the cluster"
 
-type leaseRow struct {
-	Name       string
-	Replicas   int32
-	Region     string
-	Phase      string
-	Expires    string
-	Ready      string
-	Armed      string
-	Age        string
-	Type       string
-	ReadyAt    string
-	ReleasedAt string
+type leaseSummary struct {
+	Name         string                  `json:"name"`
+	Replicas     int32                   `json:"replicas"`
+	Region       string                  `json:"region"`
+	Phase        *v1alpha1.LeasePhase    `json:"phase"`
+	ExpiresAt    *string                 `json:"expiresAt"`
+	Ready        *metav1.ConditionStatus `json:"ready"`
+	Armed        *metav1.ConditionStatus `json:"armed"`
+	CreatedAt    string                  `json:"createdAt"`
+	InstanceType *string                 `json:"instanceType"`
+	ReadyAt      *string                 `json:"readyAt"`
+	ReleasedAt   *string                 `json:"releasedAt"`
 }
 
-type leaseTable struct {
-	Rows    []leaseRow
-	Updated string
+type leaseListResponse struct {
+	Leases     []leaseSummary `json:"leases"`
+	ObservedAt string         `json:"observedAt"`
 }
 
-type conditionRow struct {
-	Type    string
-	Status  string
-	Reason  string
-	Message string
-	Age     string
+type conditionEntry struct {
+	Type               string                 `json:"type"`
+	Status             metav1.ConditionStatus `json:"status"`
+	Reason             *string                `json:"reason"`
+	Message            *string                `json:"message"`
+	LastTransitionTime string                 `json:"lastTransitionTime"`
 }
 
-type instanceRow struct {
-	Name       string
-	ProviderID string
-	NodeName   string
-	Phase      string
-	Age        string
-	LastError  string
+type leaseInstance struct {
+	Name       string                 `json:"name"`
+	ProviderID *string                `json:"providerID"`
+	NodeName   *string                `json:"nodeName"`
+	Phase      v1alpha1.InstancePhase `json:"phase"`
+	CreatedAt  *string                `json:"createdAt"`
+	LastError  *string                `json:"lastError"`
 }
 
-type leaseDetail struct {
-	Row              leaseRow
-	Provider         string
-	Size             string
-	Duration         string
-	TeardownGrace    string
-	Workload         string
-	Migrated         []string
-	AcceptedAt       string
-	ExpiresAt        string
-	ReadyAt          string
-	ReleasedAt       string
-	WatchdogDeadline string
-	Generation       int64
-	Conditions       []conditionRow
-	Instances        []instanceRow
-	Updated          string
+type leaseRequirements struct {
+	MinCPU       int32                    `json:"minCPU"`
+	MinMemory    *string                  `json:"minMemory"`
+	Architecture v1alpha1.Architecture    `json:"architecture"`
+	CPUType      *v1alpha1.CPUType        `json:"cpuType"`
+	Strategy     *v1alpha1.SizingStrategy `json:"strategy"`
 }
 
-func newLeaseRow(lease *v1alpha1.CapacityLease, now time.Time) leaseRow {
-	return leaseRow{
-		Name:       lease.Name,
-		Replicas:   lease.Spec.Replicas,
-		Region:     lease.Spec.Region,
-		Phase:      text(string(lease.Status.Phase)),
-		Expires:    remaining(lease.Status.ExpiresAt, now),
-		Ready:      conditionStatus(lease.Status.Conditions, v1alpha1.ConditionInstancesReady),
-		Armed:      conditionStatus(lease.Status.Conditions, v1alpha1.ConditionWatchdogArmed),
-		Age:        age(&lease.CreationTimestamp, now),
-		Type:       text(lease.Status.InstanceType),
-		ReadyAt:    age(lease.Status.ReadyAt, now),
-		ReleasedAt: age(lease.Status.ReleasedAt, now),
+type leaseDetailResponse struct {
+	Summary              leaseSummary       `json:"summary"`
+	ProviderRef          string             `json:"providerRef"`
+	Size                 *string            `json:"size"`
+	Requirements         *leaseRequirements `json:"requirements"`
+	DurationSeconds      int64              `json:"durationSeconds"`
+	TeardownGraceSeconds *int64             `json:"teardownGraceSeconds"`
+	WorkloadNamespace    *string            `json:"workloadNamespace"`
+	MigratedWorkloads    []string           `json:"migratedWorkloads"`
+	AcceptedAt           *string            `json:"acceptedAt"`
+	WatchdogDeadline     *string            `json:"watchdogDeadline"`
+	ObservedGeneration   int64              `json:"observedGeneration"`
+	Conditions           []conditionEntry   `json:"conditions"`
+	Instances            []leaseInstance    `json:"instances"`
+	ObservedAt           string             `json:"observedAt"`
+}
+
+func newLeaseSummary(lease *v1alpha1.CapacityLease) leaseSummary {
+	return leaseSummary{
+		Name:         lease.Name,
+		Replicas:     lease.Spec.Replicas,
+		Region:       lease.Spec.Region,
+		Phase:        nullable(lease.Status.Phase),
+		ExpiresAt:    instant(lease.Status.ExpiresAt),
+		Ready:        conditionStatus(lease.Status.Conditions, v1alpha1.ConditionInstancesReady),
+		Armed:        conditionStatus(lease.Status.Conditions, v1alpha1.ConditionWatchdogArmed),
+		CreatedAt:    rfc3339(lease.CreationTimestamp.Time),
+		InstanceType: nullable(lease.Status.InstanceType),
+		ReadyAt:      instant(lease.Status.ReadyAt),
+		ReleasedAt:   instant(lease.Status.ReleasedAt),
 	}
 }
 
-func newLeaseTable(leases []v1alpha1.CapacityLease, now time.Time) leaseTable {
-	rows := make([]leaseRow, 0, len(leases))
+func newLeaseListResponse(leases []v1alpha1.CapacityLease, now time.Time) leaseListResponse {
+	summaries := make([]leaseSummary, 0, len(leases))
 	for i := range leases {
-		rows = append(rows, newLeaseRow(&leases[i], now))
+		summaries = append(summaries, newLeaseSummary(&leases[i]))
 	}
-	return leaseTable{Rows: rows, Updated: now.Format(time.TimeOnly)}
+	return leaseListResponse{Leases: summaries, ObservedAt: rfc3339(now)}
 }
 
-func newLeaseDetail(lease *v1alpha1.CapacityLease, now time.Time) leaseDetail {
-	return leaseDetail{
-		Row:              newLeaseRow(lease, now),
-		Provider:         lease.Spec.ProviderRef,
-		Size:             lease.Spec.Size,
-		Duration:         lease.Spec.Duration.Duration.String(),
-		TeardownGrace:    teardownGrace(lease.Spec.TeardownGrace),
-		Workload:         workload(lease.Spec.Workload),
-		Migrated:         lease.Status.MigratedWorkloads,
-		AcceptedAt:       stamp(lease.Status.AcceptedAt, now),
-		ExpiresAt:        stamp(lease.Status.ExpiresAt, now),
-		ReadyAt:          stamp(lease.Status.ReadyAt, now),
-		ReleasedAt:       stamp(lease.Status.ReleasedAt, now),
-		WatchdogDeadline: stamp(lease.Status.WatchdogDeadline, now),
-		Generation:       lease.Status.ObservedGeneration,
-		Conditions:       newConditionRows(lease.Status.Conditions, now),
-		Instances:        newInstanceRows(lease.Status.Instances, now),
-		Updated:          now.Format(time.TimeOnly),
+func newLeaseDetailResponse(lease *v1alpha1.CapacityLease, now time.Time) leaseDetailResponse {
+	return leaseDetailResponse{
+		Summary:              newLeaseSummary(lease),
+		ProviderRef:          lease.Spec.ProviderRef,
+		Size:                 nullable(lease.Spec.Size),
+		Requirements:         newLeaseRequirements(lease.Spec.Requirements),
+		DurationSeconds:      seconds(lease.Spec.Duration.Duration),
+		TeardownGraceSeconds: teardownGraceSeconds(lease.Spec.TeardownGrace),
+		WorkloadNamespace:    workloadNamespace(lease.Spec.Workload),
+		MigratedWorkloads:    orEmpty(lease.Status.MigratedWorkloads),
+		AcceptedAt:           instant(lease.Status.AcceptedAt),
+		WatchdogDeadline:     instant(lease.Status.WatchdogDeadline),
+		ObservedGeneration:   lease.Status.ObservedGeneration,
+		Conditions:           newConditionEntries(lease.Status.Conditions),
+		Instances:            newLeaseInstances(lease.Status.Instances),
+		ObservedAt:           rfc3339(now),
 	}
 }
 
-func newConditionRows(conditions []metav1.Condition, now time.Time) []conditionRow {
-	rows := make([]conditionRow, 0, len(conditions))
+func newLeaseRequirements(requirements *v1alpha1.SizeRequirements) *leaseRequirements {
+	if requirements == nil {
+		return nil
+	}
+
+	var minMemory *string
+	if requirements.MinMemory != nil {
+		minMemory = ptr(requirements.MinMemory.String())
+	}
+	return &leaseRequirements{
+		MinCPU:       requirements.MinCPU,
+		MinMemory:    minMemory,
+		Architecture: requirements.Architecture,
+		CPUType:      nullable(requirements.CPUType),
+		Strategy:     nullable(requirements.Strategy),
+	}
+}
+
+func newConditionEntries(conditions []metav1.Condition) []conditionEntry {
+	entries := make([]conditionEntry, 0, len(conditions))
 	for i := range conditions {
 		condition := &conditions[i]
-		rows = append(rows, conditionRow{
-			Type:    condition.Type,
-			Status:  string(condition.Status),
-			Reason:  text(condition.Reason),
-			Message: text(condition.Message),
-			Age:     age(&condition.LastTransitionTime, now),
+		entries = append(entries, conditionEntry{
+			Type:               condition.Type,
+			Status:             condition.Status,
+			Reason:             nullable(condition.Reason),
+			Message:            nullable(condition.Message),
+			LastTransitionTime: rfc3339(condition.LastTransitionTime.Time),
 		})
 	}
-	return rows
+	return entries
 }
 
-func newInstanceRows(instances []v1alpha1.InstanceStatus, now time.Time) []instanceRow {
-	rows := make([]instanceRow, 0, len(instances))
+func newLeaseInstances(instances []v1alpha1.InstanceStatus) []leaseInstance {
+	entries := make([]leaseInstance, 0, len(instances))
 	for i := range instances {
 		instance := &instances[i]
-		rows = append(rows, instanceRow{
+		entries = append(entries, leaseInstance{
 			Name:       instance.Name,
-			ProviderID: text(instance.ProviderID),
-			NodeName:   text(instance.NodeName),
-			Phase:      text(string(instance.Phase)),
-			Age:        age(instance.CreatedAt, now),
-			LastError:  text(instance.LastError),
+			ProviderID: nullable(instance.ProviderID),
+			NodeName:   nullable(instance.NodeName),
+			Phase:      instance.Phase,
+			CreatedAt:  instant(instance.CreatedAt),
+			LastError:  nullable(instance.LastError),
 		})
 	}
-	return rows
+	return entries
 }
 
-func teardownGrace(grace *metav1.Duration) string {
+func teardownGraceSeconds(grace *metav1.Duration) *int64 {
 	if grace == nil {
-		return absent
+		return nil
 	}
-	return grace.Duration.String()
+	return ptr(seconds(grace.Duration))
 }
 
-func workload(ref *v1alpha1.WorkloadRef) string {
+func workloadNamespace(ref *v1alpha1.WorkloadRef) *string {
 	if ref == nil {
-		return absent
+		return nil
 	}
-	return ref.Namespace
+	return nullable(ref.Namespace)
 }
 
-func (s *Server) leaseList(block string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var leases v1alpha1.CapacityLeaseList
-		if err := s.client.List(r.Context(), &leases); err != nil {
-			slog.Error("list the capacity leases", "error", err)
-			s.fail(w, block, http.StatusBadGateway, leaseReadFailed)
-			return
-		}
-		s.render(w, leasesPage, block, http.StatusOK,
-			payload(block, leaseListTitle, newLeaseTable(leases.Items, time.Now())))
+func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
+	var leases v1alpha1.CapacityLeaseList
+	if err := s.client.List(r.Context(), &leases); err != nil {
+		slog.Error("list the capacity leases", "error", err)
+		writeAPIError(w, http.StatusBadGateway, leaseReadFailed)
+		return
 	}
+	writeJSON(w, http.StatusOK, newLeaseListResponse(leases.Items, time.Now()))
 }
 
-func (s *Server) leaseDetail(block string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		name := r.PathValue("name")
+func (s *Server) leaseDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
 
-		var lease v1alpha1.CapacityLease
-		if err := s.client.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {
-			if apierrors.IsNotFound(err) {
-				s.fail(w, block, http.StatusNotFound,
-					fmt.Sprintf("no capacity lease named %q exists in the cluster", name))
-				return
-			}
-			slog.Error("read the capacity lease", "lease", name, "error", err)
-			s.fail(w, block, http.StatusBadGateway, leaseReadFailed)
+	var lease v1alpha1.CapacityLease
+	if err := s.client.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeAPIError(w, http.StatusNotFound,
+				fmt.Sprintf("no capacity lease named %q exists in the cluster", name))
 			return
 		}
-		s.render(w, leasePage, block, http.StatusOK,
-			payload(block, "horizon lease "+lease.Name, newLeaseDetail(&lease, time.Now())))
+		slog.Error("read the capacity lease", "lease", name, "error", err)
+		writeAPIError(w, http.StatusBadGateway, leaseReadFailed)
+		return
 	}
+	writeJSON(w, http.StatusOK, newLeaseDetailResponse(&lease, time.Now()))
 }

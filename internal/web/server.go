@@ -2,11 +2,9 @@
 package web
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"log/slog"
 	"net"
 	"net/http"
@@ -20,7 +18,6 @@ import (
 
 const (
 	loopbackHost      = "127.0.0.1"
-	pollInterval      = 5 * time.Second
 	readHeaderTimeout = 10 * time.Second
 	shutdownGrace     = 5 * time.Second
 )
@@ -33,7 +30,6 @@ type Options struct {
 type Server struct {
 	client    client.Reader
 	catalogue catalogue.Reader
-	pages     map[page]*template.Template
 }
 
 func New(opts Options) (*Server, error) {
@@ -43,11 +39,7 @@ func New(opts Options) (*Server, error) {
 	if opts.Catalogue == nil {
 		return nil, errors.New("web: a catalogue reader is required")
 	}
-	pages, err := parsePages()
-	if err != nil {
-		return nil, err
-	}
-	return &Server{client: opts.Client, catalogue: opts.Catalogue, pages: pages}, nil
+	return &Server{client: opts.Client, catalogue: opts.Catalogue}, nil
 }
 
 // the address is built here rather than taken from a caller, so no flag or option can widen the binding
@@ -86,68 +78,4 @@ func (s *Server) ListenAndServe(ctx context.Context, port uint16) error {
 	}
 	<-stopped
 	return nil
-}
-
-func (s *Server) routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", s.leaseList(layoutTemplate))
-	mux.HandleFunc("GET /fragments/leases", s.leaseList(leaseTableTemplate))
-	mux.HandleFunc("GET /leases/{name}", s.leaseDetail(layoutTemplate))
-	mux.HandleFunc("GET /fragments/leases/{name}", s.leaseDetail(leaseBodyTemplate))
-	mux.HandleFunc("GET /machines", s.machines(layoutTemplate))
-	mux.Handle("GET /assets/", http.FileServerFS(assetFS))
-	return mux
-}
-
-func (s *Server) render(w http.ResponseWriter, name page, block string, status int, data any) {
-	set, known := s.pages[name]
-	if !known {
-		http.Error(w, "the page is not registered", http.StatusInternalServerError)
-		return
-	}
-
-	var body bytes.Buffer
-	if err := set.ExecuteTemplate(&body, block, data); err != nil {
-		slog.Error("render the interface", "page", name, "block", block, "error", err)
-		http.Error(w, "the page could not be rendered", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = body.WriteTo(w)
-}
-
-func (s *Server) fail(w http.ResponseWriter, block string, status int, detail string) {
-	if block != layoutTemplate {
-		http.Error(w, detail, status)
-		return
-	}
-	s.render(w, errorPage, layoutTemplate, status, newView(http.StatusText(status), failure{
-		Heading: http.StatusText(status),
-		Detail:  detail,
-	}))
-}
-
-type failure struct {
-	Heading string
-	Detail  string
-}
-
-type view struct {
-	Title string
-	Poll  string
-	Body  any
-}
-
-func newView(title string, body any) view {
-	return view{Title: title, Poll: pollInterval.String(), Body: body}
-}
-
-// a fragment is swapped into a shell that already exists, so it renders the body on its own
-func payload(block, title string, body any) any {
-	if block == layoutTemplate {
-		return newView(title, body)
-	}
-	return body
 }

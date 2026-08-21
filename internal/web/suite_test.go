@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -84,6 +85,34 @@ func get(t *testing.T, server *Server, target string) *httptest.ResponseRecorder
 	recorder := httptest.NewRecorder()
 	server.routes().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, target, nil))
 	return recorder
+}
+
+func decodeBody[T any](t *testing.T, response *httptest.ResponseRecorder) T {
+	t.Helper()
+	var body T
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode %s: %v", response.Body.String(), err)
+	}
+	return body
+}
+
+func present[T any](t *testing.T, field string, held *T) T {
+	t.Helper()
+	if held == nil {
+		var missing T
+		t.Fatalf("%s is null, want a value", field)
+		return missing
+	}
+	return *held
+}
+
+func parseInstant(t *testing.T, field, encoded string) time.Time {
+	t.Helper()
+	at, err := time.Parse(time.RFC3339, encoded)
+	if err != nil {
+		t.Fatalf("parse %s %q: %v", field, encoded, err)
+	}
+	return at
 }
 
 func createLease(t *testing.T, lease *v1alpha1.CapacityLease, status v1alpha1.CapacityLeaseStatus) {

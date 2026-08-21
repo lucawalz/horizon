@@ -8,9 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
 )
+
+const refreshTolerance = 2 * time.Second
 
 func offeredType(name, region string) provider.InstanceType {
 	return provider.InstanceType{
@@ -32,13 +35,20 @@ func TestMachinesListsTheProviderConfigs(t *testing.T) {
 	createProviderConfig(t, "hetzner")
 
 	server := newTestServer(t, testEnv.Client, AbsentCatalogue())
-	response := get(t, server, "/machines")
+	response := get(t, server, "/api/machines")
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if !strings.Contains(response.Body.String(), "hetzner") {
-		t.Error("the machine view omits the provider config")
+	configs := decodeBody[machineCatalogueResponse](t, response).Configs
+	if len(configs) != 1 {
+		t.Fatalf("configs = %d, want 1", len(configs))
+	}
+	if configs[0].Name != "hetzner" {
+		t.Errorf("name = %q, want %q", configs[0].Name, "hetzner")
+	}
+	if configs[0].Type != v1alpha1.ProviderTypeHetzner {
+		t.Errorf("type = %q, want %q", configs[0].Type, v1alpha1.ProviderTypeHetzner)
 	}
 }
 
@@ -46,13 +56,17 @@ func TestMachinesReportsAnAbsentCatalogue(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
 	server := newTestServer(t, testEnv.Client, AbsentCatalogue())
-	response := get(t, server, "/machines?config=hetzner&region=nbg1")
+	response := get(t, server, "/api/machines?config=hetzner&region=nbg1")
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	if !strings.Contains(response.Body.String(), "holds no copy of it") {
-		t.Error("the absent catalogue is not reported")
+	body := decodeBody[machineCatalogueResponse](t, response)
+	if body.State != stateCatalogueAbsent {
+		t.Errorf("state = %q, want %q", body.State, stateCatalogueAbsent)
+	}
+	if body.Detail != nil {
+		t.Errorf("detail = %q, want null", *body.Detail)
 	}
 }
 
@@ -64,28 +78,41 @@ func TestMachineTypesSeparatesTheCatalogueStates(t *testing.T) {
 		config string
 		region string
 		rows   int
-		notice string
+		state  catalogueState
+		detail *string
 	}{
-		"no selection":   {types: AbsentCatalogue(), rows: 0, notice: chooseNotice},
-		"no catalogue":   {types: AbsentCatalogue(), config: "hetzner", region: "nbg1", notice: absentNotice},
-		"never filled":   {types: stubCatalogue{err: unfilled}, config: "hetzner", region: "nbg1", notice: fmt.Sprintf(unfilledNotice, "hetzner")},
-		"read failed":    {types: stubCatalogue{err: errors.New("token rejected")}, config: "hetzner", region: "nbg1", notice: fmt.Sprintf(readFailedNotice, "hetzner", errors.New("token rejected"))},
-		"filled no rows": {types: stubCatalogue{filled: true}, config: "hetzner", region: "hel1", notice: fmt.Sprintf(noMatchNotice, "hetzner", "hel1")},
+		"no selection": {types: AbsentCatalogue(), state: stateNoSelection},
+		"no catalogue": {types: AbsentCatalogue(), config: "hetzner", region: "nbg1", state: stateCatalogueAbsent},
+		"never filled": {types: stubCatalogue{err: unfilled}, config: "hetzner", region: "nbg1", state: stateCatalogueUnfilled},
+		"read failed": {
+			types: stubCatalogue{err: errors.New("token rejected")}, config: "hetzner", region: "nbg1",
+			state: stateReadFailed, detail: ptr("token rejected"),
+		},
+		"filled no rows": {types: stubCatalogue{filled: true}, config: "hetzner", region: "hel1", state: stateNoMatch},
 		"filled": {
 			types:  stubCatalogue{types: []provider.InstanceType{offeredType("cx22", "nbg1")}, filled: true},
-			config: "hetzner", region: "nbg1", rows: 1,
+			config: "hetzner", region: "nbg1", rows: 1, state: stateListed,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := newTestServer(t, failingReader{err: errors.New("unused")}, testCase.types)
 
-			rows, notice := server.machineTypes(testCase.config, testCase.region)
+			found := server.machineTypes(testCase.config, testCase.region)
 
-			if len(rows) != testCase.rows {
-				t.Errorf("rows = %d, want %d", len(rows), testCase.rows)
+			if len(found.types) != testCase.rows {
+				t.Errorf("rows = %d, want %d", len(found.types), testCase.rows)
 			}
-			if notice != testCase.notice {
-				t.Errorf("notice = %q, want %q", notice, testCase.notice)
+			if found.state != testCase.state {
+				t.Errorf("state = %q, want %q", found.state, testCase.state)
+			}
+			if testCase.detail == nil {
+				if found.detail != nil {
+					t.Errorf("detail = %q, want null", *found.detail)
+				}
+				return
+			}
+			if detail := present(t, "detail", found.detail); !strings.Contains(detail, *testCase.detail) {
+				t.Errorf("detail = %q, want it to carry %q", detail, *testCase.detail)
 			}
 		})
 	}
@@ -102,23 +129,68 @@ func TestMachinesRendersTheOfferedTypes(t *testing.T) {
 	}
 
 	server := newTestServer(t, testEnv.Client, types)
-	response := get(t, server, "/machines?config=hetzner&region=nbg1")
+	response := get(t, server, "/api/machines?config=hetzner&region=nbg1")
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
-	body := response.Body.String()
-	for _, want := range []string{"cx22", "4Gi", "0.0074 EUR", "refreshed 30m ago"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the machine view omits %q", want)
-		}
+	body := decodeBody[machineCatalogueResponse](t, response)
+	if body.State != stateListed {
+		t.Fatalf("state = %q, want %q", body.State, stateListed)
+	}
+	if len(body.Types) != 1 {
+		t.Fatalf("types = %d, want 1", len(body.Types))
+	}
+
+	offered := body.Types[0]
+	if offered.Name != "cx22" {
+		t.Errorf("name = %q, want %q", offered.Name, "cx22")
+	}
+	if architecture := present(t, "architecture", offered.Architecture); architecture != "x86" {
+		t.Errorf("architecture = %q, want %q", architecture, "x86")
+	}
+	if cpuType := present(t, "cpuType", offered.CPUType); cpuType != "shared" {
+		t.Errorf("cpuType = %q, want %q", cpuType, "shared")
+	}
+	if offered.CPUCores != 2 {
+		t.Errorf("cpuCores = %d, want 2", offered.CPUCores)
+	}
+	if offered.MemoryBytes != 4<<30 {
+		t.Errorf("memoryBytes = %d, want %d", offered.MemoryBytes, 4<<30)
+	}
+	if offered.DiskBytes != 40<<30 {
+		t.Errorf("diskBytes = %d, want %d", offered.DiskBytes, 40<<30)
+	}
+	if !offered.Available {
+		t.Error("available = false, want true")
+	}
+	if offered.Deprecated {
+		t.Error("deprecated = true, want false")
+	}
+
+	hourly := present(t, "hourlyRate", offered.HourlyRate)
+	if hourly.Amount != 0.0074 {
+		t.Errorf("hourlyRate amount = %v, want %v", hourly.Amount, 0.0074)
+	}
+	if hourly.Currency != "EUR" {
+		t.Errorf("hourlyRate currency = %q, want %q", hourly.Currency, "EUR")
+	}
+
+	refreshedAt := parseInstant(t, "refreshedAt", present(t, "refreshedAt", body.RefreshedAt))
+	want := time.Now().Add(-30 * time.Minute)
+	if drift := refreshedAt.Sub(want); drift > refreshTolerance || drift < -refreshTolerance {
+		t.Errorf("refreshedAt = %s, want %s within %s", refreshedAt, want, refreshTolerance)
 	}
 }
 
 func TestMachinesReportsAClusterFailure(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("the api server is unreachable")}, AbsentCatalogue())
 
-	if response := get(t, server, "/machines"); response.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want %d", response.Code, http.StatusBadGateway)
+	response := get(t, server, "/api/machines")
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadGateway)
+	}
+	if failure := decodeBody[apiError](t, response); failure.Status != http.StatusBadGateway {
+		t.Errorf("body status = %d, want %d", failure.Status, http.StatusBadGateway)
 	}
 }
