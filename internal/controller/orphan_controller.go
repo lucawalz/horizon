@@ -47,7 +47,12 @@ func (r *OrphanReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
-	stranded, err := r.nodeIsStranded(ctx, &node, leaseUID)
+	// a node that strands later must first lose readiness, and that transition wakes the watch
+	if nodeReady(&node) {
+		return ctrl.Result{}, nil
+	}
+
+	stranded, err := r.leaseAndInstanceAreGone(ctx, &node, leaseUID)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -62,11 +67,7 @@ func (r *OrphanReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
-func (r *OrphanReconciler) nodeIsStranded(ctx context.Context, node *corev1.Node, leaseUID string) (bool, error) {
-	if nodeReady(node) {
-		return false, nil
-	}
-
+func (r *OrphanReconciler) leaseAndInstanceAreGone(ctx context.Context, node *corev1.Node, leaseUID string) (bool, error) {
 	live, err := r.liveLeaseUIDs(ctx)
 	if err != nil {
 		return false, err

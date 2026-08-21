@@ -126,9 +126,12 @@ func TestReadyNodeIsRetainedEvenWithoutALeaseOrAnInstance(t *testing.T) {
 	f.deleteInstance(node.Name)
 	f.deleteLease(lease)
 
-	f.reconcileNode(node)
+	result := f.reconcileNode(node)
 
 	f.assertNodePresent(node, true)
+	if result.RequeueAfter != 0 {
+		t.Errorf("requeue after %s, want no requeue", result.RequeueAfter)
+	}
 	f.assertNoLeaks()
 }
 
@@ -406,5 +409,23 @@ func TestSweepRecordsNoReleaseWhileTheInstanceSurvives(t *testing.T) {
 
 	f.provider.FailDelete = nil
 	f.mustSweep()
+	f.assertNoLeaks()
+}
+
+func TestAHealthyLeasedNodeIsNotWokenAgain(t *testing.T) {
+	f := newOrphanFixture(t)
+	lease := f.createLease("healthy")
+	node := f.createNode("healthy", string(lease.UID), corev1.ConditionTrue)
+	f.createInstance(node.Name, string(lease.UID), f.instant.Add(time.Hour))
+
+	result := f.reconcileNode(node)
+
+	f.assertNodePresent(node, true)
+	if result.RequeueAfter != 0 {
+		t.Errorf("requeue after %s, want no requeue", result.RequeueAfter)
+	}
+	if calls := f.provider.GetCalls(); len(calls) != 0 {
+		t.Errorf("provider consulted for a ready node: %v", calls)
+	}
 	f.assertNoLeaks()
 }
