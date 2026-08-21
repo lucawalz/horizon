@@ -70,6 +70,10 @@ jobs:
       # the root tsconfig carries project references only, so a plain tsc --noEmit checks nothing
       - run: npx tsc -b --noEmit
         working-directory: internal/web/site
+      - run: npm test
+        working-directory: internal/web/site
+      - run: npm run lint
+        working-directory: internal/web/site
       - run: npm run build
         working-directory: internal/web/site
       - name: committed dist matches a fresh build
