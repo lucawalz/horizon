@@ -12,7 +12,7 @@ import (
 var recordInstant = time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
 
 func TestRecordInstanceReleasedMovesTheWholeCostTrio(t *testing.T) {
-	const config, region, instanceType = "cost", "hel1", "cx23"
+	config, region, instanceType := ownedByTest(t, "cost"), "hel1", "cx23"
 
 	RecordInstanceReleased(config, region, instanceType, PathController, recordInstant, recordInstant.Add(10*time.Minute))
 	RecordInstanceReleased(config, region, instanceType, PathController, recordInstant, recordInstant.Add(10*time.Minute))
@@ -54,7 +54,7 @@ func TestBilledHoursRoundsUpToTheBillingIncrement(t *testing.T) {
 }
 
 func TestRecordInstanceReleasedIgnoresANegativeLifetime(t *testing.T) {
-	const config, region, instanceType = "skewed", "hel1", "cx23"
+	config, region, instanceType := ownedByTest(t, "skewed"), "hel1", "cx23"
 
 	RecordInstanceReleased(config, region, instanceType, PathNode, recordInstant, recordInstant.Add(-time.Hour))
 
@@ -67,7 +67,7 @@ func TestRecordInstanceReleasedIgnoresANegativeLifetime(t *testing.T) {
 }
 
 func TestRecordInstanceReleasedCountsAReleaseWhoseCreationInstantIsUnknown(t *testing.T) {
-	const config, region, instanceType = "undated", "hel1", "cx23"
+	config, region, instanceType := ownedByTest(t, "undated"), "hel1", "cx23"
 
 	RecordInstanceReleased(config, region, instanceType, PathOrphan, time.Time{}, recordInstant)
 
@@ -88,7 +88,7 @@ func TestRecordInstanceReleasedCountsAReleaseWhoseCreationInstantIsUnknown(t *te
 }
 
 func TestRecordInstanceReleasedLeavesTheUnknownCounterAloneForADatedRelease(t *testing.T) {
-	const config, region, instanceType = "dated", "hel1", "cx23"
+	config, region, instanceType := ownedByTest(t, "dated"), "hel1", "cx23"
 
 	RecordInstanceReleased(config, region, instanceType, PathNode, recordInstant, recordInstant.Add(time.Minute))
 
@@ -98,7 +98,7 @@ func TestRecordInstanceReleasedLeavesTheUnknownCounterAloneForADatedRelease(t *t
 }
 
 func TestCatalogueAgeSeriesIsAbsentUntilTheCatalogueIsFilled(t *testing.T) {
-	const config = "unfilled"
+	config := ownedByTest(t, "unfilled")
 
 	if series := seriesFor(t, catalogueAgeSeconds, config); len(series) != 0 {
 		t.Fatalf("a provider config that never filled owns %d age series, want 0", len(series))
@@ -118,7 +118,7 @@ func TestCatalogueAgeSeriesIsAbsentUntilTheCatalogueIsFilled(t *testing.T) {
 }
 
 func TestForgetProviderCatalogueDropsGaugesAndKeepsCounters(t *testing.T) {
-	const config, region, instanceType = "evicted", "hel1", "cx23"
+	config, region, instanceType := ownedByTest(t, "evicted"), "hel1", "cx23"
 
 	SetInstanceTypePrice(config, region, instanceType, 0.0074)
 	SetInstanceTypeCapacity(config, instanceType, 2, 4<<30)
@@ -141,7 +141,7 @@ func TestForgetProviderCatalogueDropsGaugesAndKeepsCounters(t *testing.T) {
 }
 
 func TestObserveLeaseReadyLandsInTheBucketAboveTheObservedJoinMode(t *testing.T) {
-	const config, region, instanceType = "ready", "hel1", "cx23"
+	config, region, instanceType := ownedByTest(t, "ready"), "hel1", "cx23"
 
 	ObserveLeaseReady(config, region, instanceType, SelectionPinned, 71*time.Second)
 

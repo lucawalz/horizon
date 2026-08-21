@@ -40,3 +40,30 @@ func soleSeriesFor(t *testing.T, collector prometheus.Collector, providerConfig 
 	}
 	return matching[0]
 }
+
+func providerLabelledVectors() []interface {
+	DeletePartialMatch(prometheus.Labels) int
+} {
+	return []interface {
+		DeletePartialMatch(prometheus.Labels) int
+	}{
+		instanceReleasedTotal, instanceSecondsTotal, instanceBilledHoursTotal, instanceLifetimeUnknownTotal,
+		leaseReadySeconds, leaseReleaseSeconds, leaseTerminalTotal,
+		instanceTypePriceEstimate, instanceTypeCPUCores, instanceTypeMemoryBytes,
+		instanceTypeSelectedTotal, instanceTypeSelectionFailedTotal,
+		catalogueAgeSeconds, catalogueRefreshTotal,
+		watchdogRenewalsTotal, orphanInstancesDeletedTotal, providerRequestDurationSeconds,
+	}
+}
+
+// the registry outlives every test, so series left behind would accumulate across repeated runs of the same suite
+func ownedByTest(t *testing.T, providerConfig string) string {
+	t.Helper()
+	t.Cleanup(func() {
+		owned := prometheus.Labels{labelProvider: providerConfig}
+		for _, vec := range providerLabelledVectors() {
+			vec.DeletePartialMatch(owned)
+		}
+	})
+	return providerConfig
+}
