@@ -1,0 +1,45 @@
+{{define "content"}}
+<h1>Machine types</h1>
+<p class="lede">The instance types a provider config offers in a region. This view reads the catalogue and never writes to a provider config.</p>
+
+<form class="picker" method="get" action="/machines">
+<label for="config">Provider config</label>
+<select id="config" name="config">
+<option value="">none</option>
+{{range .Body.Configs}}
+<option value="{{.Name}}"{{if eq .Name $.Body.Config}} selected{{end}}>{{.Name}}</option>
+{{end}}
+</select>
+<label for="region">Region</label>
+<input id="region" name="region" value="{{.Body.Region}}" placeholder="nbg1">
+<button type="submit">List types</button>
+</form>
+
+{{if .Body.Notice}}<p class="notice">{{.Body.Notice}}</p>{{end}}
+{{if .Body.Refreshed}}<p class="stamp">{{.Body.Refreshed}}</p>{{end}}
+
+{{if .Body.Types}}
+<table>
+<thead><tr><th>Name</th><th>Architecture</th><th>CPU type</th><th>Cores</th><th>Memory</th><th>Disk</th><th>Hourly rate</th><th>Available</th><th>Deprecated</th></tr></thead>
+<tbody>
+{{range .Body.Types}}
+<tr><td>{{.Name}}</td><td>{{.Architecture}}</td><td>{{.CPUType}}</td><td>{{.CPUCores}}</td><td>{{.Memory}}</td><td>{{.Disk}}</td><td>{{.HourlyRate}}</td><td>{{.Available}}</td><td>{{.Deprecated}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+
+<h2>Provider configs</h2>
+{{if .Body.Configs}}
+<table>
+<thead><tr><th>Name</th><th>Type</th><th>Ready</th><th>Age</th></tr></thead>
+<tbody>
+{{range .Body.Configs}}
+<tr><td>{{.Name}}</td><td>{{.Type}}</td><td>{{.Ready}}</td><td>{{.Age}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="notice">No provider config exists in the cluster.</p>
+{{end}}
+{{end}}

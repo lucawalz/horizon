@@ -1,0 +1,39 @@
+{{define "content"}}
+<h1>Capacity leases</h1>
+<div id="leases" hx-get="/fragments/leases" hx-trigger="every {{.Poll}}" hx-swap="innerHTML">
+{{template "leaseTable" .Body}}
+</div>
+{{end}}
+
+{{define "leaseTable"}}
+{{if .Rows}}
+<table>
+<thead>
+<tr>
+<th>Name</th><th>Replicas</th><th>Region</th><th>Phase</th><th>Expires</th>
+<th>Ready</th><th>Armed</th><th>Age</th><th>Type</th><th>ReadyAt</th><th>ReleasedAt</th>
+</tr>
+</thead>
+<tbody>
+{{range .Rows}}
+<tr>
+<td><a href="/leases/{{.Name}}">{{.Name}}</a></td>
+<td>{{.Replicas}}</td>
+<td>{{.Region}}</td>
+<td><span class="phase phase-{{.Phase}}">{{.Phase}}</span></td>
+<td>{{.Expires}}</td>
+<td>{{.Ready}}</td>
+<td>{{.Armed}}</td>
+<td>{{.Age}}</td>
+<td>{{.Type}}</td>
+<td>{{.ReadyAt}}</td>
+<td>{{.ReleasedAt}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="notice">No capacity lease exists in the cluster.</p>
+{{end}}
+<p class="stamp">Updated {{.Updated}}.</p>
+{{end}}

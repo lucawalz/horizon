@@ -1,0 +1,152 @@
+package web
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"strconv"
+	"testing"
+	"time"
+)
+
+const dialTimeout = 500 * time.Millisecond
+
+func TestListenLoopbackBindsALoopbackAddress(t *testing.T) {
+	listener, err := listenLoopback(0)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	address, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address %T, want a tcp address", listener.Addr())
+	}
+	if !address.IP.IsLoopback() {
+		t.Errorf("bound to %s, want a loopback address", address.IP)
+	}
+}
+
+func TestListenLoopbackRefusesRoutableAddresses(t *testing.T) {
+	routable := routableAddresses(t)
+	if len(routable) == 0 {
+		t.Skip("the host carries no routable address to attempt the connection from")
+	}
+
+	listener, err := listenLoopback(0)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+
+	for _, ip := range routable {
+		target := net.JoinHostPort(ip, port)
+		conn, err := net.DialTimeout("tcp", target, dialTimeout)
+		if err == nil {
+			_ = conn.Close()
+			t.Errorf("connected on %s, want the loopback binding to refuse it", target)
+		}
+	}
+}
+
+func routableAddresses(t *testing.T) []string {
+	t.Helper()
+	addresses, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatalf("read the host addresses: %v", err)
+	}
+
+	var routable []string
+	for _, address := range addresses {
+		network, ok := address.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := network.IP.To4()
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+			continue
+		}
+		routable = append(routable, ip.String())
+	}
+	return routable
+}
+
+func TestListenAndServeRejectsAnUnsetPort(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	server := newTestServer(t, testEnv.Client, AbsentCatalogue())
+	if err := server.ListenAndServe(t.Context(), 0); err == nil {
+		t.Error("serving on port 0 succeeded, want a rejection")
+	}
+}
+
+func TestListenAndServeAnswersOnLoopbackAndStops(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	port := freePort(t)
+	server := newTestServer(t, testEnv.Client, AbsentCatalogue())
+	ctx, cancel := context.WithCancel(t.Context())
+
+	served := make(chan error, 1)
+	go func() { served <- server.ListenAndServe(ctx, port) }()
+
+	response := poll(t, fmt.Sprintf("http://127.0.0.1:%d/", port))
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", response.StatusCode, http.StatusOK)
+	}
+
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Errorf("serve: %v", err)
+		}
+	case <-time.After(shutdownGrace * 2):
+		t.Error("the interface did not stop once the context was cancelled")
+	}
+}
+
+func freePort(t *testing.T) uint16 {
+	t.Helper()
+	listener, err := listenLoopback(0)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close the listener: %v", err)
+	}
+	return uint16(port)
+}
+
+func poll(t *testing.T, url string) *http.Response {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		response, err := http.Get(url)
+		if err == nil {
+			return response
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fetch %s: %v", url, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestNewRefusesAnIncompleteConfiguration(t *testing.T) {
+	for name, opts := range map[string]Options{
+		"no client":    {Catalogue: AbsentCatalogue()},
+		"no catalogue": {Client: failingReader{err: errors.New("unused")}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := New(opts); err == nil {
+				t.Error("the server was built, want a rejection")
+			}
+		})
+	}
+}

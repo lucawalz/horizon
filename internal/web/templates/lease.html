@@ -1,0 +1,58 @@
+{{define "content"}}
+<h1>Lease {{.Body.Row.Name}}</h1>
+<div id="lease" hx-get="/fragments/leases/{{.Body.Row.Name}}" hx-trigger="every {{.Poll}}" hx-swap="innerHTML">
+{{template "leaseBody" .Body}}
+</div>
+{{end}}
+
+{{define "leaseBody"}}
+<h2>Status</h2>
+<dl class="summary">
+<dt>Phase</dt><dd><span class="phase phase-{{.Row.Phase}}">{{.Row.Phase}}</span></dd>
+<dt>Provider config</dt><dd>{{.Provider}}</dd>
+<dt>Region</dt><dd>{{.Row.Region}}</dd>
+<dt>Size</dt><dd>{{.Size}}</dd>
+<dt>Instance type</dt><dd>{{.Row.Type}}</dd>
+<dt>Replicas</dt><dd>{{.Row.Replicas}}</dd>
+<dt>Duration</dt><dd>{{.Duration}}</dd>
+<dt>Teardown grace</dt><dd>{{.TeardownGrace}}</dd>
+<dt>Workload namespace</dt><dd>{{.Workload}}</dd>
+<dt>Expires in</dt><dd>{{.Row.Expires}}</dd>
+<dt>Accepted at</dt><dd>{{.AcceptedAt}}</dd>
+<dt>Expires at</dt><dd>{{.ExpiresAt}}</dd>
+<dt>Ready at</dt><dd>{{.ReadyAt}}</dd>
+<dt>Released at</dt><dd>{{.ReleasedAt}}</dd>
+<dt>Watchdog deadline</dt><dd>{{.WatchdogDeadline}}</dd>
+<dt>Observed generation</dt><dd>{{.Generation}}</dd>
+<dt>Migrated workloads</dt><dd>{{if .Migrated}}{{range .Migrated}}<span class="pill">{{.}}</span>{{end}}{{else}}-{{end}}</dd>
+</dl>
+
+<h2>Conditions</h2>
+{{if .Conditions}}
+<table>
+<thead><tr><th>Type</th><th>Status</th><th>Reason</th><th>Message</th><th>Age</th></tr></thead>
+<tbody>
+{{range .Conditions}}
+<tr><td>{{.Type}}</td><td>{{.Status}}</td><td>{{.Reason}}</td><td>{{.Message}}</td><td>{{.Age}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="notice">The lease carries no condition yet.</p>
+{{end}}
+
+<h2>Instances</h2>
+{{if .Instances}}
+<table>
+<thead><tr><th>Name</th><th>Provider id</th><th>Node</th><th>Phase</th><th>Age</th><th>Last error</th></tr></thead>
+<tbody>
+{{range .Instances}}
+<tr><td>{{.Name}}</td><td>{{.ProviderID}}</td><td>{{.NodeName}}</td><td>{{.Phase}}</td><td>{{.Age}}</td><td>{{.LastError}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="notice">The lease holds no instance.</p>
+{{end}}
+<p class="stamp">Updated {{.Updated}}.</p>
+{{end}}

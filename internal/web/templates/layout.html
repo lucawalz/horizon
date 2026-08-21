@@ -1,0 +1,24 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/assets/style.css">
+<script src="/assets/htmx.min.js" defer></script>
+</head>
+<body>
+<header>
+<a class="brand" href="/">horizon</a>
+<nav>
+<a href="/">Leases</a>
+<a href="/machines">Machine types</a>
+</nav>
+<span class="badge">read only</span>
+</header>
+<main>
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}
