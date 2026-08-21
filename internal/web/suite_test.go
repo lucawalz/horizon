@@ -87,6 +87,11 @@ func get(t *testing.T, server *Server, target string) *httptest.ResponseRecorder
 	return recorder
 }
 
+// the recorder keeps mutating its live header map after WriteHeader, so only the snapshot shows what reached the client
+func sentHeaders(response *httptest.ResponseRecorder) http.Header {
+	return response.Result().Header
+}
+
 func decodeBody[T any](t *testing.T, response *httptest.ResponseRecorder) T {
 	t.Helper()
 	var body T

@@ -106,10 +106,11 @@ func TestTheShellIsNotStored(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
 
 	response := get(t, server, "/")
-	if got := response.Header().Get("Cache-Control"); got != wireNoStore {
+	sent := sentHeaders(response)
+	if got := sent.Get("Cache-Control"); got != wireNoStore {
 		t.Errorf("Cache-Control = %q, want %q so a hashed asset reference cannot outlive the shell", got, wireNoStore)
 	}
-	if got := response.Header().Get("Content-Type"); got != wireHTMLType {
+	if got := sent.Get("Content-Type"); got != wireHTMLType {
 		t.Errorf("Content-Type = %q, want %q", got, wireHTMLType)
 	}
 }
@@ -156,10 +157,11 @@ func TestJSONResponsesAreNotStored(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
 
 	response := get(t, server, "/api/leases")
-	if got := response.Header().Get("Cache-Control"); got != wireNoStore {
+	sent := sentHeaders(response)
+	if got := sent.Get("Cache-Control"); got != wireNoStore {
 		t.Errorf("Cache-Control = %q, want %q", got, wireNoStore)
 	}
-	if got := response.Header().Get("Content-Type"); got != wireJSONType {
+	if got := sent.Get("Content-Type"); got != wireJSONType {
 		t.Errorf("Content-Type = %q, want %q", got, wireJSONType)
 	}
 }

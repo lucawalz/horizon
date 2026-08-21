@@ -78,8 +78,9 @@ func TestJSONResponsesAllowNoCrossOriginCaller(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
 
 	response := get(t, server, "/api/leases")
+	sent := sentHeaders(response)
 	for _, header := range []string{"Access-Control-Allow-Origin", "Access-Control-Allow-Credentials"} {
-		if got := response.Header().Get(header); got != "" {
+		if got := sent.Get(header); got != "" {
 			t.Errorf("%s = %q, want no cross-origin allowance on a loopback interface", header, got)
 		}
 	}
