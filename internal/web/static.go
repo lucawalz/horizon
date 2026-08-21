@@ -11,19 +11,32 @@ import (
 
 const (
 	shellFile        = "index.html"
+	assetPrefix      = "/assets/"
 	htmlContentType  = "text/html; charset=utf-8"
 	interfaceAbsent  = "this build carries no interface"
 	shellUnavailable = "the interface shell could not be read"
 )
 
+func absentInterface() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, interfaceAbsent, http.StatusNotFound)
+	})
+}
+
+// asset names are content hashed, so a miss is a stale reference and must fail rather than answer with the shell
+func bundleFiles(bundle fs.FS) http.Handler {
+	if bundle == nil {
+		return absentInterface()
+	}
+	return http.FileServerFS(bundle)
+}
+
 func siteHandler(bundle fs.FS) http.Handler {
 	if bundle == nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, interfaceAbsent, http.StatusNotFound)
-		})
+		return absentInterface()
 	}
 
-	files := http.FileServerFS(bundle)
+	files := bundleFiles(bundle)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if bundled(bundle, r.URL.Path) {
 			files.ServeHTTP(w, r)
@@ -50,6 +63,7 @@ func serveShell(w http.ResponseWriter, bundle fs.FS) {
 		return
 	}
 	w.Header().Set(contentTypeHeader, htmlContentType)
+	w.Header().Set(cacheControlHeader, noStore)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(shell)
 }
@@ -64,6 +78,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/leases/{name}", s.leaseDetail)
 	mux.HandleFunc("GET /api/machines", s.machines)
 	mux.HandleFunc("GET /api/", apiNotFound)
+	mux.Handle("GET "+assetPrefix, bundleFiles(site.DistDirFS))
 	mux.Handle("GET /", siteHandler(site.DistDirFS))
 	return mux
 }

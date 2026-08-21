@@ -12,7 +12,15 @@ import (
 	"github.com/lucawalz/horizon/internal/web/site"
 )
 
-const mountElement = `id="root"`
+const (
+	mountElement    = `id="root"`
+	wireNoStore     = "no-store"
+	wireJSONType    = "application/json; charset=utf-8"
+	wireHTMLType    = "text/html; charset=utf-8"
+	staleAssetPath  = "/assets/index-deadbeef.js"
+	scriptExtension = ".js"
+	styleExtension  = ".css"
+)
 
 func TestEmbeddedAssetsAreServed(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
@@ -26,6 +34,7 @@ func TestEmbeddedAssetsAreServed(t *testing.T) {
 	}
 
 	var scripts, styles int
+	var oneScript string
 	err := fs.WalkDir(site.DistDirFS, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -33,9 +42,10 @@ func TestEmbeddedAssetsAreServed(t *testing.T) {
 		switch {
 		case entry.IsDir():
 			return nil
-		case path.Ext(name) == ".js":
+		case path.Ext(name) == scriptExtension:
 			scripts++
-		case path.Ext(name) == ".css":
+			oneScript = name
+		case path.Ext(name) == styleExtension:
 			styles++
 		default:
 			return nil
@@ -53,7 +63,27 @@ func TestEmbeddedAssetsAreServed(t *testing.T) {
 		t.Fatalf("walk the embedded bundle: %v", err)
 	}
 	if scripts == 0 || styles == 0 {
-		t.Errorf("the embedded bundle holds %d scripts and %d stylesheets, want at least one of each", scripts, styles)
+		t.Fatalf("the embedded bundle holds %d scripts and %d stylesheets, want at least one of each", scripts, styles)
+	}
+
+	served := get(t, server, "/"+oneScript)
+	if served.Code != http.StatusOK {
+		t.Errorf("/%s status = %d, want %d", oneScript, served.Code, http.StatusOK)
+	}
+	if served.Body.Len() == 0 {
+		t.Errorf("/%s served an empty body", oneScript)
+	}
+}
+
+func TestAStaleAssetReferenceIsRefusedRatherThanShelled(t *testing.T) {
+	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
+
+	response := get(t, server, staleAssetPath)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+	if strings.Contains(response.Body.String(), mountElement) {
+		t.Error("a missing asset served the shell, want a refusal a module loader can report")
 	}
 }
 
@@ -69,6 +99,18 @@ func TestDeepLinksServeTheApplicationShell(t *testing.T) {
 		if !strings.Contains(response.Body.String(), mountElement) {
 			t.Errorf("%s does not serve the shell", target)
 		}
+	}
+}
+
+func TestTheShellIsNotStored(t *testing.T) {
+	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
+
+	response := get(t, server, "/")
+	if got := response.Header().Get("Cache-Control"); got != wireNoStore {
+		t.Errorf("Cache-Control = %q, want %q so a hashed asset reference cannot outlive the shell", got, wireNoStore)
+	}
+	if got := response.Header().Get("Content-Type"); got != wireHTMLType {
+		t.Errorf("Content-Type = %q, want %q", got, wireHTMLType)
 	}
 }
 
@@ -92,14 +134,21 @@ func TestUnknownAPIPathsReportAJSONError(t *testing.T) {
 }
 
 func TestASiteWithoutABundleReportsTheAbsentInterface(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	siteHandler(nil).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	for name, handler := range map[string]http.Handler{
+		"shell":  siteHandler(nil),
+		"assets": bundleFiles(nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if recorder.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", recorder.Code, http.StatusNotFound)
-	}
-	if recorder.Body.Len() == 0 {
-		t.Error("a build without the interface answered with an empty body, want a reason")
+			if recorder.Code != http.StatusNotFound {
+				t.Errorf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+			}
+			if recorder.Body.Len() == 0 {
+				t.Error("a build without the interface answered with an empty body, want a reason")
+			}
+		})
 	}
 }
 
@@ -107,10 +156,10 @@ func TestJSONResponsesAreNotStored(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
 
 	response := get(t, server, "/api/leases")
-	if got := response.Header().Get(cacheControlHeader); got != noStore {
-		t.Errorf("%s = %q, want %q", cacheControlHeader, got, noStore)
+	if got := response.Header().Get("Cache-Control"); got != wireNoStore {
+		t.Errorf("Cache-Control = %q, want %q", got, wireNoStore)
 	}
-	if got := response.Header().Get(contentTypeHeader); got != jsonContentType {
-		t.Errorf("%s = %q, want %q", contentTypeHeader, got, jsonContentType)
+	if got := response.Header().Get("Content-Type"); got != wireJSONType {
+		t.Errorf("Content-Type = %q, want %q", got, wireJSONType)
 	}
 }
