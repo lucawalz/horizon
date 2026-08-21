@@ -13,7 +13,7 @@ const (
 	watchdogRenewalsMetric = "horizon_watchdog_renewals_total"
 	orphanDeletedMetric    = "horizon_orphan_instances_deleted_total"
 
-	repointedAfterAcceptance = "repointed-after-acceptance-with-a-long-string"
+	relatchedApartFromTheSpec = "relatched-apart-from-the-spec-with-a-long-tag"
 )
 
 func (h *harness) assertRenewals(result string, want float64) {
@@ -37,17 +37,17 @@ func TestADeadlineWithSlackToSpareIsNotCountedAsARenewal(t *testing.T) {
 	h.assertRenewals("success", 1)
 }
 
-func TestARenewalOnARepointedLeaseKeepsTheNewNameOutOfEveryLabel(t *testing.T) {
+func TestARenewalIsCountedAgainstTheLatchedProviderConfigNotTheSpec(t *testing.T) {
 	h := newHarness(t)
 	h.becomeReady()
 
-	h.createProviderConfig(repointedAfterAcceptance)
-	h.repointLease(repointedAfterAcceptance, repointedAfterAcceptance, repointedAfterAcceptance)
+	h.relatchProviderConfig(relatchedApartFromTheSpec)
 	h.clock.Advance(testRenewInterval)
 	h.settle()
 
-	h.assertRenewals("success", 2)
-	assertNoSeriesCarries(t, repointedAfterAcceptance)
+	h.assertCounterAt(watchdogRenewalsMetric,
+		map[string]string{"provider": relatchedApartFromTheSpec, "result": "success"}, 1)
+	h.assertRenewals("success", 1)
 }
 
 func TestARenewalTheApiserverRefusesIsCountedAsAFailure(t *testing.T) {

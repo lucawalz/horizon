@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,6 +41,54 @@ type WorkloadRef struct {
 	Namespace string `json:"namespace"`
 }
 
+type Architecture string
+
+const (
+	ArchitectureX86 Architecture = "x86"
+	ArchitectureARM Architecture = "arm"
+)
+
+type CPUType string
+
+const (
+	CPUTypeShared    CPUType = "shared"
+	CPUTypeDedicated CPUType = "dedicated"
+)
+
+type SizingStrategy string
+
+const (
+	StrategyLowestPrice        SizingStrategy = "LowestPrice"
+	StrategyLowestPricePerCore SizingStrategy = "LowestPricePerCore"
+)
+
+type SizeRequirements struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=64
+	MinCPU int32 `json:"minCPU"`
+
+	// +optional
+	MinMemory *resource.Quantity `json:"minMemory,omitempty"`
+
+	// the image an instance boots is resolved from its architecture, so a candidate set cannot be built without one
+	// +kubebuilder:validation:Enum=x86;arm
+	Architecture Architecture `json:"architecture"`
+
+	// +kubebuilder:validation:Enum=shared;dedicated
+	// +optional
+	CPUType CPUType `json:"cpuType,omitempty"`
+
+	// +kubebuilder:default=LowestPrice
+	// +kubebuilder:validation:Enum=LowestPrice;LowestPricePerCore
+	// +optional
+	Strategy SizingStrategy `json:"strategy,omitempty"`
+}
+
+// +kubebuilder:validation:XValidation:rule="has(self.size) != has(self.requirements)",message="set exactly one of size or requirements"
+// +kubebuilder:validation:XValidation:rule="self.providerRef == oldSelf.providerRef",message="providerRef is immutable"
+// +kubebuilder:validation:XValidation:rule="self.region == oldSelf.region",message="region is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.size) == has(oldSelf.size) && (!has(self.size) || self.size == oldSelf.size)",message="size is immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.requirements) == has(oldSelf.requirements) && (!has(self.requirements) || self.requirements == oldSelf.requirements)",message="requirements are immutable"
 type CapacityLeaseSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	ProviderRef string `json:"providerRef"`
@@ -48,7 +97,11 @@ type CapacityLeaseSpec struct {
 	Region string `json:"region"`
 
 	// +kubebuilder:validation:MinLength=1
-	Size string `json:"size"`
+	// +optional
+	Size string `json:"size,omitempty"`
+
+	// +optional
+	Requirements *SizeRequirements `json:"requirements,omitempty"`
 
 	// +kubebuilder:validation:XValidation:rule="self >= 1 && self <= 8",message="replicas must be between 1 and 8"
 	Replicas int32 `json:"replicas"`

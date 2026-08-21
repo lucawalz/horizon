@@ -89,6 +89,41 @@ spec:
                 x-kubernetes-validations:
                 - message: replicas must be between 1 and 8
                   rule: self >= 1 && self <= 8
+              requirements:
+                properties:
+                  architecture:
+                    description: the image an instance boots is resolved from its
+                      architecture, so a candidate set cannot be built without one
+                    enum:
+                    - x86
+                    - arm
+                    type: string
+                  cpuType:
+                    enum:
+                    - shared
+                    - dedicated
+                    type: string
+                  minCPU:
+                    format: int32
+                    maximum: 64
+                    minimum: 1
+                    type: integer
+                  minMemory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  strategy:
+                    default: LowestPrice
+                    enum:
+                    - LowestPrice
+                    - LowestPricePerCore
+                    type: string
+                required:
+                - architecture
+                - minCPU
+                type: object
               size:
                 minLength: 1
                 type: string
@@ -111,8 +146,20 @@ spec:
             - providerRef
             - region
             - replicas
-            - size
             type: object
+            x-kubernetes-validations:
+            - message: set exactly one of size or requirements
+              rule: has(self.size) != has(self.requirements)
+            - message: providerRef is immutable
+              rule: self.providerRef == oldSelf.providerRef
+            - message: region is immutable
+              rule: self.region == oldSelf.region
+            - message: size is immutable
+              rule: has(self.size) == has(oldSelf.size) && (!has(self.size) || self.size
+                == oldSelf.size)
+            - message: requirements are immutable
+              rule: has(self.requirements) == has(oldSelf.requirements) && (!has(self.requirements)
+                || self.requirements == oldSelf.requirements)
           status:
             properties:
               acceptedAt:

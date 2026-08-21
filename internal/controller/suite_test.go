@@ -53,6 +53,17 @@ func objectName(t *testing.T) string {
 	return strings.Trim(nonNameCharacters.ReplaceAllString(strings.ToLower(t.Name()), "-"), "-")
 }
 
+func assertUpdate(t *testing.T, c client.Client, obj client.Object, wantRejected bool) {
+	t.Helper()
+	err := c.Update(t.Context(), obj)
+	switch {
+	case wantRejected && err == nil:
+		t.Fatalf("apiserver accepted an update to %T, want rejection", obj)
+	case !wantRejected && err != nil:
+		t.Fatalf("apiserver rejected an update to %T: %v", obj, err)
+	}
+}
+
 func assertCreate(t *testing.T, c client.Client, obj client.Object, wantRejected bool) {
 	t.Helper()
 	err := c.Create(t.Context(), obj)

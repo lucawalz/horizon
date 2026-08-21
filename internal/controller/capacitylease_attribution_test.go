@@ -20,23 +20,40 @@ func referencing(config string) func(*v1alpha1.CapacityLease) {
 	return func(lease *v1alpha1.CapacityLease) { lease.Spec.ProviderRef = config }
 }
 
-func (h *harness) repointLease(config, region, size string) {
+func (h *harness) assertRepointRefused(field string, repoint func(*v1alpha1.CapacityLeaseSpec)) {
 	h.t.Helper()
 	lease := h.lease()
-	lease.Spec.ProviderRef = config
-	lease.Spec.Region = region
-	lease.Spec.Size = size
-	if err := h.api.Update(h.t.Context(), lease); err != nil {
-		h.t.Fatalf("repoint the accepted lease: %v", err)
+	repoint(&lease.Spec)
+	if err := h.api.Update(h.t.Context(), lease); err == nil {
+		h.t.Errorf("the apiserver let an accepted lease change its %s", field)
+	}
+}
+
+func (h *harness) relatchProviderConfig(config string) {
+	h.t.Helper()
+	lease := h.lease()
+	lease.Status.ProviderConfig = config
+	if err := h.api.Status().Update(h.t.Context(), lease); err != nil {
+		h.t.Fatalf("relatch the provider config: %v", err)
 	}
 }
 
 func TestNothingPatchedOntoAnAcceptedLeaseReachesALabel(t *testing.T) {
 	h := newHarness(t)
 	h.becomeReady()
-
 	h.createProviderConfig(patchedAfterAcceptance)
-	h.repointLease(patchedAfterAcceptance, patchedAfterAcceptance, patchedAfterAcceptance)
+
+	repoints := []struct {
+		field   string
+		repoint func(*v1alpha1.CapacityLeaseSpec)
+	}{
+		{"providerRef", func(s *v1alpha1.CapacityLeaseSpec) { s.ProviderRef = patchedAfterAcceptance }},
+		{"region", func(s *v1alpha1.CapacityLeaseSpec) { s.Region = patchedAfterAcceptance }},
+		{"size", func(s *v1alpha1.CapacityLeaseSpec) { s.Size = patchedAfterAcceptance }},
+	}
+	for _, tc := range repoints {
+		h.assertRepointRefused(tc.field, tc.repoint)
+	}
 
 	h.deleteLease()
 	h.settle()

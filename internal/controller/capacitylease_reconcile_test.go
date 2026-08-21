@@ -566,7 +566,7 @@ func TestInstanceTypeIsSetAtAcceptanceFromSpecSize(t *testing.T) {
 	}
 }
 
-func TestInstanceTypeIsNotRewrittenWhenAcceptanceReplaysWithADifferentSpecSize(t *testing.T) {
+func TestAcceptanceReplayLeavesAnAlreadyLatchedInstanceTypeAlone(t *testing.T) {
 	h := newHarness(t)
 	if _, err := h.reconcile(); err != nil {
 		t.Fatalf("finalizer pass: %v", err)
@@ -574,17 +574,12 @@ func TestInstanceTypeIsNotRewrittenWhenAcceptanceReplaysWithADifferentSpecSize(t
 	if _, err := h.reconcile(); err != nil {
 		t.Fatalf("acceptance pass: %v", err)
 	}
-
-	original := h.lease().Status.InstanceType
-	if original == "" {
-		t.Fatal("instanceType was not set at acceptance")
+	if latched := h.lease().Status.InstanceType; latched != testSize {
+		t.Fatalf("instanceType is %q at acceptance, want %q", latched, testSize)
 	}
 
 	lease := h.lease()
-	lease.Spec.Size = testLargeSize
-	if err := h.api.Update(h.t.Context(), lease); err != nil {
-		t.Fatalf("change spec.size after acceptance: %v", err)
-	}
+	lease.Status.InstanceType = testLargeSize
 	lease.Status.AcceptedAt = nil
 	lease.Status.ExpiresAt = nil
 	if err := h.api.Status().Update(h.t.Context(), lease); err != nil {
@@ -595,8 +590,8 @@ func TestInstanceTypeIsNotRewrittenWhenAcceptanceReplaysWithADifferentSpecSize(t
 		t.Fatalf("replayed acceptance pass: %v", err)
 	}
 
-	if got := h.lease().Status.InstanceType; got != original {
-		t.Errorf("instanceType is %q after acceptance replayed against a changed spec.size, want it to stay %q", got, original)
+	if got := h.lease().Status.InstanceType; got != testLargeSize {
+		t.Errorf("instanceType is %q after acceptance replayed, want the latched %q", got, testLargeSize)
 	}
 }
 
