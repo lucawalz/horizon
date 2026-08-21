@@ -6,6 +6,7 @@
 - `kubectl` configured against a Kubernetes cluster, for exercising the operator outside the test suite
 - `golangci-lint` for linting
 - `helm` for the chart, and a container runtime with buildx for the image, when changing either
+- Node and npm, at the version pinned in `internal/web/site/.nvmrc`, when changing the web interface
 
 ## Setup
 
@@ -34,6 +35,24 @@ make chart-lint
 `go test ./...` still exits zero, but the controller suite skips every case that needs an apiserver when it cannot find the envtest control plane binaries. `make test` downloads them into `bin/k8s` first and points the suite at them, so it is the only invocation that runs everything.
 
 Changes to the API types need `make manifests`, which regenerates the custom resource definitions and copies them into the chart. CI fails when the two copies diverge.
+
+## Web interface
+
+`internal/web/site` is the Vite project behind `horizon dashboard`. Its build output is committed at `internal/web/site/dist` and embedded into the binary, so `go build` needs no Node toolchain and a checkout compiles the interface without one.
+
+Changing anything under `internal/web/site` therefore means rebuilding the bundle and committing the result alongside the source change:
+
+```bash
+cd internal/web/site
+npm ci
+npm run build
+```
+
+The `site` job in CI rebuilds the bundle and fails when it differs from what is committed. It is not a required check yet, as [Required status checks](#required-status-checks) records, so a stale `dist` is reported rather than blocked and rebuilding stays the author's job.
+
+That check is a byte comparison against a bundler, and it only holds while its inputs are pinned. `package-lock.json` pins the dependency graph and `.nvmrc` pins the Node version, which the local build and the CI job read from the same file. Building on another version can produce a difference that has nothing to do with the change.
+
+`npm run dev` serves the interface with hot reload and proxies `/api` to a `horizon dashboard` already running on its default port. The dev server binds `127.0.0.1`, and CI fails if that binding leaves `vite.config.ts` or an npm script overrides it, because the dashboard behind the proxy is unauthenticated. `npm test` runs the frontend unit tests and `npm run lint` runs oxlint.
 
 ## Branch naming
 
