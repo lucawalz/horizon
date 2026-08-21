@@ -208,6 +208,10 @@ func TestLeaseRowFollowsThePrinterColumns(t *testing.T) {
 	lease.CreationTimestamp = metav1.NewTime(now.Add(-90 * time.Minute))
 	lease.Status = activeStatus(now.Add(-30 * time.Minute))
 	lease.Status.ReleasedAt = nil
+	lease.Status.Conditions = []metav1.Condition{
+		condition(v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, now),
+		condition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse, now),
+	}
 
 	summary := newLeaseSummary(lease)
 
@@ -226,7 +230,7 @@ func TestLeaseRowFollowsThePrinterColumns(t *testing.T) {
 			"phase":        string(v1alpha1.LeasePhaseActive),
 			"expiresAt":    now.Add(90 * time.Minute).Format(time.RFC3339),
 			"ready":        string(metav1.ConditionTrue),
-			"armed":        string(metav1.ConditionTrue),
+			"armed":        string(metav1.ConditionFalse),
 			"createdAt":    now.Add(-90 * time.Minute).Format(time.RFC3339),
 			"instanceType": "cx22",
 			"readyAt":      now.Add(-30 * time.Minute).Format(time.RFC3339),
@@ -316,5 +320,21 @@ func TestLeaseDetailExposesTheSizeRequirements(t *testing.T) {
 	}
 	if strategy := present(t, "strategy", requirements.Strategy); strategy != v1alpha1.StrategyLowestPricePerCore {
 		t.Errorf("strategy = %q, want %q", strategy, v1alpha1.StrategyLowestPricePerCore)
+	}
+}
+
+func TestLeaseDetailCarriesDurationsInSeconds(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	lease := leaseFixture("timed-run")
+	lease.Spec.Duration = metav1.Duration{Duration: 2 * time.Hour}
+	lease.Spec.TeardownGrace = &metav1.Duration{Duration: 90 * time.Second}
+
+	detail := newLeaseDetailResponse(lease, now)
+
+	if detail.DurationSeconds != 7200 {
+		t.Errorf("durationSeconds = %d, want 7200 for two hours", detail.DurationSeconds)
+	}
+	if grace := present(t, "teardownGraceSeconds", detail.TeardownGraceSeconds); grace != 90 {
+		t.Errorf("teardownGraceSeconds = %d, want 90", grace)
 	}
 }

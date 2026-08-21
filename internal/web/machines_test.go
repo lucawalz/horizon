@@ -138,6 +138,12 @@ func TestMachinesRendersTheOfferedTypes(t *testing.T) {
 	if body.State != stateListed {
 		t.Fatalf("state = %q, want %q", body.State, stateListed)
 	}
+	if body.Config != "hetzner" {
+		t.Errorf("config = %q, want the requested %q echoed back", body.Config, "hetzner")
+	}
+	if body.Region != "nbg1" {
+		t.Errorf("region = %q, want the requested %q echoed back", body.Region, "nbg1")
+	}
 	if len(body.Types) != 1 {
 		t.Fatalf("types = %d, want 1", len(body.Types))
 	}
@@ -192,5 +198,38 @@ func TestMachinesReportsAClusterFailure(t *testing.T) {
 	}
 	if failure := decodeBody[apiError](t, response); failure.Status != http.StatusBadGateway {
 		t.Errorf("body status = %d, want %d", failure.Status, http.StatusBadGateway)
+	}
+}
+
+func TestRefreshedReportsTheCatalogueFetchInstant(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	fetched := now.Add(-30 * time.Minute)
+
+	for name, testCase := range map[string]struct {
+		types  catalogue.Reader
+		config string
+		want   *string
+	}{
+		"no selection": {types: stubCatalogue{age: 30 * time.Minute, filled: true}},
+		"never filled": {types: stubCatalogue{age: 30 * time.Minute}, config: "hetzner"},
+		"filled": {
+			types: stubCatalogue{age: 30 * time.Minute, filled: true}, config: "hetzner",
+			want: ptr(fetched.Format(time.RFC3339)),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := newTestServer(t, failingReader{err: errors.New("unused")}, testCase.types)
+
+			refreshedAt := server.refreshed(testCase.config, now)
+			if testCase.want == nil {
+				if refreshedAt != nil {
+					t.Errorf("refreshedAt = %q, want null for a catalogue that reports no fetch", *refreshedAt)
+				}
+				return
+			}
+			if got := present(t, "refreshedAt", refreshedAt); got != *testCase.want {
+				t.Errorf("refreshedAt = %q, want %q", got, *testCase.want)
+			}
+		})
 	}
 }

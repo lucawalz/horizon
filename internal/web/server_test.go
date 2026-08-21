@@ -110,6 +110,46 @@ func TestListenAndServeAnswersOnLoopbackAndStops(t *testing.T) {
 	}
 }
 
+// the helper is pinned above, so this pins that the listener the interface actually serves is the one it builds
+func TestListenAndServeRefusesRoutableAddresses(t *testing.T) {
+	routable := routableAddresses(t)
+	if len(routable) == 0 {
+		t.Skip("the host carries no routable address to attempt the connection from")
+	}
+
+	port := freePort(t)
+	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	served := make(chan error, 1)
+	go func() { served <- server.ListenAndServe(ctx, port) }()
+
+	response := poll(t, fmt.Sprintf("http://127.0.0.1:%d/", port))
+	if err := response.Body.Close(); err != nil {
+		t.Errorf("close the response body: %v", err)
+	}
+
+	for _, ip := range routable {
+		target := net.JoinHostPort(ip, strconv.Itoa(int(port)))
+		conn, err := net.DialTimeout("tcp", target, dialTimeout)
+		if err == nil {
+			_ = conn.Close()
+			t.Errorf("the served interface answered on %s, want the loopback binding to refuse it", target)
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Errorf("serve: %v", err)
+		}
+	case <-time.After(shutdownGrace * 2):
+		t.Error("the interface did not stop once the context was cancelled")
+	}
+}
+
 func freePort(t *testing.T) uint16 {
 	t.Helper()
 	listener, err := listenLoopback(0)
