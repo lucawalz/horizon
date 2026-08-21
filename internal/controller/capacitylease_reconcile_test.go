@@ -581,7 +581,7 @@ func TestInstanceTypeIsNotRewrittenWhenAcceptanceReplaysWithADifferentSpecSize(t
 	}
 
 	lease := h.lease()
-	lease.Spec.Size = "fake-large"
+	lease.Spec.Size = testLargeSize
 	if err := h.api.Update(h.t.Context(), lease); err != nil {
 		t.Fatalf("change spec.size after acceptance: %v", err)
 	}

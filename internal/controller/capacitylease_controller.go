@@ -18,6 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/catalogue"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -51,18 +53,23 @@ const (
 	reasonRegistrationTimeout = "RegistrationTimeout"
 	reasonWatchdogArmed       = "WatchdogArmed"
 	reasonWatchdogUnarmed     = "WatchdogUnarmed"
+	reasonUnknownRegion       = "UnknownRegion"
+	reasonUnknownInstanceType = "UnknownInstanceType"
 
 	actionMarkedWatchdogUnarmed = "MarkedWatchdogUnarmed"
 )
 
+const unattributed = ""
+
 type ProviderFactory func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error)
 
 type CapacityLeaseReconciler struct {
-	Client   client.Client
-	Kube     kubernetes.Interface
-	Provider ProviderFactory
-	Clock    func() time.Time
-	Recorder events.EventRecorder
+	Client    client.Client
+	Kube      kubernetes.Interface
+	Provider  ProviderFactory
+	Catalogue catalogue.Reader
+	Clock     func() time.Time
+	Recorder  events.EventRecorder
 }
 
 func (r *CapacityLeaseReconciler) now() time.Time {
@@ -92,15 +99,12 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	cfg, prov, err := r.providerFor(ctx, lease)
 	if err != nil {
-		return r.rejectLease(ctx, lease, err)
+		return r.rejectLease(ctx, lease, unattributed, reasonProviderUnavailable, err)
 	}
 	policy := cfg.Spec.Watchdog
 
 	if lease.Status.AcceptedAt == nil {
-		if err := requireTeardownGuarantee(cfg, prov); err != nil {
-			return r.rejectLease(ctx, lease, err)
-		}
-		return r.acceptLease(ctx, lease)
+		return r.admit(ctx, lease, cfg, prov)
 	}
 
 	if !r.now().Before(lease.Status.ExpiresAt.Time) {
@@ -121,6 +125,9 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.Catalogue == nil {
+		return errors.New("capacitylease: instance type catalogue is required")
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.CapacityLease{}).
 		Named(CapacityLeaseControllerName).
@@ -152,8 +159,10 @@ func (r *CapacityLeaseReconciler) providerFor(ctx context.Context, lease *v1alph
 	return cfg, prov, nil
 }
 
-func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alpha1.CapacityLease, cause error) (ctrl.Result, error) {
-	setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionFalse, reasonProviderUnavailable, cause.Error())
+func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alpha1.CapacityLease, providerConfig, reason string, cause error) (ctrl.Result, error) {
+	if setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionFalse, reason, cause.Error()) && providerConfig != unattributed {
+		metrics.RecordLeaseTerminal(providerConfig, lease.Spec.Region, metrics.OutcomeRejected)
+	}
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, errors.Join(cause, err)
 	}

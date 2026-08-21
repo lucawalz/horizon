@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
 	"github.com/lucawalz/horizon/internal/provider/fake"
 )
@@ -28,6 +29,7 @@ import (
 const (
 	testRegion         = "fake-a"
 	testSize           = "fake-small"
+	testLargeSize      = "fake-large"
 	testLeaseDuration  = time.Hour
 	testWorkloadNS     = "workloads"
 	maxSettlePasses    = 40
@@ -62,9 +64,43 @@ type harness struct {
 	kube        *k8sfake.Clientset
 	clock       *stubClock
 	recorder    *events.FakeRecorder
+	catalogue   catalogue.Reader
 	name        string
 	providerErr error
 	wrapAPI     func(client.Client) client.Client
+}
+
+type stubCatalogue struct {
+	types []provider.InstanceType
+	err   error
+}
+
+func offeredType(name, region string, available bool) provider.InstanceType {
+	return provider.InstanceType{
+		Name:        name,
+		Region:      region,
+		Available:   available,
+		CPUCores:    2,
+		MemoryBytes: 4 << 30,
+		HourlyRate:  provider.Rate{Amount: 0.0074, Currency: "EUR"},
+	}
+}
+
+func (s stubCatalogue) List(_, region string) ([]provider.InstanceType, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	var offered []provider.InstanceType
+	for _, it := range s.types {
+		if it.Region == region {
+			offered = append(offered, it)
+		}
+	}
+	return offered, nil
+}
+
+func (s stubCatalogue) Age(string) (time.Duration, bool) {
+	return 0, s.err == nil
 }
 
 func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harness {
@@ -78,6 +114,10 @@ func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harnes
 		recorder: events.NewFakeRecorder(testEventBufferLen),
 	}
 	h.prov = fake.NewWithClock(h.clock.Now)
+	h.catalogue = stubCatalogue{types: []provider.InstanceType{
+		offeredType(testSize, testRegion, true),
+		offeredType(testLargeSize, testRegion, true),
+	}}
 
 	t.Cleanup(h.assertNoLeaks)
 	h.createProviderConfig()
@@ -174,10 +214,11 @@ func (h *harness) reconciler() *CapacityLeaseReconciler {
 		api = h.wrapAPI(api)
 	}
 	return &CapacityLeaseReconciler{
-		Client:   api,
-		Kube:     h.kube,
-		Clock:    h.clock.Now,
-		Recorder: h.recorder,
+		Client:    api,
+		Kube:      h.kube,
+		Clock:     h.clock.Now,
+		Recorder:  h.recorder,
+		Catalogue: h.catalogue,
 		Provider: func(context.Context, *v1alpha1.ProviderConfig) (provider.Provider, error) {
 			if h.providerErr != nil {
 				return nil, h.providerErr

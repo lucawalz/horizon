@@ -96,11 +96,13 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		return nil, err
 	}
 
+	types := catalogue.NewCache()
 	leases := &controller.CapacityLeaseReconciler{
-		Client:   mgr.GetClient(),
-		Kube:     kube,
-		Provider: providers,
-		Recorder: mgr.GetEventRecorder(controller.CapacityLeaseControllerName),
+		Client:    mgr.GetClient(),
+		Kube:      kube,
+		Provider:  providers,
+		Catalogue: types,
+		Recorder:  mgr.GetEventRecorder(controller.CapacityLeaseControllerName),
 	}
 	if err := leases.SetupWithManager(mgr); err != nil {
 		return nil, fmt.Errorf("set up capacity lease controller: %w", err)
@@ -114,14 +116,14 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		return nil, fmt.Errorf("set up orphan controller: %w", err)
 	}
 
-	if err := addCatalogue(mgr, kube); err != nil {
+	if err := addCatalogue(mgr, kube, types); err != nil {
 		return nil, err
 	}
 
 	return mgr, nil
 }
 
-func addCatalogue(mgr ctrl.Manager, kube kubernetes.Interface) error {
+func addCatalogue(mgr ctrl.Manager, kube kubernetes.Interface, types *catalogue.Cache) error {
 	listers, err := controller.NewCatalogueFactory(kube)
 	if err != nil {
 		return err
@@ -130,7 +132,7 @@ func addCatalogue(mgr ctrl.Manager, kube kubernetes.Interface) error {
 	refresher := &catalogue.Refresher{
 		Client: mgr.GetClient(),
 		Lister: listers,
-		Cache:  catalogue.NewCache(),
+		Cache:  types,
 	}
 	if err := refresher.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up catalogue refresher: %w", err)
