@@ -169,11 +169,19 @@ func (r *CapacityLeaseReconciler) recordIntent(ctx context.Context, lease *v1alp
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
 }
 
+// a lease admitted against a cold catalogue latches nothing, and its pinned size is immutable for the life of the lease
+func machineType(lease *v1alpha1.CapacityLease) string {
+	if lease.Status.InstanceType != "" {
+		return lease.Status.InstanceType
+	}
+	return lease.Spec.Size
+}
+
 func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, entry *v1alpha1.InstanceStatus) (ctrl.Result, error) {
 	inst, createErr := prov.Create(ctx, provider.CreateRequest{
 		Name:   entry.Name,
 		Region: lease.Spec.Region,
-		Size:   lease.Spec.Size,
+		Size:   machineType(lease),
 		Labels: instanceLabels(lease),
 	})
 	if createErr != nil {

@@ -11,13 +11,15 @@ import (
 )
 
 const (
-	leaseReadySecondsMetric   = "horizon_lease_ready_seconds"
-	leaseReleaseSecondsMetric = "horizon_lease_release_seconds"
-	leaseTerminalMetric       = "horizon_lease_terminal_total"
-	instanceReleasedMetric    = "horizon_instance_released_total"
-	instanceSecondsMetric     = "horizon_instance_seconds_total"
-	instanceBilledHoursMetric = "horizon_instance_billed_hours_total"
-	instanceUndatedMetric     = "horizon_instance_lifetime_unknown_total"
+	leaseReadySecondsMetric    = "horizon_lease_ready_seconds"
+	leaseReleaseSecondsMetric  = "horizon_lease_release_seconds"
+	leaseTerminalMetric        = "horizon_lease_terminal_total"
+	instanceReleasedMetric     = "horizon_instance_released_total"
+	instanceSecondsMetric      = "horizon_instance_seconds_total"
+	instanceBilledHoursMetric  = "horizon_instance_billed_hours_total"
+	instanceUndatedMetric      = "horizon_instance_lifetime_unknown_total"
+	instanceTypeSelectedMetric = "horizon_instance_type_selected_total"
+	selectionFailedMetric      = "horizon_instance_type_selection_failed_total"
 )
 
 func gatherFamilies(t *testing.T) []*dto.MetricFamily {

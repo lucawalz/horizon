@@ -53,10 +53,33 @@ func terminalRecord(attributed leaseAttribution, outcome metrics.Outcome) func()
 	}
 }
 
-func readyRecord(attributed leaseAttribution, took time.Duration) func() {
+func readyRecord(attributed leaseAttribution, selection metrics.Selection, took time.Duration) func() {
 	return func() {
 		metrics.ObserveLeaseReady(attributed.providerConfig, attributed.region, attributed.instanceType,
-			metrics.SelectionPinned, took)
+			selection, took)
+	}
+}
+
+func selectionOf(lease *v1alpha1.CapacityLease) metrics.Selection {
+	if lease.Spec.Requirements == nil {
+		return metrics.SelectionPinned
+	}
+	if lease.Spec.Requirements.Strategy == v1alpha1.StrategyLowestPricePerCore {
+		return metrics.SelectionLowestPricePerCore
+	}
+	return metrics.SelectionLowestPrice
+}
+
+func selectedRecord(attributed leaseAttribution, selection metrics.Selection) func() {
+	return func() {
+		metrics.RecordInstanceTypeSelected(attributed.providerConfig, attributed.region,
+			attributed.instanceType, selection)
+	}
+}
+
+func selectionFailedRecord(attributed leaseAttribution, selection metrics.Selection, reason metrics.Reason) func() {
+	return func() {
+		metrics.RecordSelectionFailed(attributed.providerConfig, attributed.region, selection, reason)
 	}
 }
 

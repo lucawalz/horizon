@@ -71,7 +71,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 			ready := r.now()
 			lease.Status.ReadyAt = &metav1.Time{Time: ready}
 			changed = true
-			records.add(readyRecord(attributionOf(lease), ready.Sub(lease.Status.AcceptedAt.Time)))
+			records.add(readyRecord(attributionOf(lease), selectionOf(lease), ready.Sub(lease.Status.AcceptedAt.Time)))
 		}
 	} else {
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonWaitingForNodes,

@@ -593,6 +593,10 @@ func TestAcceptanceReplayLeavesAnAlreadyLatchedInstanceTypeAlone(t *testing.T) {
 	if got := h.lease().Status.InstanceType; got != testLargeSize {
 		t.Errorf("instanceType is %q after acceptance replayed, want the latched %q", got, testLargeSize)
 	}
+	h.assertCounter(instanceTypeSelectedMetric,
+		map[string]string{"instance_type": testSize, "strategy": "pinned"}, 1)
+	h.assertCounter(instanceTypeSelectedMetric,
+		map[string]string{"instance_type": testLargeSize, "strategy": "pinned"}, 0)
 }
 
 func TestReadyAtIsSetWhenInstancesFirstBecomeReady(t *testing.T) {
