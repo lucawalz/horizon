@@ -2,12 +2,14 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stesting "k8s.io/client-go/testing"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
@@ -223,4 +225,60 @@ func TestARetriedNodeDeletionDoesNotCountTheReleaseTwice(t *testing.T) {
 
 	h.assertCounter(instanceReleasedMetric, released, 1)
 	h.assertProviderEmpty()
+}
+
+func TestARefusedStatusWriteDoesNotCountTheTeardownTwice(t *testing.T) {
+	for _, refuseWrite := range []int{2, 3} {
+		t.Run(fmt.Sprintf("write-%d", refuseWrite), func(t *testing.T) {
+			h := newHarness(t)
+			h.becomeReady()
+			h.clock.Advance(testLeaseDuration + overtime)
+
+			refuser := &refusingStatusWriter{
+				refuseWrite: refuseWrite,
+				err:         errors.New("fake: the apiserver refused the status write"),
+			}
+			h.wrapAPI = func(api client.Client) client.Client {
+				refuser.Client = api
+				return refuser
+			}
+			h.settleIgnoringErrors(maxSettlePasses)
+			if refuser.writes < refuseWrite {
+				t.Fatalf("teardown made %d status writes, want at least %d", refuser.writes, refuseWrite)
+			}
+
+			h.wrapAPI = nil
+			h.settle()
+
+			instanceType := map[string]string{"instance_type": testSize}
+			h.assertCounter(instanceReleasedMetric, map[string]string{"instance_type": testSize, "path": "controller"}, 1)
+			h.assertCounter(leaseTerminalMetric, map[string]string{"outcome": "released"}, 1)
+			h.assertObservations(leaseReleaseSecondsMetric, instanceType, 1, overtime.Seconds())
+			h.assertCounter(instanceSecondsMetric, instanceType, lifetimeSeconds)
+		})
+	}
+}
+
+func TestARefusedStatusWriteDoesNotCountTheReadyLeaseTwice(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	h.clock.Advance(71 * time.Second)
+	h.joinNode(h.instanceName(0), true)
+
+	refuser := &refusingStatusWriter{
+		refuseWrite: 1,
+		err:         errors.New("fake: the apiserver refused the status write"),
+	}
+	h.wrapAPI = func(api client.Client) client.Client {
+		refuser.Client = api
+		return refuser
+	}
+	h.settleIgnoringErrors(1)
+
+	h.wrapAPI = nil
+	h.settle()
+	h.settle()
+
+	h.assertObservations(leaseReadySecondsMetric,
+		map[string]string{"instance_type": testSize, "selection": pinnedSelection}, 1, 71)
 }

@@ -326,3 +326,68 @@ func TestADrainedNodeLosesItsPodsWithinTheGrace(t *testing.T) {
 		t.Error("the drain left a pod behind on a node that is going away")
 	}
 }
+
+func leaseFallingDue(deletion, expiry *metav1.Time) *v1alpha1.CapacityLease {
+	lease := &v1alpha1.CapacityLease{}
+	lease.DeletionTimestamp = deletion
+	lease.Status.ExpiresAt = expiry
+	return lease
+}
+
+func TestTeardownIsAnchoredOnTheEarlierOfDeletionAndExpiry(t *testing.T) {
+	early := &metav1.Time{Time: testInstant.Add(5 * time.Minute)}
+	late := &metav1.Time{Time: testInstant.Add(time.Hour)}
+
+	cases := []struct {
+		name     string
+		deletion *metav1.Time
+		expiry   *metav1.Time
+		want     *metav1.Time
+	}{
+		{"deleted before it expires", early, late, early},
+		{"expired before it is deleted", late, early, early},
+		{"deleted while it carries no deadline", early, nil, early},
+		{"expired while it is not deleted", nil, early, early},
+		{"neither deleted nor expired", nil, nil, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start, due := teardownStart(leaseFallingDue(tc.deletion, tc.expiry))
+
+			if due != (tc.want != nil) {
+				t.Fatalf("teardown reports due=%v, want %v", due, tc.want != nil)
+			}
+			if due && !start.Equal(tc.want.Time) {
+				t.Errorf("teardown is anchored at %s, want %s", start, tc.want.Time)
+			}
+		})
+	}
+}
+
+func TestAReleaseConfirmedBeforeTeardownFellDueObservesZero(t *testing.T) {
+	lease := leaseFallingDue(nil, &metav1.Time{Time: testInstant.Add(time.Hour)})
+	lease.Status.ProviderConfig = objectName(t)
+	lease.Status.Region = testRegion
+	lease.Status.InstanceType = testSize
+	lease.Status.Instances = []v1alpha1.InstanceStatus{{
+		Name:       "one",
+		ProviderID: "fake://1",
+		Phase:      v1alpha1.InstancePhaseReleased,
+	}}
+
+	before := snapshotSeries(t)
+	record := releaseDurationRecord(lease, testInstant)
+	if record == nil {
+		t.Fatal("a lease that held capacity recorded no release duration")
+	}
+	record()
+
+	count, sum := before.observations(t, leaseReleaseSecondsMetric, map[string]string{"provider": objectName(t)})
+	if count != 1 {
+		t.Fatalf("%s holds %d observations, want 1", leaseReleaseSecondsMetric, count)
+	}
+	if sum != 0 {
+		t.Errorf("a release confirmed before teardown fell due observed %v seconds, want 0", sum)
+	}
+}

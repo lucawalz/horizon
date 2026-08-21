@@ -59,8 +59,6 @@ const (
 	actionMarkedWatchdogUnarmed = "MarkedWatchdogUnarmed"
 )
 
-const unattributed = ""
-
 type ProviderFactory func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error)
 
 type CapacityLeaseReconciler struct {
@@ -111,6 +109,9 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.expire(ctx, lease)
 	}
 
+	if res, err := r.latchInstanceType(ctx, lease); err != nil || !res.IsZero() {
+		return res, err
+	}
 	if res, err := r.reconcileInstances(ctx, lease, prov); err != nil || !res.IsZero() {
 		return res, err
 	}
@@ -159,23 +160,22 @@ func (r *CapacityLeaseReconciler) providerFor(ctx context.Context, lease *v1alph
 	return cfg, prov, nil
 }
 
-func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alpha1.CapacityLease, providerConfig, reason string, cause error) (ctrl.Result, error) {
-	if setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionFalse, reason, cause.Error()) && providerConfig != unattributed {
-		metrics.RecordLeaseTerminal(providerConfig, lease.Spec.Region, metrics.OutcomeRejected)
+func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alpha1.CapacityLease, attributed leaseAttribution, reason string, cause error) (ctrl.Result, error) {
+	var records metricWrites
+	if setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionFalse, reason, cause.Error()) {
+		records.add(terminalRecord(attributed, metrics.OutcomeRejected))
 	}
-	if err := r.writeStatus(ctx, lease); err != nil {
+	if err := r.writeStatus(ctx, lease, records...); err != nil {
 		return ctrl.Result{}, errors.Join(cause, err)
 	}
 	return ctrl.Result{}, cause
 }
 
-func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease, attributed leaseAttribution) (ctrl.Result, error) {
 	accepted := r.now()
 	lease.Status.AcceptedAt = &metav1.Time{Time: accepted}
 	lease.Status.ExpiresAt = &metav1.Time{Time: accepted.Add(lease.Spec.Duration.Duration)}
-	if lease.Status.InstanceType == "" {
-		lease.Status.InstanceType = lease.Spec.Size
-	}
+	latchAttribution(lease, attributed)
 	setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionTrue, reasonAccepted, "lease accepted and deadline recorded")
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
@@ -205,7 +205,7 @@ func (r *CapacityLeaseReconciler) nextPoll(lease *v1alpha1.CapacityLease, policy
 	return ctrl.Result{RequeueAfter: after}
 }
 
-func (r *CapacityLeaseReconciler) writeStatus(ctx context.Context, lease *v1alpha1.CapacityLease) error {
+func (r *CapacityLeaseReconciler) writeStatus(ctx context.Context, lease *v1alpha1.CapacityLease, records ...func()) error {
 	lease.Status.Phase = derivePhase(lease)
 	lease.Status.ObservedGeneration = lease.Generation
 
@@ -223,6 +223,9 @@ func (r *CapacityLeaseReconciler) writeStatus(ctx context.Context, lease *v1alph
 	})
 	if err != nil {
 		return fmt.Errorf("update status of lease %q: %w", lease.Name, err)
+	}
+	for _, record := range records {
+		record()
 	}
 	return nil
 }

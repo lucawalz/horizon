@@ -372,17 +372,17 @@ func TestSweepingAnExpiredInstanceRecordsItsReleaseAndItsCost(t *testing.T) {
 	f.mustSweep()
 
 	swept := orphanLabels(f.config, map[string]string{"path": "orphan"})
-	if got := counterFor(t, instanceReleasedMetric, swept); got != 1 {
+	if got := f.counter(instanceReleasedMetric, swept); got != 1 {
 		t.Errorf("the orphan sweep recorded %v releases, want 1", got)
 	}
 	cost := orphanLabels(f.config, nil)
-	if got := counterFor(t, instanceSecondsMetric, cost); got != 600 {
+	if got := f.counter(instanceSecondsMetric, cost); got != 600 {
 		t.Errorf("the swept instance booked %v seconds, want 600", got)
 	}
-	if got := counterFor(t, instanceBilledHoursMetric, cost); got != 1 {
+	if got := f.counter(instanceBilledHoursMetric, cost); got != 1 {
 		t.Errorf("the swept instance booked %v billed hours, want 1", got)
 	}
-	if got := counterFor(t, instanceUndatedMetric, cost); got != 0 {
+	if got := f.counter(instanceUndatedMetric, cost); got != 0 {
 		t.Errorf("the swept instance was booked as undated %v times, want 0", got)
 	}
 	f.assertNoLeaks()
@@ -400,7 +400,7 @@ func TestSweepRecordsNoReleaseWhileTheInstanceSurvives(t *testing.T) {
 	}
 
 	swept := orphanLabels(f.config, map[string]string{"path": "orphan"})
-	if got := counterFor(t, instanceReleasedMetric, swept); got != 0 {
+	if got := f.counter(instanceReleasedMetric, swept); got != 0 {
 		t.Errorf("a failed sweep recorded %v releases, want 0", got)
 	}
 

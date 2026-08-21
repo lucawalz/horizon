@@ -65,6 +65,7 @@ type harness struct {
 	clock       *stubClock
 	recorder    *events.FakeRecorder
 	catalogue   catalogue.Reader
+	baseline    seriesSnapshot
 	name        string
 	providerErr error
 	wrapAPI     func(client.Client) client.Client
@@ -109,6 +110,7 @@ func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harnes
 		t:        t,
 		api:      apiServerClient(t),
 		clock:    newStubClock(),
+		baseline: snapshotSeries(t),
 		name:     objectName(t),
 		kube:     newKubeClient(),
 		recorder: events.NewFakeRecorder(testEventBufferLen),
@@ -120,15 +122,15 @@ func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harnes
 	}}
 
 	t.Cleanup(h.assertNoLeaks)
-	h.createProviderConfig()
+	h.createProviderConfig(h.name)
 	h.createLease(mutators...)
 	return h
 }
 
-func (h *harness) createProviderConfig() {
+func (h *harness) createProviderConfig(name string) {
 	h.t.Helper()
 	cfg := &v1alpha1.ProviderConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: h.name},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: v1alpha1.ProviderConfigSpec{
 			Type: v1alpha1.ProviderTypeHetzner,
 			Hetzner: &v1alpha1.HetznerProviderSpec{
@@ -569,4 +571,28 @@ func newKubeClient(objects ...runtime.Object) *k8sfake.Clientset {
 		return true, nil, nil
 	})
 	return kc
+}
+
+type refusingStatusWriter struct {
+	client.Client
+	refuseWrite int
+	writes      int
+	err         error
+}
+
+func (c *refusingStatusWriter) Status() client.SubResourceWriter {
+	return refusingSubResourceWriter{SubResourceWriter: c.Client.Status(), refuser: c}
+}
+
+type refusingSubResourceWriter struct {
+	client.SubResourceWriter
+	refuser *refusingStatusWriter
+}
+
+func (w refusingSubResourceWriter) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	w.refuser.writes++
+	if w.refuser.writes == w.refuser.refuseWrite {
+		return w.refuser.err
+	}
+	return w.SubResourceWriter.Update(ctx, obj, opts...)
 }

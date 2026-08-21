@@ -54,6 +54,7 @@ type orphanFixture struct {
 	ledgers    []*fake.Provider
 	reconciler *OrphanReconciler
 	instant    time.Time
+	baseline   seriesSnapshot
 }
 
 func newOrphanFixture(t *testing.T) *orphanFixture {
@@ -67,6 +68,7 @@ func newOrphanFixture(t *testing.T) *orphanFixture {
 		client:    c,
 		providers: map[string]provider.Provider{},
 		instant:   time.Now().UTC(),
+		baseline:  snapshotSeries(t),
 	}
 	f.config, f.provider = f.addProvider(primaryProviderName)
 	f.reconciler = &OrphanReconciler{Client: c, Provider: f.buildProvider, Clock: f.clock}
@@ -310,4 +312,9 @@ type undeletingProvider struct {
 
 func (undeletingProvider) Delete(context.Context, string) error {
 	return nil
+}
+
+func (f *orphanFixture) counter(name string, labels map[string]string) float64 {
+	f.t.Helper()
+	return f.baseline.counter(f.t, name, labels)
 }

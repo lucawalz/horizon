@@ -5,6 +5,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
@@ -37,6 +38,10 @@ func (h *harness) assertUnaccepted() {
 	}
 	if lease.Status.InstanceType != "" {
 		h.t.Errorf("a rejected lease latched instance type %q", lease.Status.InstanceType)
+	}
+	if lease.Status.ProviderConfig != "" || lease.Status.Region != "" {
+		h.t.Errorf("a rejected lease latched provider config %q and region %q",
+			lease.Status.ProviderConfig, lease.Status.Region)
 	}
 	h.assertProviderEmpty()
 }
@@ -114,25 +119,14 @@ func TestARejectedLeaseCountsOneTerminalOutcomeHoweverOftenItIsReconciled(t *tes
 	h.assertCounter(leaseTerminalMetric, map[string]string{"outcome": "rejected"}, 1)
 }
 
-func TestALeaseRejectedForItsRegionIsNotCountedUnderThatRegion(t *testing.T) {
-	h := newHarness(t, placedIn("fake-z"))
-
-	if err := h.acceptancePass(); err == nil {
-		t.Fatal("acceptance admitted a region the provider does not offer")
-	}
-
-	rejected := gatheredSeries(t, leaseTerminalMetric, map[string]string{"provider": h.name, "region": "fake-z"})
-	if rejected != nil {
-		t.Errorf("a lease rejected for its region minted a series under that region: %v", rejected)
-	}
-}
-
 func TestTheLeaseControllerRefusesToStartWithoutACatalogue(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
+	repeatable := true
 	mgr, err := ctrl.NewManager(testEnv.Config, ctrl.Options{
-		Scheme:  testScheme(),
-		Metrics: metricsserver.Options{BindAddress: "0"},
+		Scheme:     testScheme(),
+		Metrics:    metricsserver.Options{BindAddress: "0"},
+		Controller: config.Controller{SkipNameValidation: &repeatable},
 	})
 	if err != nil {
 		t.Fatalf("build manager: %v", err)

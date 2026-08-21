@@ -27,8 +27,9 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 		return ctrl.Result{}, fmt.Errorf("list instances of lease %q: %w", lease.Name, err)
 	}
 
-	if r.adoptObservedInstances(lease, observed) {
-		if err := r.writeStatus(ctx, lease); err != nil {
+	var records metricWrites
+	if r.adoptObservedInstances(lease, observed, &records) {
+		if err := r.writeStatus(ctx, lease, records...); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: stepRequeue}, nil
@@ -48,7 +49,7 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 	return r.createInstance(ctx, lease, prov, entry)
 }
 
-func (r *CapacityLeaseReconciler) adoptObservedInstances(lease *v1alpha1.CapacityLease, observed []provider.Instance) bool {
+func (r *CapacityLeaseReconciler) adoptObservedInstances(lease *v1alpha1.CapacityLease, observed []provider.Instance, records *metricWrites) bool {
 	unmatched := make(map[string]provider.Instance, len(observed))
 	for _, inst := range observed {
 		unmatched[inst.Name] = inst
@@ -65,7 +66,7 @@ func (r *CapacityLeaseReconciler) adoptObservedInstances(lease *v1alpha1.Capacit
 			if entry.Phase != v1alpha1.InstancePhaseIntended && entry.Phase != v1alpha1.InstancePhaseReleased {
 				entry.Phase = v1alpha1.InstancePhaseReleased
 				changed = true
-				r.recordInstanceRelease(lease, *entry, vanishedPath(lease, r.now()))
+				records.add(r.instanceReleaseRecord(lease, *entry, vanishedPath(lease, r.now())))
 			}
 		case entry.Phase == v1alpha1.InstancePhaseIntended || entry.Phase == v1alpha1.InstancePhaseReleased:
 			entry.Phase = v1alpha1.InstancePhaseCreated
@@ -174,6 +175,7 @@ func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1a
 
 func (r *CapacityLeaseReconciler) retireStalledInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider) (ctrl.Result, error) {
 	now := r.now()
+	var records metricWrites
 	changed := false
 	var firstErr error
 
@@ -184,7 +186,7 @@ func (r *CapacityLeaseReconciler) retireStalledInstances(ctx context.Context, le
 			continue
 		}
 		changed = true
-		if err := r.releaseInstance(ctx, lease, prov, entry, teardownGrace(lease)); !releaseSucceeded(err) {
+		if err := r.releaseInstance(ctx, lease, prov, entry, teardownGrace(lease), &records); !releaseSucceeded(err) {
 			firstErr = errors.Join(firstErr, err)
 			continue
 		}
@@ -195,7 +197,7 @@ func (r *CapacityLeaseReconciler) retireStalledInstances(ctx context.Context, le
 	if !changed {
 		return ctrl.Result{}, nil
 	}
-	if err := r.writeStatus(ctx, lease); err != nil {
+	if err := r.writeStatus(ctx, lease, records...); err != nil {
 		return ctrl.Result{}, errors.Join(firstErr, err)
 	}
 	if firstErr != nil {

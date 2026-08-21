@@ -14,7 +14,6 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
-	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -25,6 +24,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 	}
 
 	renewal := newWatchdogRenewal(lease, policy, r.now())
+	var records metricWrites
 	changed := false
 	renewed := false
 	joined := 0
@@ -70,8 +70,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 			ready := r.now()
 			lease.Status.ReadyAt = &metav1.Time{Time: ready}
 			changed = true
-			metrics.ObserveLeaseReady(lease.Spec.ProviderRef, lease.Spec.Region, lease.Status.InstanceType,
-				metrics.SelectionPinned, ready.Sub(lease.Status.AcceptedAt.Time))
+			records.add(readyRecord(attributionOf(lease), ready.Sub(lease.Status.AcceptedAt.Time)))
 		}
 	} else {
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonWaitingForNodes,
@@ -79,7 +78,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 	}
 
 	if changed {
-		if err := r.writeStatus(ctx, lease); err != nil {
+		if err := r.writeStatus(ctx, lease, records...); err != nil {
 			return ctrl.Result{}, err
 		}
 	}

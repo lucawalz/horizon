@@ -39,6 +39,7 @@ func (r *CapacityLeaseReconciler) teardown(ctx context.Context, lease *v1alpha1.
 
 func (r *CapacityLeaseReconciler) releaseInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider) (ctrl.Result, error) {
 	grace := teardownGrace(lease)
+	var records metricWrites
 	var blocking error
 
 	for i := range lease.Status.Instances {
@@ -46,7 +47,7 @@ func (r *CapacityLeaseReconciler) releaseInstances(ctx context.Context, lease *v
 		if entry.Phase == v1alpha1.InstancePhaseReleased {
 			continue
 		}
-		err := r.releaseInstance(ctx, lease, prov, entry, grace)
+		err := r.releaseInstance(ctx, lease, prov, entry, grace, &records)
 		switch {
 		case err == nil:
 		case errors.Is(err, errReleaseDegraded):
@@ -59,19 +60,19 @@ func (r *CapacityLeaseReconciler) releaseInstances(ctx context.Context, lease *v
 		}
 	}
 
-	if blocking == nil && !hasUnreleasedInstances(lease) {
-		return ctrl.Result{}, nil
-	}
-	if err := r.writeStatus(ctx, lease); err != nil {
+	if err := r.writeStatus(ctx, lease, records...); err != nil {
 		return ctrl.Result{}, errors.Join(blocking, err)
 	}
 	if blocking != nil {
 		return ctrl.Result{}, blocking
 	}
-	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+	if hasUnreleasedInstances(lease) {
+		return ctrl.Result{RequeueAfter: stepRequeue}, nil
+	}
+	return ctrl.Result{}, nil
 }
 
-func (r *CapacityLeaseReconciler) releaseInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, entry *v1alpha1.InstanceStatus, grace time.Duration) error {
+func (r *CapacityLeaseReconciler) releaseInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, entry *v1alpha1.InstanceStatus, grace time.Duration, records *metricWrites) error {
 	if entry.NodeName != "" {
 		entry.Phase = v1alpha1.InstancePhaseDraining
 	}
@@ -100,7 +101,7 @@ func (r *CapacityLeaseReconciler) releaseInstance(ctx context.Context, lease *v1
 	}
 
 	entry.Phase = v1alpha1.InstancePhaseReleased
-	r.recordInstanceRelease(lease, *entry, metrics.PathController)
+	records.add(r.instanceReleaseRecord(lease, *entry, metrics.PathController))
 	if skipped != nil {
 		entry.LastError = skipped.Error()
 		return skipped
@@ -121,19 +122,20 @@ func (r *CapacityLeaseReconciler) drainNode(ctx context.Context, nodeName string
 }
 
 func (r *CapacityLeaseReconciler) finishTeardown(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+	var records metricWrites
 	changed := setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionTrue, reasonReleased, "every instance is confirmed absent")
 	if changed && lease.Status.AcceptedAt != nil {
-		metrics.RecordLeaseTerminal(lease.Spec.ProviderRef, lease.Spec.Region, releaseOutcome(lease))
+		records.add(terminalRecord(attributionOf(lease), releaseOutcome(lease)))
 	}
 	changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonReleased, "capacity released") || changed
 	if lease.Status.ReleasedAt == nil {
 		released := r.now()
 		lease.Status.ReleasedAt = &metav1.Time{Time: released}
 		changed = true
-		r.observeRelease(lease, released)
+		records.add(releaseDurationRecord(lease, released))
 	}
 	if changed {
-		if err := r.writeStatus(ctx, lease); err != nil {
+		if err := r.writeStatus(ctx, lease, records...); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -165,14 +167,14 @@ func releaseOutcome(lease *v1alpha1.CapacityLease) metrics.Outcome {
 	return metrics.OutcomeReleased
 }
 
-func (r *CapacityLeaseReconciler) observeRelease(lease *v1alpha1.CapacityLease, released time.Time) {
+func releaseDurationRecord(lease *v1alpha1.CapacityLease, released time.Time) func() {
 	start, due := teardownStart(lease)
 	if !due || !heldCapacity(lease) {
-		return
+		return nil
 	}
 	// the deletion timestamp is stamped by the API server's clock, which can run ahead of the controller's
 	took := max(released.Sub(start), 0)
-	metrics.ObserveLeaseRelease(lease.Spec.ProviderRef, lease.Spec.Region, lease.Status.InstanceType, took)
+	return releaseRecord(attributionOf(lease), took)
 }
 
 func teardownStart(lease *v1alpha1.CapacityLease) (time.Time, bool) {
@@ -188,12 +190,11 @@ func teardownStart(lease *v1alpha1.CapacityLease) (time.Time, bool) {
 	return start, !start.IsZero()
 }
 
-func (r *CapacityLeaseReconciler) recordInstanceRelease(lease *v1alpha1.CapacityLease, entry v1alpha1.InstanceStatus, path metrics.Path) {
+func (r *CapacityLeaseReconciler) instanceReleaseRecord(lease *v1alpha1.CapacityLease, entry v1alpha1.InstanceStatus, path metrics.Path) func() {
 	if !existedAtProvider(entry) {
-		return
+		return nil
 	}
-	metrics.RecordInstanceReleased(lease.Spec.ProviderRef, lease.Spec.Region, lease.Status.InstanceType,
-		path, createdInstant(entry), r.now())
+	return releasedInstanceRecord(attributionOf(lease), path, createdInstant(entry), r.now())
 }
 
 func createdInstant(entry v1alpha1.InstanceStatus) time.Time {
