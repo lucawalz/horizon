@@ -12,6 +12,7 @@ declare global {
 
 export interface Mounted {
   container: HTMLElement
+  render: (element: ReactElement) => Promise<void>
   unmount: () => Promise<void>
 }
 
@@ -29,6 +30,11 @@ export async function mount(element: ReactElement): Promise<Mounted> {
 
   return {
     container,
+    render: async (next: ReactElement) => {
+      await act(async () => {
+        root?.render(next)
+      })
+    },
     unmount: async () => {
       await act(async () => {
         root?.unmount()

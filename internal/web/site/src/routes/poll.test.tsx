@@ -4,12 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { leasesPath } from '@/lib/api'
 import { secondMs } from '@/lib/duration'
 import { LeaseListRoute } from '@/routes/lease-list'
-import { pollIntervalMs } from '@/routes/poll'
+import { pollIntervalMs, usePolled } from '@/routes/poll'
 import { leaseListBody, leaseSummary, mount, stubFetch } from '@/routes/test-support'
 
 const slowestAllowedMs = 30 * secondMs
 const fastestAllowedMs = 15 * secondMs
 const clockStart = Date.parse('2026-08-21T12:00:00Z')
+const leaseName = 'batch-run'
+const unreachable = 'the cluster is unreachable'
+const firstKey = '/api/leases/alpha'
+const secondKey = '/api/leases/beta'
+const firstReading = 'alpha is active'
+const nothingHeld = 'nothing held'
 
 async function advance(byMs: number) {
   await act(async () => {
@@ -58,5 +64,48 @@ describe('the lease list poll', () => {
     await advance(pollIntervalMs * 2)
 
     expect(respond).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the last answer on screen when a read fails', async () => {
+    const respond = stubFetch(leaseListBody([leaseSummary({ name: leaseName })]))
+    const view = await mount(<LeaseListRoute />)
+    expect(view.container.textContent).toContain(leaseName)
+
+    respond.mockRejectedValueOnce(new Error(unreachable))
+    await advance(pollIntervalMs)
+
+    expect(view.container.textContent).toContain(unreachable)
+    expect(view.container.textContent).toContain(leaseName)
+
+    await view.unmount()
+  })
+})
+
+function Reading({ pollKey, read }: { pollKey: string; read: (key: string) => Promise<string> }) {
+  const view = usePolled(() => read(pollKey), pollKey)
+  return <span>{view.data ?? nothingHeld}</span>
+}
+
+describe('a polled view whose key changes', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(clockStart)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('holds nothing until the new key has an answer of its own', async () => {
+    const unanswered = new Promise<string>(() => undefined)
+    const read = (key: string) => (key === firstKey ? Promise.resolve(firstReading) : unanswered)
+
+    const view = await mount(<Reading pollKey={firstKey} read={read} />)
+    expect(view.container.textContent).toBe(firstReading)
+
+    await view.render(<Reading pollKey={secondKey} read={read} />)
+    expect(view.container.textContent).toBe(nothingHeld)
+
+    await view.unmount()
   })
 })
