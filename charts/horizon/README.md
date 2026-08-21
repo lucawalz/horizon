@@ -2,7 +2,7 @@
 
 Installs the horizon controller, which leases on-demand cloud capacity for a Kubernetes cluster and destroys it when the lease expires.
 
-The chart templates a Deployment, a ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service carrying the metrics port, and the two `horizon.dev` custom resource definitions.
+The chart templates a Deployment, a ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service carrying the metrics port, an optional ServiceMonitor for it, and the two `horizon.dev` custom resource definitions.
 
 The web interface described in ADR 0019 is not served by this release. The chart templates nothing for it, so no port, Service entry or Ingress advertises an endpoint the binary does not answer. The values keys return alongside the interface itself.
 
@@ -67,6 +67,25 @@ kubectl apply -f charts/horizon/crds/
 | `service.metricsPort` | `8080` | Service port mapped to the metrics endpoint. |
 
 The Service port is named `metrics`, and a ServiceMonitor scraping the controller selects it by that name.
+
+### Metrics scraping
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `serviceMonitor.enabled` | `false` | Template a ServiceMonitor for the metrics Service. Off by default, because the resource only exists on a cluster running the Prometheus operator. |
+| `serviceMonitor.interval` | `30s` | Scrape interval. |
+| `serviceMonitor.scrapeTimeout` | `10s` | Scrape timeout. Must not exceed the interval. |
+| `serviceMonitor.labels` | `{}` | Extra labels on the ServiceMonitor. A Prometheus operator instance usually selects monitors by a label, so set whatever its `serviceMonitorSelector` matches, commonly `release: kube-prometheus-stack`. |
+| `serviceMonitor.relabelings` | `[]` | Relabeling rules applied to the scrape target, in the Prometheus operator `relabelings` list form. |
+
+The ServiceMonitor renders only when `serviceMonitor.enabled` is set and the cluster serves `monitoring.coreos.com/v1`. Without the second condition an install on a cluster with no Prometheus operator would fail on an unknown kind, so the resource is skipped instead and the install notes say it was. Rendering the manifest offline therefore needs the API version declared:
+
+```
+helm template horizon ./charts/horizon \
+  --set serviceMonitor.enabled=true --api-versions monitoring.coreos.com/v1
+```
+
+The monitor is created in the release namespace and selects the chart's own Service by `app.kubernetes.io/name` and `app.kubernetes.io/instance`, so a Prometheus whose `serviceMonitorNamespaceSelector` is empty picks it up wherever the release lives.
 
 ### Permissions
 
