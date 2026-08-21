@@ -84,12 +84,15 @@ func (c *Cache) forget(config string) {
 	delete(c.snapshots, config)
 }
 
-func (c *Cache) retain(configs []string) {
+func (c *Cache) retain(configs []string) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var evicted []string
 	for config := range c.snapshots {
 		if !slices.Contains(configs, config) {
+			evicted = append(evicted, config)
 			delete(c.snapshots, config)
 		}
 	}
+	return evicted
 }

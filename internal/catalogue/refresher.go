@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -73,6 +74,7 @@ func (r *Refresher) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resul
 	if err := r.Client.Get(ctx, req.NamespacedName, &cfg); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.Cache.forget(req.Name)
+			metrics.ForgetProviderCatalogue(req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -93,7 +95,9 @@ func (r *Refresher) refreshAll(ctx context.Context) error {
 		live = append(live, cfg.Name)
 		failures = append(failures, r.refresh(ctx, cfg))
 	}
-	r.Cache.retain(live)
+	for _, evicted := range r.Cache.retain(live) {
+		metrics.ForgetProviderCatalogue(evicted)
+	}
 	return errors.Join(failures...)
 }
 
@@ -101,11 +105,29 @@ func (r *Refresher) refresh(ctx context.Context, cfg *v1alpha1.ProviderConfig) e
 	types, err := r.fetch(ctx, cfg)
 	if err != nil {
 		r.failures.Add(1)
+		r.recordRefresh(cfg.Name, metrics.ResultFailure)
 		return fmt.Errorf("catalogue: refresh provider config %q: %w", cfg.Name, err)
 	}
 	r.successes.Add(1)
 	r.Cache.store(cfg.Name, types)
+	publishInstanceTypes(cfg.Name, types)
+	r.recordRefresh(cfg.Name, metrics.ResultSuccess)
 	return nil
+}
+
+// a catalogue that never filled is reported by the absence of an age, never by an age of zero
+func (r *Refresher) recordRefresh(config string, result metrics.Result) {
+	metrics.RecordCatalogueRefresh(config, result)
+	if age, filled := r.Cache.Age(config); filled {
+		metrics.SetCatalogueAge(config, age)
+	}
+}
+
+func publishInstanceTypes(config string, types []provider.InstanceType) {
+	for _, offered := range types {
+		metrics.SetInstanceTypePrice(config, offered.Region, offered.Name, offered.HourlyRate.Amount)
+		metrics.SetInstanceTypeCapacity(config, offered.Name, offered.CPUCores, offered.MemoryBytes)
+	}
 }
 
 func (r *Refresher) fetch(ctx context.Context, cfg *v1alpha1.ProviderConfig) ([]provider.InstanceType, error) {
