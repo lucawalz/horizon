@@ -16,6 +16,7 @@ import (
 	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
+	"github.com/lucawalz/horizon/internal/provider/metered"
 	"github.com/lucawalz/horizon/internal/version"
 )
 
@@ -31,9 +32,13 @@ func NewProviderFactory(kc kubernetes.Interface) (ProviderFactory, error) {
 	return func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error) {
 		switch cfg.Spec.Type {
 		case v1alpha1.ProviderTypeHetzner:
-			return hetznerProvider(ctx, kc, namespace, cfg.Spec.Hetzner, cfg.Spec.Watchdog)
+			built, err := hetznerProvider(ctx, kc, namespace, cfg.Spec.Hetzner, cfg.Spec.Watchdog)
+			if err != nil {
+				return nil, err
+			}
+			return metered.Wrap(cfg.Name, built), nil
 		default:
-			return nil, fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
+			return nil, unsupportedProviderType(cfg)
 		}
 	}, nil
 }
@@ -46,14 +51,22 @@ func NewCatalogueFactory(kc kubernetes.Interface) (catalogue.ListerFactory, erro
 	return func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (catalogue.Lister, error) {
 		switch cfg.Spec.Type {
 		case v1alpha1.ProviderTypeHetzner:
-			return hetznerCatalogue(ctx, kc, namespace, cfg.Spec.Hetzner)
+			built, err := hetznerCatalogue(ctx, kc, namespace, cfg.Spec.Hetzner)
+			if err != nil {
+				return nil, err
+			}
+			return metered.Wrap(cfg.Name, built), nil
 		default:
-			return nil, fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
+			return nil, unsupportedProviderType(cfg)
 		}
 	}, nil
 }
 
-func hetznerCatalogue(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec) (catalogue.Lister, error) {
+func unsupportedProviderType(cfg *v1alpha1.ProviderConfig) error {
+	return fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
+}
+
+func hetznerCatalogue(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec) (provider.Provider, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
 	}

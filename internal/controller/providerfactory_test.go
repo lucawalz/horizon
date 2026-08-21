@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 	"github.com/lucawalz/horizon/internal/provider/fake"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
@@ -32,6 +34,8 @@ const (
 	namespaceFileName   = "namespace"
 	namespaceFilePerm   = 0o600
 	poolLabelAssignment = provider.PoolLabelAssignment
+
+	providerRequestMetric = "horizon_provider_request_duration_seconds"
 )
 
 var testWatchdog = testPolicy(testRenewInterval, testSlack)
@@ -602,4 +606,62 @@ func TestNewCatalogueFactoryRefusesToBuildWithoutANamespace(t *testing.T) {
 	if factory != nil {
 		t.Error("a factory was returned alongside an error")
 	}
+}
+
+func meteredConfig(name string, spec *v1alpha1.HetznerProviderSpec) *v1alpha1.ProviderConfig {
+	return &v1alpha1.ProviderConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec:       v1alpha1.ProviderConfigSpec{Type: v1alpha1.ProviderTypeHetzner, Hetzner: spec},
+	}
+}
+
+// an empty region is refused before the client reaches the network, so the metric is all this proves
+func assertTheClientIsMetered(t *testing.T, config string, list func(ctx context.Context, region string) ([]provider.InstanceType, error)) {
+	t.Helper()
+	baseline := snapshotSeries(t)
+
+	if _, err := list(t.Context(), ""); err == nil {
+		t.Fatal("listing instance types without a region must fail")
+	}
+
+	labels := map[string]string{
+		"provider":  config,
+		"operation": string(metrics.OperationListInstanceTypes),
+		"result":    string(metrics.ResultFailure),
+	}
+	if count, _ := baseline.observations(t, providerRequestMetric, labels); count != 1 {
+		t.Errorf("%s%v holds %d observations, want 1", providerRequestMetric, labels, count)
+	}
+}
+
+func TestNewProviderFactoryMetersTheClientItBuilds(t *testing.T) {
+	const config = "metered-provisioning"
+	t.Setenv(podNamespaceEnvVar, testOperatorNS)
+	factory, err := NewProviderFactory(newKubeClient(credentialSecrets()...))
+	if err != nil {
+		t.Fatalf("building the factory failed: %v", err)
+	}
+
+	prov, err := factory(t.Context(), meteredConfig(config, hetznerSpec(nil)))
+	if err != nil {
+		t.Fatalf("building the provider failed: %v", err)
+	}
+
+	assertTheClientIsMetered(t, config, prov.ListInstanceTypes)
+}
+
+func TestNewCatalogueFactoryMetersTheClientItBuilds(t *testing.T) {
+	const config = "metered-catalogue"
+	t.Setenv(podNamespaceEnvVar, testOperatorNS)
+	factory, err := NewCatalogueFactory(newKubeClient(credentialSecrets()...))
+	if err != nil {
+		t.Fatalf("building the catalogue factory failed: %v", err)
+	}
+
+	lister, err := factory(t.Context(), meteredConfig(config, catalogueSpec()))
+	if err != nil {
+		t.Fatalf("building the lister failed: %v", err)
+	}
+
+	assertTheClientIsMetered(t, config, lister.ListInstanceTypes)
 }
