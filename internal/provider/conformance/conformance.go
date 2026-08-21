@@ -37,6 +37,7 @@ func Run(t *testing.T, newFixture Factory) {
 		{"CreateAppliesManagementLabel", createAppliesManagementLabel},
 		{"CreateAppliesRequestedLabels", createAppliesRequestedLabels},
 		{"CreateIsIdempotentOnName", createIsIdempotentOnName},
+		{"CreateCarriesTheRequestedSize", createCarriesTheRequestedSize},
 		{"GetReturnsNotFoundWhenAbsent", getReturnsNotFoundWhenAbsent},
 		{"GetReturnsCreatedInstance", getReturnsCreatedInstance},
 		{"ListMatchesSelector", listMatchesSelector},
@@ -131,6 +132,26 @@ func createIsIdempotentOnName(t *testing.T, f Fixture) {
 	second := mustCreate(t, f, instanceName, reservedLabels())
 	if second.ProviderID != first.ProviderID {
 		t.Errorf("second Create returned %q, want the existing %q", second.ProviderID, first.ProviderID)
+	}
+}
+
+func createCarriesTheRequestedSize(t *testing.T, f Fixture) {
+	want := f.NewRequest(instanceName).Size
+	if want == "" {
+		t.Fatal("conformance fixture needs a NewRequest that names a size")
+	}
+
+	created := mustCreate(t, f, instanceName, reservedLabels())
+	if created.Size != want {
+		t.Errorf("Create reports size %q, want %q", created.Size, want)
+	}
+
+	fetched, err := f.Provider.Get(t.Context(), instanceName)
+	if err != nil {
+		t.Fatalf("Get(%q): %v", instanceName, err)
+	}
+	if fetched.Size != want {
+		t.Errorf("Get reports size %q, want %q", fetched.Size, want)
 	}
 }
 

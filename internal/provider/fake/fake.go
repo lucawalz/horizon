@@ -113,6 +113,7 @@ func (p *Provider) Create(_ context.Context, req provider.CreateRequest) (provid
 		Name:       req.Name,
 		ProviderID: fmt.Sprintf("fake://%d", p.nextID),
 		Region:     req.Region,
+		Size:       req.Size,
 		State:      provider.Running,
 		Labels:     labels,
 		CreatedAt:  created,

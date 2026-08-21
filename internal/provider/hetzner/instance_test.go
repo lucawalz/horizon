@@ -46,6 +46,9 @@ func (f *fakeAPI) Create(_ context.Context, opts hcloudgo.ServerCreateOpts) (hcl
 	if opts.Location != nil {
 		srv.Location = &hcloudgo.Location{Name: opts.Location.Name}
 	}
+	if opts.ServerType != nil {
+		srv.ServerType = &hcloudgo.ServerType{Name: opts.ServerType.Name}
+	}
 	f.servers = append(f.servers, srv)
 	return hcloudgo.ServerCreateResult{Server: srv}, nil, nil
 }
