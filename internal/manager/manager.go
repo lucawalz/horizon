@@ -26,6 +26,7 @@ import (
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/controller"
+	"github.com/lucawalz/horizon/internal/metrics"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -85,6 +86,10 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 	}
 	if err := mgr.AddReadyzCheck("cache-sync", cacheSyncChecker(mgr)); err != nil {
 		return nil, fmt.Errorf("add readiness check: %w", err)
+	}
+
+	if err := metrics.SetLeaseStateSource(leaseStateSource(mgr.GetCache(), leaseStateReadTimeout)); err != nil {
+		return nil, fmt.Errorf("serve the lease state gauges: %w", err)
 	}
 
 	kube, err := kubernetes.NewForConfig(restConfig)

@@ -64,7 +64,7 @@ func TestHighCardinalityTypesAreNotCached(t *testing.T) {
 }
 
 func TestTheLeaseControllerReadsTheCatalogueTheRefresherFills(t *testing.T) {
-	t.Setenv("POD_NAMESPACE", "horizon-system")
+	t.Setenv(namespaceVar, testNamespace)
 
 	parts, err := newReconcilers(nil, k8sfake.NewSimpleClientset(), nil)
 	if err != nil {
