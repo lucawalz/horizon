@@ -5,9 +5,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -58,5 +60,20 @@ func TestHighCardinalityTypesAreNotCached(t *testing.T) {
 		if !uncached[kind] {
 			t.Errorf("%s is cached cluster-wide", kind)
 		}
+	}
+}
+
+func TestTheLeaseControllerReadsTheCatalogueTheRefresherFills(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "horizon-system")
+
+	parts, err := newReconcilers(nil, k8sfake.NewSimpleClientset(), nil)
+	if err != nil {
+		t.Fatalf("wire the reconcilers: %v", err)
+	}
+	if parts.refresher.Cache == nil {
+		t.Fatal("the catalogue refresher holds no cache")
+	}
+	if parts.leases.Catalogue != catalogue.Reader(parts.refresher.Cache) {
+		t.Error("the lease controller and the catalogue refresher hold different catalogues")
 	}
 }

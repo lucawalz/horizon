@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/events"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -91,50 +92,64 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		return nil, fmt.Errorf("build kubernetes clientset: %w", err)
 	}
 
-	providers, err := controller.NewProviderFactory(kube)
+	parts, err := newReconcilers(mgr.GetClient(), kube,
+		mgr.GetEventRecorder(controller.CapacityLeaseControllerName))
 	if err != nil {
 		return nil, err
 	}
-
-	types := catalogue.NewCache()
-	leases := &controller.CapacityLeaseReconciler{
-		Client:    mgr.GetClient(),
-		Kube:      kube,
-		Provider:  providers,
-		Catalogue: types,
-		Recorder:  mgr.GetEventRecorder(controller.CapacityLeaseControllerName),
-	}
-	if err := leases.SetupWithManager(mgr); err != nil {
-		return nil, fmt.Errorf("set up capacity lease controller: %w", err)
-	}
-
-	orphans := &controller.OrphanReconciler{
-		Client:   mgr.GetClient(),
-		Provider: providers,
-	}
-	if err := orphans.SetupWithManager(mgr); err != nil {
-		return nil, fmt.Errorf("set up orphan controller: %w", err)
-	}
-
-	if err := addCatalogue(mgr, kube, types); err != nil {
+	if err := parts.setupWithManager(mgr); err != nil {
 		return nil, err
 	}
 
 	return mgr, nil
 }
 
-func addCatalogue(mgr ctrl.Manager, kube kubernetes.Interface, types *catalogue.Cache) error {
+type reconcilers struct {
+	leases    *controller.CapacityLeaseReconciler
+	orphans   *controller.OrphanReconciler
+	refresher *catalogue.Refresher
+}
+
+// the refresher fills the very cache the lease controller validates against, so both must hold the same one
+func newReconcilers(api client.Client, kube kubernetes.Interface, recorder events.EventRecorder) (*reconcilers, error) {
+	providers, err := controller.NewProviderFactory(kube)
+	if err != nil {
+		return nil, err
+	}
 	listers, err := controller.NewCatalogueFactory(kube)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	refresher := &catalogue.Refresher{
-		Client: mgr.GetClient(),
-		Lister: listers,
-		Cache:  types,
+	types := catalogue.NewCache()
+	return &reconcilers{
+		leases: &controller.CapacityLeaseReconciler{
+			Client:    api,
+			Kube:      kube,
+			Provider:  providers,
+			Catalogue: types,
+			Recorder:  recorder,
+		},
+		orphans: &controller.OrphanReconciler{
+			Client:   api,
+			Provider: providers,
+		},
+		refresher: &catalogue.Refresher{
+			Client: api,
+			Lister: listers,
+			Cache:  types,
+		},
+	}, nil
+}
+
+func (p *reconcilers) setupWithManager(mgr ctrl.Manager) error {
+	if err := p.leases.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up capacity lease controller: %w", err)
 	}
-	if err := refresher.SetupWithManager(mgr); err != nil {
+	if err := p.orphans.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up orphan controller: %w", err)
+	}
+	if err := p.refresher.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up catalogue refresher: %w", err)
 	}
 	return nil
