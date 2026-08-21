@@ -2,15 +2,41 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "./lib/tokens.css";
 
 /* The build output is tracked, so excluding it stops Tailwind harvesting class names out of its own previous bundle. */
 @source not "../dist";
 
-@custom-variant dark (&:is(.dark *));
+/* The console ships dark, so the absence of an opt-in resolves to the dark theme rather than the light one. */
+@custom-variant dark (&:where(:root:not(.light), :root:not(.light) *));
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+
+    --color-canvas: var(--canvas);
+    --color-elevated: var(--elevated);
+    --color-base: var(--base);
+    --color-recessed: var(--recessed);
+    --color-fill: var(--fill);
+    --color-line: var(--line);
+    --color-hairline: var(--hairline);
+    --color-subtle: var(--subtle);
+    --color-ink: var(--ink);
+    --color-ink-strong: var(--ink-strong);
+    --color-wash: var(--wash);
+    --color-brand: var(--brand);
+    --color-brand-ink: var(--brand-ink);
+    --color-brand-wash: var(--brand-wash);
+
+    --color-tint: var(--tint-bg);
+    --color-tint-fg: var(--tint-fg);
+    --color-tint-line: var(--tint-border);
+    --color-tint-signal: var(--tint-signal);
+    --color-tint-solid: var(--tint-solid);
+    --color-tint-ink: var(--tint-ink);
+
+    --shadow-panel: var(--elevation-panel);
+
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -52,82 +78,71 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --radius: var(--radius-panel);
+
+    --background: var(--canvas);
+    --foreground: var(--ink);
+    --card: var(--base);
+    --card-foreground: var(--ink);
+    --popover: var(--elevated);
+    --popover-foreground: var(--ink);
+    --primary: var(--brand);
+    --primary-foreground: var(--brand-ink);
+    --secondary: var(--fill);
+    --secondary-foreground: var(--ink-strong);
+    --muted: var(--recessed);
+    --muted-foreground: var(--subtle);
+    --accent: var(--fill);
+    --accent-foreground: var(--ink-strong);
+    --destructive: var(--status-danger-fill);
+    --border: var(--line);
+    --input: var(--line);
+    --ring: var(--brand);
+    --chart-1: var(--brand);
+    --chart-2: var(--status-info-dot);
+    --chart-3: var(--status-success-dot);
+    --chart-4: var(--status-attention-dot);
+    --chart-5: var(--status-neutral-dot);
+    --sidebar: var(--elevated);
+    --sidebar-foreground: var(--ink);
+    --sidebar-primary: var(--brand);
+    --sidebar-primary-foreground: var(--brand-ink);
+    --sidebar-accent: var(--fill);
+    --sidebar-accent-foreground: var(--ink-strong);
+    --sidebar-border: var(--line);
+    --sidebar-ring: var(--brand);
 }
 
-.dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+/* Inset shadows avoid the doubled seam and the layout shift that borders on adjoining rows produce. */
+@utility row-rule {
+    box-shadow: inset 0 -1px 0 0 var(--hairline), inset 3px 0 0 0 var(--rail, transparent);
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+    * {
+        @apply border-border outline-ring/50;
+        scrollbar-width: thin;
+        scrollbar-color: transparent transparent;
     }
-  body {
-    @apply bg-background text-foreground;
+
+    *:hover,
+    *:focus-within {
+        scrollbar-color: var(--line) transparent;
     }
-  html {
-    @apply font-sans;
+
+    html {
+        @apply font-sans;
+    }
+
+    body {
+        @apply bg-canvas text-ink text-copy-13;
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+    }
+
+    ::selection {
+        background: var(--brand-wash);
+        color: var(--ink-strong);
     }
 }

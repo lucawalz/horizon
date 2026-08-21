@@ -1,0 +1,225 @@
+@theme {
+    --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+    --font-weight-emphasis: 550;
+
+    --text-label-12: 12px;
+    --text-label-12--line-height: 16px;
+    --text-label-12--letter-spacing: -0.02em;
+
+    --text-label-13: 13px;
+    --text-label-13--line-height: 16px;
+    --text-label-13--letter-spacing: -0.02em;
+
+    --text-copy-13: 13px;
+    --text-copy-13--line-height: 18px;
+    --text-copy-13--letter-spacing: -0.02em;
+
+    --text-label-14: 14px;
+    --text-label-14--line-height: 20px;
+    --text-label-14--letter-spacing: -0.02em;
+
+    --text-heading-20: 20px;
+    --text-heading-20--line-height: 26px;
+    --text-heading-20--letter-spacing: -0.02em;
+    --text-heading-20--font-weight: 600;
+
+    --text-heading-24: 24px;
+    --text-heading-24--line-height: 30px;
+    --text-heading-24--letter-spacing: -0.04em;
+    --text-heading-24--font-weight: 600;
+
+    --text-heading-32: 32px;
+    --text-heading-32--line-height: 40px;
+    --text-heading-32--letter-spacing: -0.04em;
+    --text-heading-32--font-weight: 600;
+
+    --text-display-48: 48px;
+    --text-display-48--line-height: 50px;
+    --text-display-48--letter-spacing: -0.06em;
+    --text-display-48--font-weight: 600;
+
+    --spacing-hair: 3px;
+    --spacing-tight: 5px;
+    --spacing-snug: 8px;
+    --spacing-cell: 13px;
+    --spacing-gutter: 21px;
+    --spacing-section: 34px;
+    --spacing-page: 55px;
+
+    --spacing-dot: 6px;
+    --spacing-control: 32px;
+    --spacing-head: 36px;
+    --spacing-row: 44px;
+    --spacing-bar: 52px;
+    --spacing-measure: 76rem;
+
+    --radius-dot: 999px;
+    --radius-control: 6px;
+    --radius-panel: 10px;
+    --radius-frame: 14px;
+}
+
+:root,
+.dark {
+    color-scheme: dark;
+
+    --canvas: hsl(220 6% 9%);
+    --elevated: hsl(220 6% 11.5%);
+    --base: hsl(220 6% 13.5%);
+    --recessed: hsl(220 8% 6.5%);
+    --fill: hsl(220 6% 18%);
+    --line: hsl(220 6% 23%);
+    --hairline: hsl(215 30% 92% / 0.08);
+    --subtle: hsl(218 8% 62%);
+
+    --ink: hsl(215 14% 88%);
+    --ink-strong: hsl(210 20% 97%);
+    --wash: hsl(210 30% 96% / 0.02);
+
+    --brand: hsl(266 78% 72%);
+    --brand-ink: hsl(30 28% 10%);
+    --brand-wash: hsl(266 78% 66% / 0.16);
+
+    --status-success-bg: hsl(152 60% 45% / 0.2);
+    --status-success-fg: hsl(152 62% 80%);
+    --status-success-border: hsl(152 55% 52% / 0.45);
+    --status-success-dot: hsl(152 55% 52%);
+    --status-success-fill: hsl(152 52% 58%);
+    --status-success-on-fill: hsl(30 28% 10%);
+
+    --status-info-bg: hsl(205 80% 50% / 0.2);
+    --status-info-fg: hsl(200 75% 80%);
+    --status-info-border: hsl(205 75% 58% / 0.45);
+    --status-info-dot: hsl(205 75% 58%);
+    --status-info-fill: hsl(205 78% 64%);
+    --status-info-on-fill: hsl(30 28% 10%);
+
+    --status-attention-bg: hsl(38 92% 50% / 0.2);
+    --status-attention-fg: hsl(42 85% 76%);
+    --status-attention-border: hsl(40 92% 55% / 0.45);
+    --status-attention-dot: hsl(40 92% 55%);
+    --status-attention-fill: hsl(40 92% 58%);
+    --status-attention-on-fill: hsl(30 28% 10%);
+
+    --status-neutral-bg: hsl(220 8% 55% / 0.18);
+    --status-neutral-fg: hsl(218 12% 78%);
+    --status-neutral-border: hsl(218 8% 58% / 0.45);
+    --status-neutral-dot: hsl(218 8% 58%);
+    --status-neutral-fill: hsl(218 12% 72%);
+    --status-neutral-on-fill: hsl(30 28% 10%);
+
+    --status-danger-bg: hsl(358 75% 55% / 0.2);
+    --status-danger-fg: hsl(358 85% 82%);
+    --status-danger-border: hsl(358 72% 62% / 0.45);
+    --status-danger-dot: hsl(358 72% 62%);
+    --status-danger-fill: hsl(358 78% 68%);
+    --status-danger-on-fill: hsl(30 28% 10%);
+
+    --elevation-panel: 0 1px 2px 0 hsl(220 30% 2% / 0.6), 0 8px 24px -10px hsl(220 30% 2% / 0.55);
+}
+
+.light {
+    color-scheme: light;
+
+    --canvas: hsl(32 16% 96.5%);
+    --elevated: hsl(32 24% 98.4%);
+    --base: hsl(32 30% 99.2%);
+    --recessed: hsl(32 14% 93.5%);
+    --fill: hsl(32 12% 90%);
+    --line: hsl(32 10% 85%);
+    --hairline: hsl(28 14% 14% / 0.1);
+    --subtle: hsl(32 6% 40%);
+
+    --ink: hsl(30 8% 20%);
+    --ink-strong: hsl(28 12% 12%);
+    --wash: hsl(28 20% 10% / 0.02);
+
+    --brand: hsl(266 58% 45%);
+    --brand-ink: hsl(200 24% 97%);
+    --brand-wash: hsl(266 58% 45% / 0.1);
+
+    --status-success-bg: hsl(152 55% 95%);
+    --status-success-fg: hsl(152 62% 18%);
+    --status-success-border: hsl(152 62% 32% / 0.4);
+    --status-success-dot: hsl(152 62% 32%);
+    --status-success-fill: hsl(152 62% 27%);
+    --status-success-on-fill: hsl(200 24% 97%);
+
+    --status-info-bg: hsl(205 70% 95%);
+    --status-info-fg: hsl(205 70% 22%);
+    --status-info-border: hsl(205 74% 37% / 0.4);
+    --status-info-dot: hsl(205 74% 37%);
+    --status-info-fill: hsl(205 74% 37%);
+    --status-info-on-fill: hsl(200 24% 97%);
+
+    --status-attention-bg: hsl(38 88% 94%);
+    --status-attention-fg: hsl(35 75% 22%);
+    --status-attention-border: hsl(35 88% 40% / 0.4);
+    --status-attention-dot: hsl(35 88% 40%);
+    --status-attention-fill: hsl(38 92% 52%);
+    /* amber stays too light for a pale ink at every usable saturation, so this fill alone keeps the dark one */
+    --status-attention-on-fill: hsl(30 28% 10%);
+
+    --status-neutral-bg: hsl(32 12% 92%);
+    --status-neutral-fg: hsl(30 8% 28%);
+    --status-neutral-border: hsl(32 6% 44% / 0.4);
+    --status-neutral-dot: hsl(32 6% 44%);
+    --status-neutral-fill: hsl(30 8% 30%);
+    --status-neutral-on-fill: hsl(200 24% 97%);
+
+    --status-danger-bg: hsl(358 75% 96%);
+    --status-danger-fg: hsl(358 62% 30%);
+    --status-danger-border: hsl(358 66% 45% / 0.4);
+    --status-danger-dot: hsl(358 66% 45%);
+    --status-danger-fill: hsl(358 66% 45%);
+    --status-danger-on-fill: hsl(200 24% 97%);
+
+    --elevation-panel: 0 1px 2px 0 hsl(30 12% 20% / 0.06), 0 8px 24px -10px hsl(30 12% 20% / 0.12);
+}
+
+[data-severity='success'] {
+    --tint-bg: var(--status-success-bg);
+    --tint-fg: var(--status-success-fg);
+    --tint-border: var(--status-success-border);
+    --tint-signal: var(--status-success-dot);
+    --tint-solid: var(--status-success-fill);
+    --tint-ink: var(--status-success-on-fill);
+}
+
+[data-severity='info'] {
+    --tint-bg: var(--status-info-bg);
+    --tint-fg: var(--status-info-fg);
+    --tint-border: var(--status-info-border);
+    --tint-signal: var(--status-info-dot);
+    --tint-solid: var(--status-info-fill);
+    --tint-ink: var(--status-info-on-fill);
+}
+
+[data-severity='attention'] {
+    --tint-bg: var(--status-attention-bg);
+    --tint-fg: var(--status-attention-fg);
+    --tint-border: var(--status-attention-border);
+    --tint-signal: var(--status-attention-dot);
+    --tint-solid: var(--status-attention-fill);
+    --tint-ink: var(--status-attention-on-fill);
+}
+
+[data-severity='neutral'] {
+    --tint-bg: var(--status-neutral-bg);
+    --tint-fg: var(--status-neutral-fg);
+    --tint-border: var(--status-neutral-border);
+    --tint-signal: var(--status-neutral-dot);
+    --tint-solid: var(--status-neutral-fill);
+    --tint-ink: var(--status-neutral-on-fill);
+}
+
+[data-severity='danger'] {
+    --tint-bg: var(--status-danger-bg);
+    --tint-fg: var(--status-danger-fg);
+    --tint-border: var(--status-danger-border);
+    --tint-signal: var(--status-danger-dot);
+    --tint-solid: var(--status-danger-fill);
+    --tint-ink: var(--status-danger-on-fill);
+}
