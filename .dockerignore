@@ -4,7 +4,7 @@
 .goreleaser.yaml
 charts
 config
-dist
+/dist
 docs
 horizon
 *.md

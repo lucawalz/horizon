@@ -2,7 +2,7 @@
 /horizon
 
 # Build output
-dist/
+/dist/
 *.exe
 *.test
 *.tgz
