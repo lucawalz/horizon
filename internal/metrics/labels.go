@@ -52,8 +52,10 @@ const (
 type Result string
 
 const (
-	ResultSuccess Result = "success"
-	ResultFailure Result = "failure"
+	ResultSuccess  Result = "success"
+	ResultFailure  Result = "failure"
+	ResultNotFound Result = "not_found"
+	ResultCanceled Result = "canceled"
 )
 
 type Operation string
