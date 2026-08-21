@@ -5,6 +5,7 @@
 charts
 config
 /dist
+**/node_modules
 docs
 horizon
 *.md
