@@ -4,7 +4,7 @@ Installs the horizon controller, which leases on-demand cloud capacity for a Kub
 
 The chart templates a Deployment, a ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service carrying the metrics port, an optional ServiceMonitor for it, and the two `horizon.dev` custom resource definitions.
 
-The web interface described in ADR 0019 is not served by this release. The chart templates nothing for it, so no port, Service entry or Ingress advertises an endpoint the binary does not answer. The values keys return alongside the interface itself.
+The web interface described in ADR 0019 is not served in the cluster by this release. It is served locally instead, by `horizon dashboard` on the loopback address of the machine that runs it. The chart templates nothing for the in-cluster mode, so no port, Service entry or Ingress advertises an endpoint the deployed binary does not answer. The values keys return alongside that mode and the authentication it requires.
 
 ## Installing
 

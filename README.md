@@ -19,9 +19,9 @@ The cluster horizon operates over lives in the companion [bedrock](https://githu
 
 `0.3.0` is the latest published release; the chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`. Image selection by name or id and `horizon cloud-init` postdate `0.3.0`, so a checkout is the only way to use them until the next tag.
 
-Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; four commands, `horizon controller`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
+Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the read-only web interface served locally by `horizon dashboard`; five commands, `horizon controller`, `horizon dashboard`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
 
-Not implemented: the web interface, superseded by [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md), nothing is served and the chart carries no port or ingress for it; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
+Not implemented: the in-cluster mode of the web interface from [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md), along with the forward authentication, the network policy and the access review it requires, so the chart carries no port or ingress for it; the interface's mutating half, which creates leases and writes provider credentials; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
 
 ## How teardown is enforced
 
@@ -295,10 +295,25 @@ An unusual image is not a reason to leave the generator. A pre-baked image that 
 
 `horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--kubernetes-version`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
 
+### Web interface
+
+`horizon dashboard` serves the read-only interface described in [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md) from the machine it runs on:
+
+```
+horizon dashboard
+```
+
+It reads the cluster with the caller's own kubeconfig credentials, which is the whole of its authentication, and it therefore binds to `127.0.0.1` and nothing else. The address is not a flag: only the port is, and the loopback address is built inside the server rather than accepted from a caller, so no invocation can widen it. Serving the same interface from inside the cluster is a separate mode that does not exist yet, because it needs forward authentication, a network policy restricting the service to the proxy, and an access review before any mutation.
+
+Three views are served. The lease list carries the printer columns, one row per `CapacityLease`, and refreshes itself every five seconds. The lease view behind each row carries the status fields, the conditions and the per-instance table, and refreshes on the same interval. The machine types view lists the `ProviderConfig` resources in the cluster and the instance types a chosen one offers in a chosen region. The catalogue those types come from is filled by the operator inside the cluster and held in its memory, so a local dashboard has no copy of it and says so rather than showing an empty table.
+
+Nothing in the interface writes: no lease is created, no provider config is edited, and no Secret is read or rendered.
+
 ### Command line reference
 
 ```
 horizon controller   Run the in-cluster capacity lease controller
+horizon dashboard    Serve the read-only web interface on loopback
 horizon watchdog     Enforce the node-side teardown deadline from the leased server itself
 horizon cloud-init   Render the cloud-init a burst node needs to join a cluster
 horizon version      Print the build version
@@ -311,6 +326,12 @@ horizon version      Print the build version
 | `--leader-elect` | `true` | Hold a leader election lease so only one replica reconciles. |
 | `--metrics-bind-address` | `:8080` | Address the metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the liveness and readiness endpoints bind to. |
+
+`horizon dashboard` takes one flag, and it is a port rather than an address:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--port` | `8973` | Loopback port the interface listens on. The host is always `127.0.0.1`. |
 
 `horizon watchdog` runs on the leased server rather than in the cluster, started by the cloud-init that boots it:
 
@@ -345,9 +366,10 @@ The image is distroless and runs as uid 65532. The archive binaries and the imag
 ```
 api/v1alpha1/       CapacityLease and ProviderConfig types
 cmd/horizon/        main entry point
-internal/cli/       cobra root, version, controller, watchdog, and cloud-init commands
+internal/cli/       cobra root, version, controller, dashboard, watchdog, and cloud-init commands
 internal/agent/     node-side dead man's switch
 internal/manager/   controller-runtime wiring
+internal/web/       read-only web interface, embedded templates and assets
 internal/controller/  lease reconciler, orphan collector, provider factory
 internal/k8s/       workload migration, placement restore, node drain
 internal/cloudinit/ cloud-init join document generator, one file per flavour

@@ -5,7 +5,7 @@ date: 2026-08-02
 
 # 0019. Replace the terminal interface with a web interface and printer columns
 
-Unimplemented in part as of the first release: no web interface is served, and the chart ships no plumbing for one, so the decision below that the chart enables the in-cluster mode by default describes an intent rather than the shipped behaviour. The decision stands and is re-established when the interface lands.
+Implemented in part. The web interface is served read-only on loopback by `horizon dashboard`, which lists leases, renders one lease in full, and shows the instance type catalogue behind a machine picker. Nothing in it mutates, so the wizard's job of writing credentials and provider configuration is still undone, and the in-cluster mode is still unbuilt along with the forward authentication, the network policy and the access review it requires; the chart ships no plumbing for it, so the decision below that the chart enables that mode by default describes an intent rather than the shipped behaviour. The catalogue behind the machine picker is filled by the operator inside the cluster, and a local dashboard reports that it holds no copy rather than rendering an empty table. The API tracer named below does not exist in any command. The decision stands and is re-established as the remaining parts land.
 
 ## Context
 
