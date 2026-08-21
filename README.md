@@ -21,7 +21,7 @@ The cluster horizon operates over lives in the companion [bedrock](https://githu
 
 Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the read-only web interface served locally by `horizon dashboard`; five commands, `horizon controller`, `horizon dashboard`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
 
-Not implemented: the in-cluster mode of the web interface from [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md), along with the forward authentication, the network policy and the access review it requires, so the chart carries no port or ingress for it; the interface's mutating half, which creates leases and writes provider credentials; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
+Not implemented: the in-cluster mode of the web interface from [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), along with the forward authentication, the network policy and the access review it requires, so the chart carries no port or ingress for it; the interface's mutating half, which creates leases and writes provider credentials; the single-page rebuild of the interface that the same record decides, so what ships is still the server-rendered interface from [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md); the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
 
 ## How teardown is enforced
 
@@ -297,7 +297,7 @@ An unusual image is not a reason to leave the generator. A pre-baked image that 
 
 ### Web interface
 
-`horizon dashboard` serves the read-only interface described in [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md) from the machine it runs on:
+`horizon dashboard` serves the read-only web interface from the machine it runs on:
 
 ```
 horizon dashboard
@@ -308,6 +308,8 @@ It reads the cluster with the caller's own kubeconfig credentials, which is the 
 Three views are served. The lease list carries the printer columns, one row per `CapacityLease`, and refreshes itself every five seconds. The lease view behind each row carries the status fields, the conditions and the per-instance table, and refreshes on the same interval. The machine types view lists the `ProviderConfig` resources in the cluster and the instance types a chosen one offers in a chosen region. The catalogue those types come from is filled by the operator inside the cluster and held in its memory, so a local dashboard has no copy of it and says so rather than showing an empty table.
 
 Nothing in the interface writes: no lease is created, no provider config is edited, and no Secret is read or rendered.
+
+What ships today is the server-rendered interface decided in [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md). [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md) supersedes that record and rebuilds the same three views as an embedded single-page application, with the build output committed so `go build` still needs no JavaScript toolchain. None of that rebuild has landed, and it changes how the interface is constructed rather than what it serves or how it authenticates.
 
 ### Command line reference
 
