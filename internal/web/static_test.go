@@ -20,6 +20,7 @@ const (
 	staleAssetPath  = "/assets/index-deadbeef.js"
 	scriptExtension = ".js"
 	styleExtension  = ".css"
+	listingLink     = "<a href="
 )
 
 func TestEmbeddedAssetsAreServed(t *testing.T) {
@@ -84,6 +85,19 @@ func TestAStaleAssetReferenceIsRefusedRatherThanShelled(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), mountElement) {
 		t.Error("a missing asset served the shell, want a refusal a module loader can report")
+	}
+}
+
+func TestTheAssetDirectoryIsRefusedRatherThanListed(t *testing.T) {
+	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
+
+	response := get(t, server, assetPrefix)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+	body := response.Body.String()
+	if strings.Contains(body, listingLink) || strings.Contains(body, scriptExtension) {
+		t.Errorf("%s listed the bundle, want a refusal:\n%s", assetPrefix, body)
 	}
 }
 

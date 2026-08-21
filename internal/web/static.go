@@ -15,6 +15,7 @@ const (
 	htmlContentType  = "text/html; charset=utf-8"
 	interfaceAbsent  = "this build carries no interface"
 	shellUnavailable = "the interface shell could not be read"
+	assetAbsent      = "the bundle holds no such asset"
 )
 
 func absentInterface() http.Handler {
@@ -23,12 +24,19 @@ func absentInterface() http.Handler {
 	})
 }
 
-// asset names are content hashed, so a miss is a stale reference and must fail rather than answer with the shell
+// asset names are content hashed, so a miss is a stale reference and must fail rather than answer with the shell or a listing of the bundle
 func bundleFiles(bundle fs.FS) http.Handler {
 	if bundle == nil {
 		return absentInterface()
 	}
-	return http.FileServerFS(bundle)
+	files := http.FileServerFS(bundle)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !bundled(bundle, r.URL.Path) {
+			http.Error(w, assetAbsent, http.StatusNotFound)
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
 }
 
 func siteHandler(bundle fs.FS) http.Handler {
