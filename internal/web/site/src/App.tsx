@@ -1,5 +1,40 @@
-function App() {
-  return <h1>horizon</h1>
+import { AppFrame, AppHeader, AppMain, NavLink } from '@/components/app-frame'
+import { LeaseDetailRoute } from '@/routes/lease-detail'
+import { LeaseListRoute } from '@/routes/lease-list'
+import { MachinesRoute } from '@/routes/machines'
+import type { Route } from '@/routes/router'
+import { leasesHref, machinesHref, useRoute } from '@/routes/router'
+import { UnknownRoute } from '@/routes/unknown'
+
+function View({ route }: { route: Route }) {
+  switch (route.name) {
+    case 'leases':
+      return <LeaseListRoute />
+    case 'lease':
+      return <LeaseDetailRoute name={route.lease} />
+    case 'machines':
+      return <MachinesRoute config={route.config} region={route.region} />
+    default:
+      return <UnknownRoute path={route.path} />
+  }
 }
 
-export default App
+export default function App() {
+  const route = useRoute()
+
+  return (
+    <AppFrame>
+      <AppHeader>
+        <NavLink href={leasesHref} current={route.name === 'leases' || route.name === 'lease'}>
+          Leases
+        </NavLink>
+        <NavLink href={machinesHref} current={route.name === 'machines'}>
+          Machines
+        </NavLink>
+      </AppHeader>
+      <AppMain>
+        <View route={route} />
+      </AppMain>
+    </AppFrame>
+  )
+}
