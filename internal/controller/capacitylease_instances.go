@@ -21,7 +21,7 @@ const (
 	nodeRegistrationTimeout = 15 * time.Minute
 )
 
-func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, degraded *degradation) (ctrl.Result, error) {
 	observed, err := prov.List(ctx, leaseSelector(lease))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list instances of lease %q: %w", lease.Name, err)
@@ -39,7 +39,7 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 		return ctrl.Result{RequeueAfter: stepRequeue}, nil
 	}
 
-	if res, err := r.retireStalledInstances(ctx, lease, prov); err != nil || !res.IsZero() {
+	if res, err := r.retireStalledInstances(ctx, lease, prov, degraded); err != nil || !res.IsZero() {
 		return res, err
 	}
 
@@ -195,7 +195,7 @@ func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1a
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
 }
 
-func (r *CapacityLeaseReconciler) retireStalledInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) retireStalledInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, degraded *degradation) (ctrl.Result, error) {
 	now := r.now()
 	var records metricWrites
 	changed := false
@@ -213,7 +213,7 @@ func (r *CapacityLeaseReconciler) retireStalledInstances(ctx context.Context, le
 			continue
 		}
 		entry.LastError = message
-		setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, message)
+		degraded.observe(reason, message)
 	}
 
 	if !changed {

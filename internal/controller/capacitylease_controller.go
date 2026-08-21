@@ -46,6 +46,7 @@ const (
 	reasonMigrateFailed       = "MigrateFailed"
 	reasonPlacementRestored   = "PlacementRestored"
 	reasonRestoreFailed       = "RestoreFailed"
+	reasonRecovered           = "Recovered"
 	reasonReleased            = "Released"
 	reasonReleasePending      = "ReleasePending"
 	reasonReleaseFailed       = "ReleaseFailed"
@@ -109,20 +110,33 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.expire(ctx, lease)
 	}
 
+	return r.reconcileLease(ctx, lease, prov, policy)
+}
+
+func (r *CapacityLeaseReconciler) reconcileLease(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, policy v1alpha1.WatchdogPolicy) (ctrl.Result, error) {
+	var degraded degradation
+	res, err := r.reconcileCapacity(ctx, lease, prov, policy, &degraded)
+
+	if writeErr := r.resolveDegraded(ctx, lease, degraded, err == nil && res.IsZero()); writeErr != nil {
+		return ctrl.Result{}, errors.Join(err, writeErr)
+	}
+	if err != nil || !res.IsZero() {
+		return res, err
+	}
+	return r.nextPoll(lease, policy), nil
+}
+
+func (r *CapacityLeaseReconciler) reconcileCapacity(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, policy v1alpha1.WatchdogPolicy, degraded *degradation) (ctrl.Result, error) {
 	if res, err := r.latchInstanceType(ctx, lease); err != nil || !res.IsZero() {
 		return res, err
 	}
-	if res, err := r.reconcileInstances(ctx, lease, prov); err != nil || !res.IsZero() {
+	if res, err := r.reconcileInstances(ctx, lease, prov, degraded); err != nil || !res.IsZero() {
 		return res, err
 	}
 	if res, err := r.reconcileNodes(ctx, lease, policy); err != nil || !res.IsZero() {
 		return res, err
 	}
-	if res, err := r.reconcileWorkload(ctx, lease, policy); err != nil || !res.IsZero() {
-		return res, err
-	}
-
-	return r.nextPoll(lease, policy), nil
+	return r.reconcileWorkload(ctx, lease, policy)
 }
 
 func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
