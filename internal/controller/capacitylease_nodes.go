@@ -14,6 +14,8 @@ import (
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
@@ -123,7 +125,7 @@ var waitingStages = map[v1alpha1.InstanceStage]waitingStage{
 	},
 }
 
-// a draining or released entry has stopped working towards readiness, so it names no waiting stage
+// a draining or released entry has stopped working towards readiness
 func instanceStage(entry *v1alpha1.InstanceStatus, node *corev1.Node) v1alpha1.InstanceStage {
 	switch {
 	case entry.Phase == v1alpha1.InstancePhaseIntended:
@@ -155,7 +157,43 @@ func waitingCondition(lease *v1alpha1.CapacityLease, joined, want int, now time.
 	}
 	stage := waitingStages[blocking.Stage]
 	detail := fmt.Sprintf(stage.format, blocking.Name, elapsedSince(blocking.CreatedAt, now))
-	return stage.reason, count + "; " + detail
+	return stage.reason, detail + "; " + count
+}
+
+// only the least advanced stage of all is safe to name without a fresh node listing, and that is this one
+func (r *CapacityLeaseReconciler) reportWaitingForInstances(ctx context.Context, lease *v1alpha1.CapacityLease) error {
+	if conditionTrue(lease, v1alpha1.ConditionInstancesReady) {
+		return nil
+	}
+
+	for i := range lease.Status.Instances {
+		entry := &lease.Status.Instances[i]
+		if entry.Phase == v1alpha1.InstancePhaseCreated || entry.Phase == v1alpha1.InstancePhaseJoined {
+			continue
+		}
+		recordStage(entry, instanceStage(entry, nil))
+	}
+
+	blocking := leastAdvancedInstance(lease)
+	if blocking == nil || blocking.Stage != v1alpha1.InstanceStageAwaitingInstance {
+		return nil
+	}
+
+	reason, message := waitingCondition(lease, joinedInstances(lease), int(lease.Spec.Replicas), r.now())
+	if !setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reason, message) {
+		return nil
+	}
+	return r.writeStatus(ctx, lease)
+}
+
+func joinedInstances(lease *v1alpha1.CapacityLease) int {
+	joined := 0
+	for i := range lease.Status.Instances {
+		if lease.Status.Instances[i].Phase == v1alpha1.InstancePhaseJoined {
+			joined++
+		}
+	}
+	return joined
 }
 
 func leastAdvancedInstance(lease *v1alpha1.CapacityLease) *v1alpha1.InstanceStatus {
@@ -173,11 +211,16 @@ func leastAdvancedInstance(lease *v1alpha1.CapacityLease) *v1alpha1.InstanceStat
 	return blocking
 }
 
+// a provider timestamp ahead of the control plane clock would otherwise render as "<invalid>"
 func elapsedSince(instant *metav1.Time, now time.Time) string {
 	if instant == nil {
 		return "an unknown time"
 	}
-	return duration.HumanDuration(now.Sub(instant.Time))
+	elapsed := now.Sub(instant.Time)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return duration.HumanDuration(elapsed)
 }
 
 func matchNode(nodes []corev1.Node, entry *v1alpha1.InstanceStatus) *corev1.Node {
@@ -230,6 +273,20 @@ func (r *CapacityLeaseReconciler) leasesForNode(ctx context.Context, obj client.
 	return requests
 }
 
+func nodeSignals(adoptionLabelKey string) predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			before, wasNode := e.ObjectOld.(*corev1.Node)
+			after, isNode := e.ObjectNew.(*corev1.Node)
+			if !wasNode || !isNode {
+				return true
+			}
+			return nodeReady(before) != nodeReady(after) ||
+				before.Labels[adoptionLabelKey] != after.Labels[adoptionLabelKey]
+		},
+	}
+}
+
 func leaseClaimsNode(lease *v1alpha1.CapacityLease, node *corev1.Node) bool {
 	for i := range lease.Status.Instances {
 		if instanceMatchesNode(&lease.Status.Instances[i], node) {
@@ -263,7 +320,8 @@ func nodeReadyCondition(node *corev1.Node) *corev1.NodeCondition {
 
 // a burst node's clock can disagree with the control plane's, and a negative duration would poison the ready histogram
 func (r *CapacityLeaseReconciler) readyInstant(lease *v1alpha1.CapacityLease, transition time.Time) time.Time {
-	if transition.IsZero() || transition.Before(lease.Status.AcceptedAt.Time) {
+	accepted := lease.Status.AcceptedAt
+	if transition.IsZero() || accepted == nil || transition.Before(accepted.Time) {
 		return r.now()
 	}
 	return transition

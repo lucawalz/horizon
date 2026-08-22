@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -149,6 +150,9 @@ func (r *CapacityLeaseReconciler) reconcileCapacity(ctx context.Context, lease *
 	if res, err := r.latchInstanceType(ctx, lease); err != nil || !res.IsZero() {
 		return res, err
 	}
+	if err := r.reportWaitingForInstances(ctx, lease); err != nil {
+		return ctrl.Result{}, err
+	}
 	if res, err := r.reconcileInstances(ctx, lease, prov, degraded); err != nil || !res.IsZero() {
 		return res, err
 	}
@@ -164,7 +168,8 @@ func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.CapacityLease{}).
-		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.leasesForNode)).
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.leasesForNode),
+			builder.WithPredicates(nodeSignals(LeaseNameLabelKey))).
 		Named(CapacityLeaseControllerName).
 		Complete(r)
 }
@@ -215,6 +220,9 @@ func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alph
 	unsized := lease.Status.InstanceType == ""
 	latchAttribution(lease, attributed)
 	setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionTrue, reasonAccepted, "lease accepted and deadline recorded")
+
+	waiting, message := waitingCondition(lease, 0, int(lease.Spec.Replicas), accepted)
+	setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, waiting, message)
 
 	var records metricWrites
 	if unsized && lease.Status.InstanceType != "" {

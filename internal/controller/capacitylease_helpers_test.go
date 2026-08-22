@@ -131,9 +131,8 @@ func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harnes
 	return h
 }
 
-func (h *harness) createProviderConfig(name string) {
-	h.t.Helper()
-	cfg := &v1alpha1.ProviderConfig{
+func hetznerProviderConfig(name string, policy v1alpha1.WatchdogPolicy) *v1alpha1.ProviderConfig {
+	return &v1alpha1.ProviderConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: v1alpha1.ProviderConfigSpec{
 			Type: v1alpha1.ProviderTypeHetzner,
@@ -152,9 +151,14 @@ func (h *harness) createProviderConfig(name string) {
 				},
 				ImageSelector: map[string]string{"caph-image-name": "bedrock-cluster-node"},
 			},
-			Watchdog: testPolicy(testRenewInterval, testSlack),
+			Watchdog: policy,
 		},
 	}
+}
+
+func (h *harness) createProviderConfig(name string) {
+	h.t.Helper()
+	cfg := hetznerProviderConfig(name, testPolicy(testRenewInterval, testSlack))
 	if err := h.api.Create(h.t.Context(), cfg); err != nil {
 		h.t.Fatalf("create providerconfig: %v", err)
 	}
