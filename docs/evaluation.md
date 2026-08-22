@@ -82,13 +82,17 @@ Three resolution limits bound everything below and are stated once here.
 | Instrument | Resolution | Consequence |
 | --- | --- | --- |
 | Hetzner API poll (`POLL_INTERVAL_S=5`) | 5 s | Teardown instants are accurate to 5 s, no better |
-| Lease `readyAt`, written by the controller | 30 s | Time to ready is quantised, see section 3 |
+| Lease `readyAt`, as the controller wrote it during the campaign | 30 s | Time to ready is quantised, see section 3 |
 | Quantum elapsed time, measured in-process | 1 ms | Workload timing is exact |
 
-The lease controller watches only `CapacityLease` objects and requeues at
-`leasePollInterval = 30 * time.Second` while it waits for nodes, so node readiness reaches
-lease status only at a 30-second tick after acceptance. This is a property of the operator,
-not of the harness, and it is the single most important thing to know when reading M1.
+While the campaign ran, the lease controller watched only `CapacityLease` objects and
+requeued every 30 seconds while it waited for nodes, so node readiness reached lease status
+only at a tick after acceptance. This is a property of the operator, not of the harness, and
+it is the single most important thing to know when reading M1. The instrument has since been
+fixed, as section 3.2 and ADR 0026 record: the controller wakes on `Node` events and sources
+`readyAt` from the node's own `NodeReady` transition time. The published dataset predates
+that fix and stays quantised exactly as reported here, and the fix does not retrospectively
+improve any figure already reported.
 
 ### 2.4 Runs excluded from results
 
@@ -139,10 +143,11 @@ counts here were recomputed from all 30 artefacts.
 
 ### 3.2 The modes are the sampling grid
 
-The bimodality is an artefact of how `readyAt` is observed. `internal/controller/capacitylease_controller.go`
-registers the lease reconciler for `CapacityLease` objects only, with no watch on `Node`,
-and returns `RequeueAfter: leasePollInterval` (30 seconds) while waiting for nodes. Node
-readiness therefore cannot reach lease status between ticks.
+The bimodality is an artefact of how `readyAt` was observed. While the campaign ran,
+`internal/controller/capacitylease_controller.go` registered the lease reconciler for
+`CapacityLease` objects only, with no watch on `Node`, and returned a `RequeueAfter` of
+30 seconds while waiting for nodes. Node readiness therefore could not reach lease status
+between ticks.
 
 This is corroborated by the Hetzner-side timings, which are not quantised at all. Across
 all 30 runs, from `harness.csv`:
@@ -951,8 +956,8 @@ same run.
 | Hetzner rates used | `measure-*-runs/<run>/hetzner-pricing.json` |
 | Per-unit workload timing and checksum | `measure-policy-runs/<run>/<run>-q/results.jsonl` |
 | Cost arithmetic per run | `measure-policy-runs/<run>/cost.json` and `summary.txt` |
-| 30-second lease poll | `internal/controller/capacitylease_controller.go`, `leasePollInterval` and `nextPoll` |
-| Memory floor comparison | `internal/controller/capacitylease_sizing.go`, `satisfies` |
+| 30-second lease poll | `internal/controller/capacitylease_controller.go`, `DefaultPollInterval` and `nextPoll` |
+| Memory floor comparison | `internal/controller/capacitylease_sizing.go`, `rejectionFor` |
 | Decimal GB conversion | `internal/provider/hetzner/instancetype.go` |
 | Watchdog deadline arithmetic | `internal/controller/capacitylease_watchdog.go`, `watchdogDeadline` |
 | Node-side firing rule | `internal/agent/deadline.go`, `fired` |
