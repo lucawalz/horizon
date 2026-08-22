@@ -575,8 +575,9 @@ rather than contradicting the operator. The operator logs captured for these run
 only reconcile errors and record no selection decision. This is an instrumentation gap: the
 one field that would make the policy's choice explicable was not exported, and the operator
 does not log its own reasoning. The second half of that gap has since been closed. The
-operator now records the candidate set it ranked, the runner-up and the rejection tally in
-`status.selection`, so a later campaign can recover the reasoning that these runs cannot.
+operator now records in `status.selection` how many types the catalogue offered, how many
+qualified, which one won, which came second and what rejected the rest, so a later campaign
+can recover the reasoning that these runs cannot.
 
 What is recorded and trustworthy is the outcome: `status.instanceType` in each
 `lease-final.json`, which is the type actually provisioned and billed.
