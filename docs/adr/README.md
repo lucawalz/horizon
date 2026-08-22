@@ -29,3 +29,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0023. Observe the armed watchdog from the control plane](0023-observe-the-armed-watchdog-from-the-control-plane.md) (accepted)
 - [0024. Validate the release configuration before the tag](0024-validate-the-release-configuration-before-the-tag.md) (accepted)
 - [0025. Replace the server-rendered web interface with an embedded single-page application](0025-replace-server-rendered-interface-with-embedded-spa.md) (accepted)
+- [0026. Observe node readiness rather than poll for it](0026-observe-node-readiness-rather-than-poll-for-it.md) (accepted)
