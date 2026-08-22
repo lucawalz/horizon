@@ -23,6 +23,8 @@ const (
 	wireSVGType     = "image/svg+xml"
 	wirePNGType     = "image/png"
 	staleAssetPath  = "/assets/index-deadbeef.js"
+	missingIconPath = "/favicon.ico"
+	dottedLeasePath = "/leases/foo.bar"
 	scriptExtension = ".js"
 	styleExtension  = ".css"
 	svgExtension    = ".svg"
@@ -130,6 +132,18 @@ func TestAStaleAssetReferenceIsRefusedRatherThanShelled(t *testing.T) {
 	}
 }
 
+func TestAMissingStaticAssetIsRefusedRatherThanShelled(t *testing.T) {
+	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
+
+	response := get(t, server, missingIconPath)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("%s status = %d, want %d", missingIconPath, response.Code, http.StatusNotFound)
+	}
+	if strings.Contains(response.Body.String(), mountElement) {
+		t.Errorf("%s served the application shell, want a refusal a browser can report", missingIconPath)
+	}
+}
+
 func TestTheAssetDirectoryIsRefusedRatherThanListed(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
 
@@ -155,6 +169,18 @@ func TestDeepLinksServeTheApplicationShell(t *testing.T) {
 		if !strings.Contains(response.Body.String(), mountElement) {
 			t.Errorf("%s does not serve the shell", target)
 		}
+	}
+}
+
+func TestALeaseNameContainingADotStillReceivesTheShell(t *testing.T) {
+	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
+
+	response := get(t, server, dottedLeasePath)
+	if response.Code != http.StatusOK {
+		t.Fatalf("%s status = %d, want %d", dottedLeasePath, response.Code, http.StatusOK)
+	}
+	if !strings.Contains(response.Body.String(), mountElement) {
+		t.Errorf("%s does not serve the shell, want a dotted lease name to route like any other deep link", dottedLeasePath)
 	}
 }
 

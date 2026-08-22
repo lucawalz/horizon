@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/lucawalz/horizon/internal/web/site"
@@ -17,6 +18,9 @@ const (
 	shellUnavailable = "the interface shell could not be read"
 	assetAbsent      = "the bundle holds no such asset"
 )
+
+// a CapacityLease name is a DNS subdomain and may itself contain a dot, so only these known static extensions are refused rather than every unbundled path that has one
+var staticAssetExtensions = []string{".svg", ".png", ".ico", ".css", ".js", ".woff2", ".json", ".webmanifest"}
 
 func absentInterface() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -48,6 +52,10 @@ func siteHandler(bundle fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if bundled(bundle, r.URL.Path) {
 			files.ServeHTTP(w, r)
+			return
+		}
+		if slices.Contains(staticAssetExtensions, path.Ext(r.URL.Path)) {
+			http.Error(w, assetAbsent, http.StatusNotFound)
 			return
 		}
 		serveShell(w, bundle)
