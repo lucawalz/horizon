@@ -321,3 +321,30 @@ func TestTheNodeWatchEnqueuesNothingForANodeNoLeaseClaims(t *testing.T) {
 
 	h.assertEnqueued(pooledNode("home-0", "fake://claimed-by-nobody"))
 }
+
+func TestTheReadyInstantRefusesATransitionItCannotTrust(t *testing.T) {
+	now := testInstant.Add(time.Hour)
+	r := &CapacityLeaseReconciler{Clock: func() time.Time { return now }}
+
+	tests := map[string]struct {
+		accepted   time.Time
+		transition time.Time
+		want       time.Time
+	}{
+		"a transition after acceptance is taken":        {accepted: testInstant, transition: testInstant.Add(time.Minute), want: testInstant.Add(time.Minute)},
+		"a transition at acceptance is taken":           {accepted: testInstant, transition: testInstant, want: testInstant},
+		"a transition before acceptance is not":         {accepted: testInstant, transition: testInstant.Add(-time.Minute), want: now},
+		"a zero transition is not":                      {accepted: testInstant, transition: time.Time{}, want: now},
+		"a zero transition against a zero lease is not": {accepted: time.Time{}, transition: time.Time{}, want: now},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			lease := leaseExpiringIn(time.Hour)
+			lease.Status.AcceptedAt = &metav1.Time{Time: tc.accepted}
+			if got := r.readyInstant(lease, tc.transition); !got.Equal(tc.want) {
+				t.Errorf("ready instant is %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
