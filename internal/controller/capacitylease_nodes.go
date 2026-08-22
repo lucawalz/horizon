@@ -13,6 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/duration"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
@@ -179,19 +181,62 @@ func elapsedSince(instant *metav1.Time, now time.Time) string {
 }
 
 func matchNode(nodes []corev1.Node, entry *v1alpha1.InstanceStatus) *corev1.Node {
-	if entry.ProviderID != "" {
-		for i := range nodes {
-			if nodes[i].Spec.ProviderID == entry.ProviderID {
-				return &nodes[i]
-			}
-		}
-	}
+	var byName *corev1.Node
 	for i := range nodes {
-		if nodes[i].Name == entry.Name {
+		switch {
+		case matchesProviderID(entry, &nodes[i]):
 			return &nodes[i]
+		case byName == nil && matchesNodeName(entry, &nodes[i]):
+			byName = &nodes[i]
 		}
 	}
-	return nil
+	return byName
+}
+
+func instanceMatchesNode(entry *v1alpha1.InstanceStatus, node *corev1.Node) bool {
+	return matchesProviderID(entry, node) || matchesNodeName(entry, node)
+}
+
+func matchesProviderID(entry *v1alpha1.InstanceStatus, node *corev1.Node) bool {
+	return entry.ProviderID != "" && node.Spec.ProviderID == entry.ProviderID
+}
+
+func matchesNodeName(entry *v1alpha1.InstanceStatus, node *corev1.Node) bool {
+	return node.Name == entry.Name
+}
+
+// a node that has only just registered carries the pool label from cloud-init but not yet the adoption label
+func (r *CapacityLeaseReconciler) leasesForNode(ctx context.Context, obj client.Object) []reconcile.Request {
+	node, isNode := obj.(*corev1.Node)
+	if !isNode {
+		return nil
+	}
+	if name := node.Labels[LeaseNameLabelKey]; name != "" {
+		return []reconcile.Request{{NamespacedName: client.ObjectKey{Name: name}}}
+	}
+
+	var leases v1alpha1.CapacityLeaseList
+	if err := r.Client.List(ctx, &leases); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "list capacity leases for a registering node", "node", node.Name)
+		return nil
+	}
+
+	var requests []reconcile.Request
+	for i := range leases.Items {
+		if leaseClaimsNode(&leases.Items[i], node) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKey{Name: leases.Items[i].Name}})
+		}
+	}
+	return requests
+}
+
+func leaseClaimsNode(lease *v1alpha1.CapacityLease, node *corev1.Node) bool {
+	for i := range lease.Status.Instances {
+		if instanceMatchesNode(&lease.Status.Instances[i], node) {
+			return true
+		}
+	}
+	return false
 }
 
 func nodeReady(node *corev1.Node) bool {

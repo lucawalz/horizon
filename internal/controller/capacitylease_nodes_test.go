@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/provider"
 )
 
 func stagedInstance(name string, phase v1alpha1.InstancePhase, created time.Time) *v1alpha1.InstanceStatus {
@@ -251,4 +254,70 @@ func TestReadyAtIsTheLatestTransitionAcrossReplicas(t *testing.T) {
 	if !readyAt.Time.Equal(latest) {
 		t.Errorf("readyAt is %s, want the slowest node's transition %s", readyAt.Time, latest)
 	}
+}
+
+func pooledNode(name, providerID string) *corev1.Node {
+	return &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   name,
+			Labels: map[string]string{provider.PoolLabelKey: provider.ReservedPoolValue},
+		},
+		Spec: corev1.NodeSpec{ProviderID: providerID},
+	}
+}
+
+func (h *harness) assertEnqueued(node *corev1.Node, want ...string) {
+	h.t.Helper()
+	var got []string
+	for _, request := range h.reconciler().leasesForNode(h.t.Context(), node) {
+		if request.Namespace != "" {
+			h.t.Errorf("request for %q carries namespace %q, but a capacity lease is cluster scoped", request.Name, request.Namespace)
+		}
+		got = append(got, request.Name)
+	}
+	if !slices.Equal(got, want) {
+		h.t.Errorf("node %q enqueued %v, want %v", node.Name, got, want)
+	}
+}
+
+func TestTheNodeWatchEnqueuesTheLeaseNamedByTheAdoptionLabel(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	node := pooledNode("adopted", "fake://unrelated")
+	node.Labels[LeaseNameLabelKey] = h.name
+
+	h.assertEnqueued(node, h.name)
+}
+
+func TestTheNodeWatchMatchesAnUnadoptedNodeByProviderID(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	entry := h.instanceStatus(h.instanceName(0))
+	if entry.ProviderID == "" {
+		t.Fatalf("instance %q carries no provider id to match on", entry.Name)
+	}
+
+	h.assertEnqueued(pooledNode("registered-under-another-name", entry.ProviderID), h.name)
+}
+
+func TestTheNodeWatchMatchesAnUnadoptedNodeByNameWhenNoProviderIDIsRecorded(t *testing.T) {
+	h := newHarness(t)
+	h.prov.FailCreate = func(string) error { return errors.New("provider is unreachable") }
+	h.settleIgnoringErrors(6)
+
+	entry := h.instanceStatus(h.instanceName(0))
+	if entry.ProviderID != "" {
+		t.Fatalf("instance %q already carries a provider id", entry.Name)
+	}
+
+	h.assertEnqueued(pooledNode(entry.Name, ""), h.name)
+}
+
+func TestTheNodeWatchEnqueuesNothingForANodeNoLeaseClaims(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	h.assertEnqueued(pooledNode("home-0", "fake://claimed-by-nobody"))
 }
