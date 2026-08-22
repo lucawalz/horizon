@@ -17,7 +17,7 @@ The cluster horizon operates over lives in the companion [bedrock](https://githu
 
 ## Status
 
-`0.3.0` is the latest published release; the chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`. Image selection by name or id and `horizon cloud-init` postdate `0.3.0`, so a checkout is the only way to use them until the next tag.
+`0.7.0` is the latest published release; the chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`. `charts/horizon/Chart.yaml` declares the version the next tag will publish, so a checkout is ahead of both registries while a release is being prepared.
 
 Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the single-page web interface served locally by `horizon dashboard`, which creates and releases leases as well as reading them; five commands, `horizon controller`, `horizon dashboard`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
 
@@ -39,7 +39,7 @@ Both definitions are cluster-scoped and live in the `horizon.dev/v1alpha1` group
 
 ### CapacityLease
 
-`spec.providerRef`, `spec.region`, `spec.replicas`, and `spec.duration` are required, together with exactly one of `spec.size` or `spec.requirements`. `spec.size` pins an instance type by name. `spec.requirements` states a minimum core count, an optional memory floor, an architecture, an optional CPU type and a selection strategy, and horizon resolves the cheapest offered type that satisfies them. `spec.providerRef`, `spec.region` and whichever of the two sizing fields is set are immutable, so a lease cannot be repointed once it holds capacity. `spec.workload.namespace` names the namespace to migrate onto the leased nodes and omitting it adds bare capacity. Status carries `phase` (`Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`), the resolved `instanceType`, the per-instance provider id and node name, and conditions. A lease sized from `spec.requirements` also carries `status.selection`, which records the strategy that ran, the chosen type with its hourly rate and currency, the runner-up it beat, how many types the catalogue `offered` and how many of them `qualified`, and a tally of the rejected candidates by the filter that rejected them. The stanza is written once, alongside `status.instanceType`, and is not rewritten as the catalogue moves. A lease that pins `spec.size` makes no policy decision and carries no stanza. Printer columns expose replicas, region, phase, expiry, readiness, the resolved instance type, and age, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client; the short name is `cl`.
+`spec.providerRef`, `spec.region`, `spec.replicas`, and `spec.duration` are required, together with exactly one of `spec.size` or `spec.requirements`. `spec.size` pins an instance type by name. `spec.requirements` states a minimum core count, an optional memory floor, an architecture, an optional CPU type and a selection strategy, and horizon resolves the cheapest offered type that satisfies them. `spec.providerRef`, `spec.region` and whichever of the two sizing fields is set are immutable, so a lease cannot be repointed once it holds capacity. `spec.workload.namespace` names the namespace to migrate onto the leased nodes and omitting it adds bare capacity. Status carries `phase` (`Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`), the resolved `instanceType`, the per-instance provider id, node name and join stage, and conditions. A lease sized from `spec.requirements` also carries `status.selection`, which records the strategy that ran, the chosen type with its hourly rate and currency, the runner-up it beat, how many types the catalogue `offered` and how many of them `qualified`, and a tally of the rejected candidates by the filter that rejected them. The stanza is written once, alongside `status.instanceType`, and is not rewritten as the catalogue moves. A lease that pins `spec.size` makes no policy decision and carries no stanza. Printer columns expose replicas, region, phase, expiry, readiness, whether the node-side watchdog is armed, the resolved instance type, and age, so `kubectl get`, k9s, Rancher and Headlamp are all useful without a horizon-specific client; the short name is `cl`.
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -144,7 +144,7 @@ helm install horizon oci://ghcr.io/lucawalz/charts/horizon \
   --namespace horizon-system --create-namespace
 ```
 
-That resolves against `0.3.0`, the latest published chart. The `image` field and `horizon cloud-init` used in [Usage](#usage) are ahead of `0.3.0` and need a checkout until the next tag:
+That resolves against `0.7.0`, the latest published chart. A checkout installs the working tree instead, which is ahead of the published chart while a release is being prepared:
 
 ```
 helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
@@ -166,7 +166,7 @@ make build
 
 Nothing needs to exist beforehand except a Kubernetes cluster reachable with `kubectl` at 1.29 or newer, a Hetzner Cloud API token, and a boot image in the Hetzner project; a stock `ubuntu-24.04` image is enough, since horizon boots it with cloud-init rather than expecting anything horizon-specific baked in.
 
-**1. Install the chart.** `image` and `horizon cloud-init`, used below, are ahead of the published `0.3.0` chart, so this installs from a checkout:
+**1. Install the chart.** This installs from a checkout, which is ahead of the published `0.7.0` chart:
 
 ```
 helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
@@ -327,13 +327,14 @@ horizon cloud-init   Render the cloud-init a burst node needs to join a cluster
 horizon version      Print the build version
 ```
 
-`horizon` with no subcommand prints help. `horizon controller` takes three flags:
+`horizon` with no subcommand prints help. `horizon controller` takes four flags:
 
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--leader-elect` | `true` | Hold a leader election lease so only one replica reconciles. |
 | `--metrics-bind-address` | `:8080` | Address the metrics endpoint binds to. |
 | `--health-probe-bind-address` | `:8081` | Address the liveness and readiness endpoints bind to. |
+| `--lease-poll-interval` | `30s` | Fallback interval between lease reconciles, used for whatever the node watch misses. |
 
 `horizon dashboard` takes one flag, and it is a port rather than an address:
 
