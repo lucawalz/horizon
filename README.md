@@ -19,7 +19,7 @@ The cluster horizon operates over lives in the companion [bedrock](https://githu
 
 `0.3.0` is the latest published release; the chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`. Image selection by name or id and `horizon cloud-init` postdate `0.3.0`, so a checkout is the only way to use them until the next tag.
 
-Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the read-only single-page web interface served locally by `horizon dashboard`; five commands, `horizon controller`, `horizon dashboard`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
+Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the single-page web interface served locally by `horizon dashboard`, which creates and releases leases as well as reading them; five commands, `horizon controller`, `horizon dashboard`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
 
 Not implemented: the in-cluster mode of the web interface from [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), along with the forward authentication, the network policy and the access review it requires, so the chart carries no port or ingress for it; the interface's mutating half, which creates leases and writes provider credentials; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
 
@@ -297,7 +297,7 @@ An unusual image is not a reason to leave the generator. A pre-baked image that 
 
 ### Web interface
 
-`horizon dashboard` serves the read-only web interface from the machine it runs on:
+`horizon dashboard` serves the web interface from the machine it runs on:
 
 ```
 horizon dashboard
@@ -305,21 +305,23 @@ horizon dashboard
 
 It reads the cluster with the caller's own kubeconfig credentials, which is the whole of its authentication, and it therefore binds to `127.0.0.1` and nothing else. The address is not a flag: only the port is, and the loopback address is built inside the server rather than accepted from a caller, so no invocation can widen it. Serving the same interface from inside the cluster is a separate mode that does not exist yet, because it needs forward authentication, a network policy restricting the service to the proxy, and an access review before any mutation.
 
-Three routes are served. The lease list carries the printer columns, one row per `CapacityLease`, with the time each lease has left counting down in its own column. The lease behind each row carries the reservation and the timeline, the conditions, the per-instance table and the workloads that were drained onto it. Its sizing reads the same whether the lease named an instance type or asked for a minimum core count, memory, architecture, CPU type and selection strategy, so a lease sized by requirements no longer shows an empty field. The machines route lists the `ProviderConfig` resources in the cluster and the instance types a chosen one offers in a chosen region.
+Four routes are served. The lease list carries the printer columns, one row per `CapacityLease`, with the time each lease has left counting down in its own column. The lease behind each row carries the reservation and the timeline, the conditions, the per-instance table and the workloads that were drained onto it. Its sizing reads the same whether the lease named an instance type or asked for a minimum core count, memory, architecture, CPU type and selection strategy, so a lease sized by requirements no longer shows an empty field. A lease sized by requirements also carries the selection panel, which names the strategy, the type it chose and its hourly rate, the runner-up, how many candidates were offered and how many qualified, and the tally of why the rest were rejected; a lease that named its own type states that absence rather than showing an empty panel. The new lease route is the create form, and the machines route lists the `ProviderConfig` resources in the cluster and the instance types a chosen one offers in a chosen region.
 
 The countdown is the reason the interface exists, so it is the one reading that never waits on the network. Every deadline is rendered as a `<time>` element carrying the exact instant, and the browser advances the reading from that instant once a second. Nothing is refetched to make it tick, and a lease inside its last five minutes changes colour without asking the server anything. Polling is left with the one job the browser cannot do for itself, observing the phase changes the controller writes, and it runs every 20 seconds. A poll that fails leaves the last answer on screen rather than blanking a view that was reading fine.
 
 The machine type catalogue answers with a named state rather than an empty table, and the interface carries wording for each one: nothing chosen yet, a catalogue this process does not hold, a provider config the refresher has not filled, a region that offers nothing, a read the provider refused, and the listing itself. The second is the ordinary answer for a local dashboard: instance types are fetched and cached by the controller inside the cluster, so a dashboard started outside it keeps no copy and says so.
 
-Nothing in the interface writes: no lease is created, no provider config is edited, and no Secret is read or rendered.
+The interface creates and releases leases, and does nothing else that writes: no provider config is edited, and no Secret is read or rendered. The create form asks for a requirement first, since that is what the controller resolves against the provider catalogue, and naming a machine type stays available as the escape hatch the custom resource already provides. A minimum memory carries its unit as a visible choice with the resolved byte count beside it, because `4Gi` is 4,294,967,296 bytes and a machine advertising 4 GB has 4,000,000,000, so the binary suffix silently excludes it. Bounds are shown while typing and enforced by CEL on the apiserver, whose refusal is forwarded with its own status code and message rather than restated. Releasing a lease deletes the `CapacityLease`, which is how the controller is asked for a teardown through its finalizer; the confirmation names the two clocks rather than asking whether the operator is sure, and nothing in the browser destroys a machine itself.
 
-The interface is a single-page application, decided in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), which supersedes the server-rendered interface of [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md). `internal/web/site` holds a Vite project in React and TypeScript styled with Tailwind, and `internal/web/api.go` serves the state behind the three routes as JSON at `/api/leases`, `/api/leases/{name}` and `/api/machines`. The built bundle is committed at `internal/web/site/dist` and embedded with `//go:embed`, so `go build` still needs no JavaScript toolchain, and `go build -tags no_ui` produces the same operator with no interface in it. The rebuild changed how the interface is constructed and how much it can show; it did not change what it reads or how it authenticates.
+Writing is authorised by the caller's own kubeconfig, exactly as `kubectl` is, and it is guarded against the one thing loopback introduces. Any page in the same browser can reach `http://127.0.0.1:8973`, so every mutating request must carry a custom header the interface sets on its own calls, `Sec-Fetch-Site: same-origin`, and an `Origin` matching the server's own where the browser sends one. Any failure answers `403`, and no CORS header is served by anything, because the absent `Access-Control-Allow-Origin` is what makes the preflight fail. A process built with no writer, which is what an embedder that supplies only a reader gets, answers both mutating routes with `501` and serves every read route unchanged. The reasoning is in [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md).
+
+The interface is a single-page application, decided in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), which supersedes the server-rendered interface of [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md). `internal/web/site` holds a Vite project in React and TypeScript styled with Tailwind, and `internal/web/api.go` serves the state behind the routes as JSON at `/api/leases`, `/api/leases/{name}` and `/api/machines`, with `POST /api/leases` and `DELETE /api/leases/{name}` behind the guard. The built bundle is committed at `internal/web/site/dist` and embedded with `//go:embed`, so `go build` still needs no JavaScript toolchain, and `go build -tags no_ui` produces the same operator with no interface in it. The rebuild changed how the interface is constructed and how much it can show; it did not change what it reads or how it authenticates.
 
 ### Command line reference
 
 ```
 horizon controller   Run the in-cluster capacity lease controller
-horizon dashboard    Serve the read-only web interface on loopback
+horizon dashboard    Serve the web interface on loopback
 horizon watchdog     Enforce the node-side teardown deadline from the leased server itself
 horizon cloud-init   Render the cloud-init a burst node needs to join a cluster
 horizon version      Print the build version
@@ -375,7 +377,7 @@ cmd/horizon/        main entry point
 internal/cli/       cobra root, version, controller, dashboard, watchdog, and cloud-init commands
 internal/agent/     node-side dead man's switch
 internal/manager/   controller-runtime wiring
-internal/web/       read-only web interface, json endpoints and the embedded bundle
+internal/web/       web interface, json endpoints and the embedded bundle
                     site/ vite, react and typescript project, dist/ committed
 internal/controller/  lease reconciler, orphan collector, provider factory
 internal/k8s/       workload migration, placement restore, node drain

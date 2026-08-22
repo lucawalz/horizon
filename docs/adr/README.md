@@ -30,3 +30,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0024. Validate the release configuration before the tag](0024-validate-the-release-configuration-before-the-tag.md) (accepted)
 - [0025. Replace the server-rendered web interface with an embedded single-page application](0025-replace-server-rendered-interface-with-embedded-spa.md) (accepted)
 - [0026. Observe node readiness rather than poll for it](0026-observe-node-readiness-rather-than-poll-for-it.md) (accepted)
+- [0027. Let the web interface create and release leases, behind a typed writer and a cross-origin guard](0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) (accepted)
