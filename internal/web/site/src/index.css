@@ -10,6 +10,9 @@
 /* Static assets ship as markup Tailwind never renders, so its scanner should not mistake an attribute like an SVG's own transform for a utility class. */
 @source not "../public";
 
+/* Test files render only under jsdom, so scanning them couples the shipped stylesheet to selector strings no browser ever sees. */
+@source not "./**/*.test.{ts,tsx}";
+
 /* The console ships dark, so the absence of an opt-in resolves to the dark theme rather than the light one. */
 @custom-variant dark (&:where(:root:not(.light), :root:not(.light) *));
 
