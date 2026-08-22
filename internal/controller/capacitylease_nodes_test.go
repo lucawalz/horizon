@@ -16,12 +16,6 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
-// the vanished entry has to be adopted as released, refilled as intended, and then fail to create
-const passesToStallARecreate = 8
-
-// the first instance has to be admitted and created before the second is intended and fails to create
-const passesToStallASecondCreate = 8
-
 func stagedInstance(name string, phase v1alpha1.InstancePhase, created time.Time) *v1alpha1.InstanceStatus {
 	return &v1alpha1.InstanceStatus{
 		Name:      name,
@@ -610,7 +604,7 @@ func TestAStalledRecreateNeverClaimsANodeIsReady(t *testing.T) {
 	}
 	h.prov.FailCreate = func(string) error { return errors.New("provider is unreachable") }
 	h.setNodeReady(first, false)
-	h.settleIgnoringErrors(passesToStallARecreate)
+	h.settleIgnoringErrors(maxSettlePasses)
 
 	if node, ok := h.node(first); !ok || nodeReady(node) {
 		t.Fatal("node zero is still ready, so this no longer reproduces the disagreement")
@@ -643,7 +637,7 @@ func TestAFailingCreateNamesTheInstanceThatHasNoServer(t *testing.T) {
 		}
 		return errors.New("provider is unreachable")
 	}
-	h.settleIgnoringErrors(passesToStallASecondCreate)
+	h.settleIgnoringErrors(maxSettlePasses)
 
 	if got := h.instanceStatus(first).Phase; got != v1alpha1.InstancePhaseCreated {
 		t.Fatalf("instance zero is %q, want %q so the healthy instance is past its own stage", got, v1alpha1.InstancePhaseCreated)
