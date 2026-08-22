@@ -1,11 +1,14 @@
 package web
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,11 +20,50 @@ const (
 	wireNoStore     = "no-store"
 	wireJSONType    = "application/json; charset=utf-8"
 	wireHTMLType    = "text/html; charset=utf-8"
+	wireSVGType     = "image/svg+xml"
+	wirePNGType     = "image/png"
 	staleAssetPath  = "/assets/index-deadbeef.js"
 	scriptExtension = ".js"
 	styleExtension  = ".css"
+	svgExtension    = ".svg"
+	pngExtension    = ".png"
+	pngMagic        = "\x89PNG\r\n\x1a\n"
+	svgRootTag      = "<svg"
+	iconRelAttr     = `rel="icon"`
 	listingLink     = "<a href="
 )
+
+var iconContentTypes = map[string]string{
+	svgExtension: wireSVGType,
+	pngExtension: wirePNGType,
+}
+
+var (
+	iconLinkPattern = regexp.MustCompile(`<link\b[^>]*` + iconRelAttr + `[^>]*>`)
+	hrefAttrPattern = regexp.MustCompile(`\bhref="([^"]+)"`)
+)
+
+func iconHrefs(t *testing.T, shell []byte) []string {
+	t.Helper()
+	var hrefs []string
+	for _, tag := range iconLinkPattern.FindAll(shell, -1) {
+		match := hrefAttrPattern.FindSubmatch(tag)
+		if match == nil {
+			t.Fatalf("a <link %s> tag carries no href: %s", iconRelAttr, tag)
+		}
+		hrefs = append(hrefs, string(match[1]))
+	}
+	return hrefs
+}
+
+func baseMediaType(t *testing.T, header string) string {
+	t.Helper()
+	base, _, err := mime.ParseMediaType(header)
+	if err != nil {
+		t.Fatalf("parse content type %q: %v", header, err)
+	}
+	return base
+}
 
 func TestEmbeddedAssetsAreServed(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
@@ -130,23 +172,54 @@ func TestTheShellIsNotStored(t *testing.T) {
 }
 
 func TestIconsAreServedAsThemselvesNotTheShell(t *testing.T) {
+	if site.DistDirFS == nil {
+		t.Skip("no interface is embedded under this build tag")
+	}
+
+	shell, err := fs.ReadFile(site.DistDirFS, shellFile)
+	if err != nil {
+		t.Fatalf("read the shipped shell: %v", err)
+	}
+
+	hrefs := iconHrefs(t, shell)
+	if len(hrefs) == 0 {
+		t.Fatal(`the shell carries no <link rel="icon">, want at least one so a browser tab is not left blank`)
+	}
+
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
 
-	for target, wantType := range map[string]string{
-		"/favicon.svg": "image/svg+xml",
-		"/favicon.png": "image/png",
-	} {
-		t.Run(target, func(t *testing.T) {
-			response := get(t, server, target)
+	for _, href := range hrefs {
+		t.Run(strings.TrimPrefix(path.Ext(href), "."), func(t *testing.T) {
+			response := get(t, server, href)
 			if response.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+				t.Fatalf("%s status = %d, want %d", href, response.Code, http.StatusOK)
 			}
-			sent := sentHeaders(response)
-			if got := sent.Get("Content-Type"); got != wantType {
-				t.Errorf("Content-Type = %q, want %q", got, wantType)
+
+			body := response.Body.Bytes()
+			if len(body) == 0 {
+				t.Fatalf("%s served an empty body", href)
 			}
-			if strings.Contains(response.Body.String(), mountElement) {
-				t.Errorf("%s served the application shell instead of the icon", target)
+			if strings.Contains(string(body), mountElement) {
+				t.Fatalf("%s served the application shell instead of the icon", href)
+			}
+
+			wantType, known := iconContentTypes[path.Ext(href)]
+			if !known {
+				t.Fatalf("%s has an extension this test does not know how to verify, want one of %v", href, iconContentTypes)
+			}
+			if got := baseMediaType(t, sentHeaders(response).Get("Content-Type")); got != wantType {
+				t.Errorf("%s Content-Type = %q, want %q", href, got, wantType)
+			}
+
+			switch path.Ext(href) {
+			case svgExtension:
+				if !bytes.Contains(body, []byte(svgRootTag)) {
+					t.Errorf("%s does not carry an %s root element", href, svgRootTag)
+				}
+			case pngExtension:
+				if !bytes.HasPrefix(body, []byte(pngMagic)) {
+					t.Errorf("%s does not carry the PNG signature", href)
+				}
 			}
 		})
 	}
