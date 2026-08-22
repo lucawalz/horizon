@@ -150,14 +150,21 @@ func recordStage(entry *v1alpha1.InstanceStatus, stage v1alpha1.InstanceStage) b
 }
 
 func waitingCondition(lease *v1alpha1.CapacityLease, joined, want int, now time.Time) (reason, message string) {
+	reason, detail := waitingReport(lease, now)
 	count := fmt.Sprintf("%d of %d nodes ready", joined, want)
+	if detail == "" {
+		return reason, count
+	}
+	return reason, detail + "; " + count
+}
+
+func waitingReport(lease *v1alpha1.CapacityLease, now time.Time) (reason, detail string) {
 	blocking := leastAdvancedInstance(lease)
 	if blocking == nil {
-		return reasonWaitingForNodes, count
+		return reasonWaitingForNodes, ""
 	}
 	stage := waitingStages[blocking.Stage]
-	detail := fmt.Sprintf(stage.format, blocking.Name, elapsedSince(blocking.CreatedAt, now))
-	return stage.reason, detail + "; " + count
+	return stage.reason, fmt.Sprintf(stage.format, blocking.Name, elapsedSince(blocking.CreatedAt, now))
 }
 
 // only the least advanced stage of all is safe to name without a fresh node listing, and that is this one
@@ -179,21 +186,12 @@ func (r *CapacityLeaseReconciler) reportWaitingForInstances(ctx context.Context,
 		return nil
 	}
 
-	reason, message := waitingCondition(lease, joinedInstances(lease), int(lease.Spec.Replicas), r.now())
-	if !setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reason, message) {
+	// a ready count here would have to come from the phases, and Joined only means a node was ready once
+	reason, detail := waitingReport(lease, r.now())
+	if !setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reason, detail) {
 		return nil
 	}
 	return r.writeStatus(ctx, lease)
-}
-
-func joinedInstances(lease *v1alpha1.CapacityLease) int {
-	joined := 0
-	for i := range lease.Status.Instances {
-		if lease.Status.Instances[i].Phase == v1alpha1.InstancePhaseJoined {
-			joined++
-		}
-	}
-	return joined
 }
 
 func leastAdvancedInstance(lease *v1alpha1.CapacityLease) *v1alpha1.InstanceStatus {
@@ -273,7 +271,11 @@ func (r *CapacityLeaseReconciler) leasesForNode(ctx context.Context, obj client.
 	return requests
 }
 
-func nodeSignals(adoptionLabelKey string) predicate.Predicate {
+func leaseNodeSignals() predicate.Predicate {
+	return nodeSignals(LeaseNameLabelKey, provider.WatchdogArmedAnnotationKey)
+}
+
+func nodeSignals(adoptionLabelKey string, watchedAnnotations ...string) predicate.Predicate {
 	return predicate.Funcs{
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			before, wasNode := e.ObjectOld.(*corev1.Node)
@@ -281,10 +283,25 @@ func nodeSignals(adoptionLabelKey string) predicate.Predicate {
 			if !wasNode || !isNode {
 				return true
 			}
-			return nodeReady(before) != nodeReady(after) ||
-				before.Labels[adoptionLabelKey] != after.Labels[adoptionLabelKey]
+			if nodeReady(before) != nodeReady(after) ||
+				before.Labels[adoptionLabelKey] != after.Labels[adoptionLabelKey] {
+				return true
+			}
+			return annotationArrivedOrLeft(before, after, watchedAnnotations)
 		},
 	}
+}
+
+// the agent rewrites its armed annotation every poll tick, so only its arrival and departure carry news
+func annotationArrivedOrLeft(before, after *corev1.Node, keys []string) bool {
+	for _, key := range keys {
+		_, had := before.Annotations[key]
+		_, has := after.Annotations[key]
+		if had != has {
+			return true
+		}
+	}
+	return false
 }
 
 func leaseClaimsNode(lease *v1alpha1.CapacityLease, node *corev1.Node) bool {

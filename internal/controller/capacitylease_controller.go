@@ -169,7 +169,7 @@ func (r *CapacityLeaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&v1alpha1.CapacityLease{}).
 		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.leasesForNode),
-			builder.WithPredicates(nodeSignals(LeaseNameLabelKey))).
+			builder.WithPredicates(leaseNodeSignals())).
 		Named(CapacityLeaseControllerName).
 		Complete(r)
 }

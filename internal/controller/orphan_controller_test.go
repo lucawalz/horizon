@@ -64,7 +64,7 @@ func TestTheNodeWatchIgnoresRenewalsAndKeepsEveryStrandingSignal(t *testing.T) {
 
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			got := nodeSignals(LeaseUIDLabelKey).Update(event.UpdateEvent{ObjectOld: tc.before, ObjectNew: tc.after})
+			got := orphanNodeSignals().Update(event.UpdateEvent{ObjectOld: tc.before, ObjectNew: tc.after})
 			if got != tc.want {
 				t.Errorf("update passed the predicate = %v, want %v", got, tc.want)
 			}

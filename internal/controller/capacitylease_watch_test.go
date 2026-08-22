@@ -182,6 +182,25 @@ func (w *watchedLease) registerNode(ready bool) {
 	w.setReady(created.Name, ready)
 }
 
+func (w *watchedLease) arm(name string) {
+	w.t.Helper()
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := w.kube.CoreV1().Nodes().Get(w.t.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		if node.Annotations == nil {
+			node.Annotations = map[string]string{}
+		}
+		node.Annotations[provider.WatchdogArmedAnnotationKey] = provider.FormatArmed(time.Now())
+		_, err = w.kube.CoreV1().Nodes().Update(w.t.Context(), node, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		w.t.Fatalf("arm node %q: %v", name, err)
+	}
+}
+
 func (w *watchedLease) setReady(name string, ready bool) {
 	w.t.Helper()
 	status := corev1.ConditionFalse
@@ -228,4 +247,15 @@ func TestANodeGoingReadyWakesTheLeaseWithoutWaitingForThePoll(t *testing.T) {
 	if lease.Status.ReadyAt == nil {
 		t.Error("the lease became ready without recording a ready instant")
 	}
+
+	w.await("published an unarmed watchdog, so its queue has drained", func(lease *v1alpha1.CapacityLease) bool {
+		condition := conditionOf(lease, v1alpha1.ConditionWatchdogArmed)
+		return condition != nil && condition.Status == metav1.ConditionFalse
+	})
+
+	w.arm(w.name + "-0")
+	w.await("noticed the watchdog arming", func(lease *v1alpha1.CapacityLease) bool {
+		condition := conditionOf(lease, v1alpha1.ConditionWatchdogArmed)
+		return condition != nil && condition.Status == metav1.ConditionTrue
+	})
 }

@@ -10,6 +10,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/metrics"
@@ -237,10 +238,14 @@ func (r *OrphanReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return errors.New("orphan: provider factory is required")
 	}
 	if err := ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Node{}, builder.WithPredicates(nodeSignals(LeaseUIDLabelKey))).
+		For(&corev1.Node{}, builder.WithPredicates(orphanNodeSignals())).
 		Named(orphanControllerName).
 		Complete(r); err != nil {
 		return err
 	}
 	return mgr.Add(r)
+}
+
+func orphanNodeSignals() predicate.Predicate {
+	return nodeSignals(LeaseUIDLabelKey)
 }

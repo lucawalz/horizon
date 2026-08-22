@@ -386,7 +386,10 @@ func TestALeaseWhoseProviderNeverCreatesReportsThatItAwaitsAnInstance(t *testing
 	}
 	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionFalse)
 	h.assertConditionDetail(v1alpha1.ConditionInstancesReady, reasonAwaitingInstance,
-		"instance "+name+" was requested 2m ago and no provider instance exists yet; 0 of 1 nodes ready")
+		"instance "+name+" was requested 2m ago and no provider instance exists yet")
+	if got := h.condition(v1alpha1.ConditionInstancesReady).Message; strings.Contains(got, "nodes ready") {
+		t.Errorf("condition message %q counts ready nodes without listing any", got)
+	}
 }
 
 func TestMatchNodePrefersAProviderIDMatchOverANameMatch(t *testing.T) {
@@ -482,18 +485,163 @@ func TestElapsedSinceStaysReadableForEveryTimestampItIsGiven(t *testing.T) {
 	}
 }
 
-func TestTheLeaseWatchWakesOnTheLabelItsMapFunctionReads(t *testing.T) {
-	unadopted := pooledNode("burst-0", "fake://1")
-	adopted := pooledNode("burst-0", "fake://1")
-	adopted.Labels[LeaseNameLabelKey] = "burst"
-	annotated := pooledNode("burst-0", "fake://1")
-	annotated.Annotations = map[string]string{provider.WatchdogDeadlineAnnotationKey: "1785931200"}
+func TestTheLeaseWatchWakesOnReadinessAdoptionAndFirstArming(t *testing.T) {
+	armed := map[string]string{provider.WatchdogArmedAnnotationKey: provider.FormatArmed(testInstant)}
+	renewed := map[string]string{provider.WatchdogArmedAnnotationKey: provider.FormatArmed(testInstant.Add(15 * time.Second))}
 
-	signals := nodeSignals(LeaseNameLabelKey)
-	if !signals.Update(event.UpdateEvent{ObjectOld: unadopted, ObjectNew: adopted}) {
-		t.Error("adoption does not wake the watch, so the map function never sees the label it reads")
+	tests := map[string]struct {
+		before *corev1.Node
+		after  *corev1.Node
+		want   bool
+	}{
+		"a node going ready wakes the lease": {
+			before: leaseWatchNode(false, "", nil),
+			after:  leaseWatchNode(true, "", nil),
+			want:   true,
+		},
+		"adoption wakes the lease": {
+			before: leaseWatchNode(false, "", nil),
+			after:  leaseWatchNode(false, "burst", nil),
+			want:   true,
+		},
+		"the first arming wakes the lease": {
+			before: leaseWatchNode(true, "burst", nil),
+			after:  leaseWatchNode(true, "burst", armed),
+			want:   true,
+		},
+		"the annotation going away wakes the lease": {
+			before: leaseWatchNode(true, "burst", armed),
+			after:  leaseWatchNode(true, "burst", nil),
+			want:   true,
+		},
+		"an armed renewal does not wake the lease": {
+			before: leaseWatchNode(true, "burst", armed),
+			after:  leaseWatchNode(true, "burst", renewed),
+		},
+		"an unchanged node does not wake the lease": {
+			before: leaseWatchNode(true, "burst", armed),
+			after:  leaseWatchNode(true, "burst", armed),
+		},
 	}
-	if signals.Update(event.UpdateEvent{ObjectOld: unadopted, ObjectNew: annotated}) {
-		t.Error("a watchdog renewal wakes the lease reconciler, which lists nodes on every wake")
+
+	signals := leaseNodeSignals()
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := signals.Update(event.UpdateEvent{ObjectOld: tc.before, ObjectNew: tc.after}); got != tc.want {
+				t.Errorf("update passed the predicate = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTheOrphanWatchGainsNoSignalItHasNoUseFor(t *testing.T) {
+	armed := map[string]string{provider.WatchdogArmedAnnotationKey: provider.FormatArmed(testInstant)}
+
+	before := leaseWatchNode(true, "burst", nil)
+	after := leaseWatchNode(true, "burst", armed)
+	if orphanNodeSignals().Update(event.UpdateEvent{ObjectOld: before, ObjectNew: after}) {
+		t.Error("arming a watchdog wakes the orphan collector, which has no use for it")
+	}
+}
+
+func leaseWatchNode(ready bool, leaseName string, annotations map[string]string) *corev1.Node {
+	node := pooledNode("burst-0", "fake://1")
+	if leaseName != "" {
+		node.Labels[LeaseNameLabelKey] = leaseName
+	}
+	node.Annotations = annotations
+	node.Status = readyNode(node.Name, ready).Status
+	return node
+}
+
+func TestALateFlapDoesNotRetireAnInstanceThatAlreadyJoined(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.clock.Advance(nodeRegistrationTimeout + time.Minute)
+	h.setNodeReady(name, false)
+	h.settle()
+	h.settle()
+	h.settle()
+
+	if got := h.instanceStatus(name).Phase; got != v1alpha1.InstancePhaseJoined {
+		t.Errorf("instance phase is %q after a late flap, want %q: a phase that moves backwards is read as a registration timeout",
+			got, v1alpha1.InstancePhaseJoined)
+	}
+	if got := len(h.providerInstances()); got != 1 {
+		t.Errorf("provider holds %d instances after a late flap, want 1", got)
+	}
+	h.assertCondition(v1alpha1.ConditionDegraded, metav1.ConditionUnknown)
+}
+
+func TestAStalledRecreateNeverClaimsANodeIsReady(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) { lease.Spec.Replicas = 2 })
+	h.settle()
+
+	first, second := h.instanceName(0), h.instanceName(1)
+	h.joinNode(first, true)
+	h.settle()
+
+	if err := h.prov.Delete(h.t.Context(), second); err != nil {
+		t.Fatalf("delete instance %q behind the controller: %v", second, err)
+	}
+	h.prov.FailCreate = func(string) error { return errors.New("provider is unreachable") }
+	h.setNodeReady(first, false)
+	h.settleIgnoringErrors(8)
+
+	if node, ok := h.node(first); !ok || nodeReady(node) {
+		t.Fatal("node zero is still ready, so this no longer reproduces the disagreement")
+	}
+	if got := h.instanceStatus(first).Phase; got != v1alpha1.InstancePhaseJoined {
+		t.Fatalf("instance zero is %q, want %q so the stale count is in play", got, v1alpha1.InstancePhaseJoined)
+	}
+
+	condition := h.condition(v1alpha1.ConditionInstancesReady)
+	if condition == nil {
+		t.Fatal("the lease reports nothing while its recreate is stalled")
+	}
+	if condition.Reason != reasonAwaitingInstance {
+		t.Errorf("condition reason is %q, want %q", condition.Reason, reasonAwaitingInstance)
+	}
+	if !strings.Contains(condition.Message, "instance "+second+" was requested") {
+		t.Errorf("condition message %q does not name the instance that is blocking", condition.Message)
+	}
+	if strings.Contains(condition.Message, "nodes ready") {
+		t.Errorf("condition message %q counts ready nodes it cannot count, and no node is ready", condition.Message)
+	}
+}
+
+func TestTheWaitingReportSpeaksOnlyForTheStageItCanRecompute(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, false)
+	h.settle()
+
+	settled := h.condition(v1alpha1.ConditionInstancesReady)
+	if settled == nil || settled.Reason != reasonAwaitingReady {
+		t.Fatalf("the lease reports %v, want a node-derived stage to overwrite", settled)
+	}
+
+	stale := h.lease()
+	stale.Status.Instances[0].Stage = v1alpha1.InstanceStageAwaitingRegistration
+	if err := h.reconciler().reportWaitingForInstances(h.t.Context(), stale); err != nil {
+		t.Fatalf("report against a stale stage: %v", err)
+	}
+	if got := h.condition(v1alpha1.ConditionInstancesReady); got.Message != settled.Message {
+		t.Errorf("the waiting report rewrote the condition from a stage it cannot recompute: %q", got.Message)
+	}
+
+	ready := h.lease()
+	ready.Status.Instances[0].Phase = v1alpha1.InstancePhaseIntended
+	setCondition(ready, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady, "1 of 1 nodes ready")
+	if err := h.reconciler().reportWaitingForInstances(h.t.Context(), ready); err != nil {
+		t.Fatalf("report against a ready lease: %v", err)
+	}
+	if got := h.condition(v1alpha1.ConditionInstancesReady); got.Message != settled.Message {
+		t.Errorf("the waiting report contradicted a ready lease: %q", got.Message)
 	}
 }
