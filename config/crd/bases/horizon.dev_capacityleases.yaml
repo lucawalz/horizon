@@ -275,9 +275,6 @@ spec:
                 properties:
                   chosen:
                     type: string
-                  considered:
-                    format: int32
-                    type: integer
                   currency:
                     type: string
                   decidedAt:
@@ -285,6 +282,12 @@ spec:
                     type: string
                   hourlyRate:
                     type: string
+                  offered:
+                    format: int32
+                    type: integer
+                  qualified:
+                    format: int32
+                    type: integer
                   rejected:
                     items:
                       properties:
@@ -307,8 +310,9 @@ spec:
                     type: string
                 required:
                 - chosen
-                - considered
                 - decidedAt
+                - offered
+                - qualified
                 - strategy
                 type: object
               watchdogDeadline:
