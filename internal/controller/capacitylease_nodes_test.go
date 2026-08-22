@@ -19,6 +19,9 @@ import (
 // the vanished entry has to be adopted as released, refilled as intended, and then fail to create
 const passesToStallARecreate = 8
 
+// the first instance has to be admitted and created before the second is intended and fails to create
+const passesToStallASecondCreate = 8
+
 func stagedInstance(name string, phase v1alpha1.InstancePhase, created time.Time) *v1alpha1.InstanceStatus {
 	return &v1alpha1.InstanceStatus{
 		Name:      name,
@@ -628,6 +631,58 @@ func TestAStalledRecreateNeverClaimsANodeIsReady(t *testing.T) {
 	}
 	if strings.Contains(condition.Message, "nodes ready") {
 		t.Errorf("condition message %q counts ready nodes it cannot count, and no node is ready", condition.Message)
+	}
+}
+
+func TestAFailingCreateNamesTheInstanceThatHasNoServer(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) { lease.Spec.Replicas = 2 })
+	first, second := h.instanceName(0), h.instanceName(1)
+	h.prov.FailCreate = func(name string) error {
+		if name != second {
+			return nil
+		}
+		return errors.New("provider is unreachable")
+	}
+	h.settleIgnoringErrors(passesToStallASecondCreate)
+
+	if got := h.instanceStatus(first).Phase; got != v1alpha1.InstancePhaseCreated {
+		t.Fatalf("instance zero is %q, want %q so the healthy instance is past its own stage", got, v1alpha1.InstancePhaseCreated)
+	}
+
+	condition := h.condition(v1alpha1.ConditionInstancesReady)
+	if condition == nil {
+		t.Fatal("the lease reports nothing while its second create keeps failing")
+	}
+	if condition.Reason != reasonAwaitingInstance {
+		t.Errorf("condition reason is %q, want %q", condition.Reason, reasonAwaitingInstance)
+	}
+	if !strings.Contains(condition.Message, "instance "+second+" was requested") {
+		t.Errorf("condition message %q does not name the instance whose create is failing", condition.Message)
+	}
+	if strings.Contains(condition.Message, first+" ") {
+		t.Errorf("condition message %q blames the instance that already holds a server", condition.Message)
+	}
+}
+
+func TestAdoptingAnObservedInstanceDropsTheStageItWaitedIn(t *testing.T) {
+	lease := &v1alpha1.CapacityLease{ObjectMeta: metav1.ObjectMeta{Name: "burst"}}
+	lease.Status.Instances = []v1alpha1.InstanceStatus{{
+		Name:  "burst-0",
+		Phase: v1alpha1.InstancePhaseIntended,
+		Stage: v1alpha1.InstanceStageAwaitingInstance,
+	}}
+
+	var records metricWrites
+	observed := []provider.Instance{{Name: "burst-0", ProviderID: "fake://1"}}
+	changed, err := (&CapacityLeaseReconciler{}).adoptObservedInstances(t.Context(), lease, nil, observed, &records)
+	if err != nil {
+		t.Fatalf("adopt an observed instance: %v", err)
+	}
+	if !changed {
+		t.Fatal("adopting an intended instance reported no change")
+	}
+	if got := lease.Status.Instances[0].Stage; got != "" {
+		t.Errorf("the adopted instance still reports stage %q, which names a server that now exists", got)
 	}
 }
 

@@ -73,9 +73,7 @@ func (r *CapacityLeaseReconciler) adoptObservedInstances(ctx context.Context, le
 			}
 			changed = changed || vanished
 		case entry.Phase == v1alpha1.InstancePhaseIntended || entry.Phase == v1alpha1.InstancePhaseReleased:
-			entry.Phase = v1alpha1.InstancePhaseCreated
-			entry.ProviderID = inst.ProviderID
-			entry.LastError = ""
+			markCreated(entry, inst.ProviderID)
 			changed = true
 		case entry.ProviderID != inst.ProviderID:
 			entry.ProviderID = inst.ProviderID
@@ -177,6 +175,14 @@ func machineType(lease *v1alpha1.CapacityLease) string {
 	return lease.Spec.Size
 }
 
+// only a node reconcile recomputes the stage, and a lease whose creates keep failing never reaches one
+func markCreated(entry *v1alpha1.InstanceStatus, providerID string) {
+	entry.Phase = v1alpha1.InstancePhaseCreated
+	entry.ProviderID = providerID
+	entry.Stage = ""
+	entry.LastError = ""
+}
+
 func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, entry *v1alpha1.InstanceStatus) (ctrl.Result, error) {
 	inst, createErr := prov.Create(ctx, provider.CreateRequest{
 		Name:   entry.Name,
@@ -193,10 +199,8 @@ func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1a
 		return ctrl.Result{}, createErr
 	}
 
-	entry.Phase = v1alpha1.InstancePhaseCreated
-	entry.ProviderID = inst.ProviderID
+	markCreated(entry, inst.ProviderID)
 	entry.CreatedAt = &metav1.Time{Time: inst.CreatedAt}
-	entry.LastError = ""
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
