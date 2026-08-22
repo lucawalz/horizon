@@ -17,7 +17,7 @@ The cluster horizon operates over lives in the companion [bedrock](https://githu
 
 ## Status
 
-`0.7.0` is the latest published release; the chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`. `charts/horizon/Chart.yaml` declares the version the next tag will publish, so a checkout is ahead of both registries while a release is being prepared.
+The chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`, one version per release tag, and the badge above names the latest. `charts/horizon/Chart.yaml` declares the version the next tag will publish, so a checkout is ahead of both registries while a release is being prepared.
 
 Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the single-page web interface served locally by `horizon dashboard`, which creates and releases leases as well as reading them; five commands, `horizon controller`, `horizon dashboard`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
 
@@ -144,7 +144,7 @@ helm install horizon oci://ghcr.io/lucawalz/charts/horizon \
   --namespace horizon-system --create-namespace
 ```
 
-That resolves against `0.7.0`, the latest published chart. A checkout installs the working tree instead, which is ahead of the published chart while a release is being prepared:
+That resolves against the latest published chart. A checkout installs the working tree instead, which is ahead of the published chart while a release is being prepared:
 
 ```
 helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
@@ -166,7 +166,7 @@ make build
 
 Nothing needs to exist beforehand except a Kubernetes cluster reachable with `kubectl` at 1.29 or newer, a Hetzner Cloud API token, and a boot image in the Hetzner project; a stock `ubuntu-24.04` image is enough, since horizon boots it with cloud-init rather than expecting anything horizon-specific baked in.
 
-**1. Install the chart.** This installs from a checkout, which is ahead of the published `0.7.0` chart:
+**1. Install the chart.** This installs from a checkout, which is ahead of the published chart:
 
 ```
 helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
