@@ -22,7 +22,7 @@ func newDashboardCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "dashboard",
-		Short:        "Serve the read-only web interface on loopback",
+		Short:        "Serve the web interface on loopback",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -45,7 +45,8 @@ func runDashboard(ctx context.Context, out io.Writer, port uint16) error {
 	if err != nil {
 		return fmt.Errorf("build the cluster client: %w", err)
 	}
-	server, err := web.New(web.Options{Client: api, Catalogue: web.AbsentCatalogue()})
+	// the interface writes with the caller's own kubeconfig credentials, which is the whole of its authorisation
+	server, err := web.New(web.Options{Client: api, Writer: api, Catalogue: web.AbsentCatalogue()})
 	if err != nil {
 		return err
 	}

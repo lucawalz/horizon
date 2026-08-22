@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -120,17 +121,24 @@ func parseInstant(t *testing.T, field, encoded string) time.Time {
 	return at
 }
 
+// a test may release the lease it created, so the cleanup treats an absent one as already gone
+func removeAfterTest(t *testing.T, name string) {
+	t.Helper()
+	t.Cleanup(func() {
+		lease := &v1alpha1.CapacityLease{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		if err := testEnv.Client.Delete(context.Background(), lease); err != nil && !apierrors.IsNotFound(err) {
+			t.Errorf("delete lease %s: %v", name, err)
+		}
+	})
+}
+
 func createLease(t *testing.T, lease *v1alpha1.CapacityLease, status v1alpha1.CapacityLeaseStatus) {
 	t.Helper()
 	ctx := t.Context()
 	if err := testEnv.Client.Create(ctx, lease); err != nil {
 		t.Fatalf("create lease %s: %v", lease.Name, err)
 	}
-	t.Cleanup(func() {
-		if err := testEnv.Client.Delete(context.Background(), lease); err != nil {
-			t.Errorf("delete lease %s: %v", lease.Name, err)
-		}
-	})
+	removeAfterTest(t, lease.Name)
 
 	lease.Status = status
 	if err := testEnv.Client.Status().Update(ctx, lease); err != nil {

@@ -1,4 +1,4 @@
-// Package web serves horizon's read-only interface over the live cluster state.
+// Package web serves horizon's interface over the live cluster state, reading always and mutating only where a writer is supplied.
 package web
 
 import (
@@ -22,13 +22,23 @@ const (
 	shutdownGrace     = 5 * time.Second
 )
 
+type LeaseWriter interface {
+	Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error
+	Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error
+}
+
 type Options struct {
-	Client    client.Reader
+	Client client.Reader
+
+	// the read-only guarantee is the type of this field, so an embedder that supplies none cannot be made to write
+	Writer LeaseWriter
+
 	Catalogue catalogue.Reader
 }
 
 type Server struct {
 	client    client.Reader
+	writer    LeaseWriter
 	catalogue catalogue.Reader
 }
 
@@ -39,7 +49,7 @@ func New(opts Options) (*Server, error) {
 	if opts.Catalogue == nil {
 		return nil, errors.New("web: a catalogue reader is required")
 	}
-	return &Server{client: opts.Client, catalogue: opts.Catalogue}, nil
+	return &Server{client: opts.Client, writer: opts.Writer, catalogue: opts.Catalogue}, nil
 }
 
 // the address is built here rather than taken from a caller, so no flag or option can widen the binding

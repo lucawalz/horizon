@@ -338,3 +338,61 @@ func TestLeaseDetailCarriesDurationsInSeconds(t *testing.T) {
 		t.Errorf("teardownGraceSeconds = %d, want 90", grace)
 	}
 }
+
+func TestLeaseDetailRendersWhyTheInstanceTypeWasChosen(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	lease := leaseFixture("chosen-run")
+	lease.Status.Selection = &v1alpha1.SelectionStatus{
+		Strategy:   v1alpha1.StrategyLowestPricePerCore,
+		Chosen:     "cx23",
+		HourlyRate: "0.0080",
+		Currency:   "EUR",
+		RunnerUp:   "cpx21",
+		Offered:    31,
+		Qualified:  4,
+		Rejected: []v1alpha1.RejectedCandidates{
+			{Reason: "TooFewCores", Count: 19},
+			{Reason: "TooLittleMemory", Count: 8},
+		},
+		DecidedAt: metav1.NewTime(now),
+	}
+
+	selection := present(t, "selection", newLeaseDetailResponse(lease, now).Selection)
+
+	if selection.Strategy != v1alpha1.StrategyLowestPricePerCore {
+		t.Errorf("strategy = %q, want %q", selection.Strategy, v1alpha1.StrategyLowestPricePerCore)
+	}
+	if selection.Chosen != "cx23" {
+		t.Errorf("chosen = %q, want %q", selection.Chosen, "cx23")
+	}
+	if rate := present(t, "hourlyRate", selection.HourlyRate); rate != "0.0080" {
+		t.Errorf("hourlyRate = %q, want %q", rate, "0.0080")
+	}
+	if currency := present(t, "currency", selection.Currency); currency != "EUR" {
+		t.Errorf("currency = %q, want %q", currency, "EUR")
+	}
+	if runnerUp := present(t, "runnerUp", selection.RunnerUp); runnerUp != "cpx21" {
+		t.Errorf("runnerUp = %q, want %q", runnerUp, "cpx21")
+	}
+	if selection.Offered != 31 || selection.Qualified != 4 {
+		t.Errorf("offered = %d and qualified = %d, want 31 and 4", selection.Offered, selection.Qualified)
+	}
+	if len(selection.Rejected) != 2 {
+		t.Fatalf("rejected reasons = %d, want 2", len(selection.Rejected))
+	}
+	if selection.Rejected[0].Reason != "TooFewCores" || selection.Rejected[0].Count != 19 {
+		t.Errorf("first rejection = %+v, want 19 for TooFewCores", selection.Rejected[0])
+	}
+	if selection.DecidedAt != rfc3339(now) {
+		t.Errorf("decidedAt = %q, want %q", selection.DecidedAt, rfc3339(now))
+	}
+}
+
+// naming a machine type is not a policy decision, so a lease that named one has no reasoning to show
+func TestLeaseDetailCarriesNoSelectionForANamedSize(t *testing.T) {
+	detail := newLeaseDetailResponse(leaseFixture("named-run"), time.Now())
+
+	if detail.Selection != nil {
+		t.Errorf("selection = %+v, want null", *detail.Selection)
+	}
+}

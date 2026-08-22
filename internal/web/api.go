@@ -68,6 +68,10 @@ func seconds(elapsed time.Duration) int64 {
 	return int64(elapsed / time.Second)
 }
 
+func span(elapsed int64) time.Duration {
+	return time.Duration(elapsed) * time.Second
+}
+
 func ptr[T any](value T) *T {
 	return &value
 }

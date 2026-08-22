@@ -17,8 +17,10 @@ const (
 	zeroInstantJSON = `"0001-01-01T00:00:00Z"`
 	zeroSummaryJSON = `{"name":"","replicas":0,"region":"","phase":null,"expiresAt":null,"ready":null,` +
 		`"armed":null,"createdAt":` + zeroInstantJSON + `,"instanceType":null,"readyAt":null,"releasedAt":null}`
+	zeroSelectionJSON = `{"strategy":"","chosen":"","hourlyRate":null,"currency":null,"runnerUp":null,` +
+		`"offered":0,"qualified":0,"rejected":[],"decidedAt":` + zeroInstantJSON + `}`
 	zeroDetailJSON = `{"summary":` + zeroSummaryJSON + `,"providerRef":"","size":null,"requirements":null,` +
-		`"durationSeconds":0,"teardownGraceSeconds":null,"workloadNamespace":null,"migratedWorkloads":[],` +
+		`"selection":null,"durationSeconds":0,"teardownGraceSeconds":null,"workloadNamespace":null,"migratedWorkloads":[],` +
 		`"acceptedAt":null,"watchdogDeadline":null,"observedGeneration":0,"conditions":[],"instances":[],` +
 		`"observedAt":"2026-08-21T12:00:00Z"}`
 	zeroCatalogueJSON = `{"configs":[],"config":"","region":"","state":"NoSelection","detail":null,` +
@@ -47,6 +49,7 @@ func TestZeroValuedResponsesEncodeNullsAndEmptyLists(t *testing.T) {
 			newLeaseInstances([]v1alpha1.InstanceStatus{{}})[0],
 			`{"name":"","providerID":null,"nodeName":null,"phase":"","createdAt":null,"lastError":null}`,
 		},
+		"lease selection": {newLeaseSelection(&v1alpha1.SelectionStatus{}), zeroSelectionJSON},
 		"lease requirements": {
 			newLeaseRequirements(&v1alpha1.SizeRequirements{}),
 			`{"minCPU":0,"minMemory":null,"architecture":"","cpuType":null,"strategy":null}`,

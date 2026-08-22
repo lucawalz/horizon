@@ -91,7 +91,9 @@ func apiNotFound(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/leases", s.leaseList)
+	mux.HandleFunc("POST /api/leases", s.mutating(s.leaseCreate))
 	mux.HandleFunc("GET /api/leases/{name}", s.leaseDetail)
+	mux.HandleFunc("DELETE /api/leases/{name}", s.mutating(s.leaseRelease))
 	mux.HandleFunc("GET /api/machines", s.machines)
 	mux.HandleFunc("GET /api/", apiNotFound)
 	mux.Handle("GET "+assetPrefix, bundleFiles(site.DistDirFS))

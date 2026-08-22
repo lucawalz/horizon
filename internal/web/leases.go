@@ -59,11 +59,29 @@ type leaseRequirements struct {
 	Strategy     *v1alpha1.SizingStrategy `json:"strategy"`
 }
 
+type rejectedCandidates struct {
+	Reason string `json:"reason"`
+	Count  int32  `json:"count"`
+}
+
+type leaseSelection struct {
+	Strategy   v1alpha1.SizingStrategy `json:"strategy"`
+	Chosen     string                  `json:"chosen"`
+	HourlyRate *string                 `json:"hourlyRate"`
+	Currency   *string                 `json:"currency"`
+	RunnerUp   *string                 `json:"runnerUp"`
+	Offered    int32                   `json:"offered"`
+	Qualified  int32                   `json:"qualified"`
+	Rejected   []rejectedCandidates    `json:"rejected"`
+	DecidedAt  string                  `json:"decidedAt"`
+}
+
 type leaseDetailResponse struct {
 	Summary              leaseSummary       `json:"summary"`
 	ProviderRef          string             `json:"providerRef"`
 	Size                 *string            `json:"size"`
 	Requirements         *leaseRequirements `json:"requirements"`
+	Selection            *leaseSelection    `json:"selection"`
 	DurationSeconds      int64              `json:"durationSeconds"`
 	TeardownGraceSeconds *int64             `json:"teardownGraceSeconds"`
 	WorkloadNamespace    *string            `json:"workloadNamespace"`
@@ -106,6 +124,7 @@ func newLeaseDetailResponse(lease *v1alpha1.CapacityLease, now time.Time) leaseD
 		ProviderRef:          lease.Spec.ProviderRef,
 		Size:                 nullable(lease.Spec.Size),
 		Requirements:         newLeaseRequirements(lease.Spec.Requirements),
+		Selection:            newLeaseSelection(lease.Status.Selection),
 		DurationSeconds:      seconds(lease.Spec.Duration.Duration),
 		TeardownGraceSeconds: teardownGraceSeconds(lease.Spec.TeardownGrace),
 		WorkloadNamespace:    workloadNamespace(lease.Spec.Workload),
@@ -134,6 +153,28 @@ func newLeaseRequirements(requirements *v1alpha1.SizeRequirements) *leaseRequire
 		Architecture: requirements.Architecture,
 		CPUType:      nullable(requirements.CPUType),
 		Strategy:     nullable(requirements.Strategy),
+	}
+}
+
+func newLeaseSelection(selection *v1alpha1.SelectionStatus) *leaseSelection {
+	if selection == nil {
+		return nil
+	}
+
+	rejected := make([]rejectedCandidates, 0, len(selection.Rejected))
+	for _, candidates := range selection.Rejected {
+		rejected = append(rejected, rejectedCandidates{Reason: candidates.Reason, Count: candidates.Count})
+	}
+	return &leaseSelection{
+		Strategy:   selection.Strategy,
+		Chosen:     selection.Chosen,
+		HourlyRate: nullable(selection.HourlyRate),
+		Currency:   nullable(selection.Currency),
+		RunnerUp:   nullable(selection.RunnerUp),
+		Offered:    selection.Offered,
+		Qualified:  selection.Qualified,
+		Rejected:   rejected,
+		DecidedAt:  rfc3339(selection.DecidedAt.Time),
 	}
 }
 
@@ -182,6 +223,11 @@ func workloadNamespace(ref *v1alpha1.WorkloadRef) *string {
 	return nullable(ref.Namespace)
 }
 
+func writeLeaseNotFound(w http.ResponseWriter, name string) {
+	writeAPIError(w, http.StatusNotFound,
+		fmt.Sprintf("no capacity lease named %q exists in the cluster", name))
+}
+
 func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
 	var leases v1alpha1.CapacityLeaseList
 	if err := s.client.List(r.Context(), &leases); err != nil {
@@ -198,8 +244,7 @@ func (s *Server) leaseDetail(w http.ResponseWriter, r *http.Request) {
 	var lease v1alpha1.CapacityLease
 	if err := s.client.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {
 		if apierrors.IsNotFound(err) {
-			writeAPIError(w, http.StatusNotFound,
-				fmt.Sprintf("no capacity lease named %q exists in the cluster", name))
+			writeLeaseNotFound(w, name)
 			return
 		}
 		slog.Error("read the capacity lease", "lease", name, "error", err)
