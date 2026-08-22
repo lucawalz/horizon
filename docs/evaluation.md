@@ -163,6 +163,15 @@ of 30 runs and in (60, 90] seconds for 11 of 30, and the instrument cannot say w
 those intervals.** The medians and the location comparison below survive this, because the
 same grid applies to every run.
 
+The instrument is fixed, and the fix does not change any number above. The controller now
+wakes on `Node` events rather than discovering readiness on a 30-second requeue, and
+`readyAt` is sourced from the node's own `NodeReady` condition transition time rather than
+from the moment the controller noticed. The dataset reported here predates that fix and
+stays quantised exactly as described; the fix does not retrospectively improve any figure
+already reported. The medians and the null result on location in section 3.3 are unaffected
+either way, because the same grid applied to every run. See ADR 0026,
+`docs/adr/0026-observe-node-readiness-rather-than-poll-for-it.md`.
+
 ### 3.3 Location makes no measurable difference
 
 Restricted to the pinned type `cx23`, so machine size does not confound location:
@@ -703,12 +712,25 @@ has a registration timeout, and it has the distinction between phase `Created` a
 `Joined`. Surfacing a condition when an instance has been `Created` past a threshold without
 joining would have turned a two-boot investigation into a one-line read.
 
-A second, smaller gap: the operator's Events are rejected. `f0base02/operator.log` records
+This gap is closed. The lease now reports which join stage is blocking it, naming the
+blocking instance and how long it has been in that stage, so the message improves as time
+passes rather than the first word arriving at the registration timeout. See ADR 0026,
+`docs/adr/0026-observe-node-readiness-rather-than-poll-for-it.md`.
+
+A second, smaller gap: the operator's Events were rejected. `f0base02/operator.log` records
 `events.events.k8s.io is forbidden: User "system:serviceaccount:horizon-system:horizon"
 cannot create resource "events" in API group "events.k8s.io" in the namespace "default"`,
 dropping a `WatchdogUnarmed` warning for that lease. `CapacityLease` is cluster-scoped, so
-its events land in `default`, and the chart's RBAC does not grant event creation there. The
-warning existed and never reached anyone.
+its events land in `default`. The stated cause here was wrong: the chart's ClusterRole is
+bound by a ClusterRoleBinding and was already granted in every namespace including
+`default`, so the namespace was never the problem. The rule's `apiGroups` listed only `""`,
+and the recorder had migrated to `events.k8s.io`, so the missing group is what dropped the
+event. The warning existed and never reached anyone.
+
+This is fixed. horizon commit `3e4779b`, `fix(chart): grant the events.k8s.io group on the
+events rule`, adds `events.k8s.io` to the rule, and landed on 21 August, before this
+document was committed. Verified against the live cluster: `kubectl auth can-i create
+events.events.k8s.io` as the operator's service account returns `yes` in `default`.
 
 ## 9. The budget
 
