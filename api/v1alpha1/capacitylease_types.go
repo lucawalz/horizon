@@ -155,7 +155,9 @@ type SelectionStatus struct {
 	// +optional
 	RunnerUp string `json:"runnerUp,omitempty"`
 
-	Considered int32 `json:"considered"`
+	Offered int32 `json:"offered"`
+
+	Qualified int32 `json:"qualified"`
 
 	// +optional
 	// +listType=map
