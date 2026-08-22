@@ -35,6 +35,8 @@ Without that anchor the three checks below are self-referential and the guard is
 
 The two accepted names are safe to accept because neither is attacker-controllable. `localhost` is reserved to loopback by RFC 6761 and browsers hard-code it, and reaching this server under any other name means addressing it as that name, which is cross-origin and therefore preflighted against a server that answers no preflight.
 
+The anchor is not sufficient on its own, and that is the reason the three checks below stay. A request in absolute form, `POST http://127.0.0.1:8973/api/leases HTTP/1.1` sent with a forged `Host` header, takes `r.Host` from the request target rather than from the header, so it satisfies the anchor and is then refused by the `Origin` check; carrying no `Origin` at all, it would be admitted. Nothing browser-driven can produce one, because absolute form is used only towards a configured proxy and never towards an origin server, and any client that can hand-assemble a request like that can read the kubeconfig it would be spending. It is therefore not a hole and needs no code. It is recorded so that the anchor is read as one check among four rather than as a superset of the other three, and so that none of them is later deleted as redundant.
+
 ### Past the anchor, the guard is three checks, and each one is load-bearing on its own
 
 Every mutating request must satisfy all three, and any failure answers `403` with a JSON body naming which:
