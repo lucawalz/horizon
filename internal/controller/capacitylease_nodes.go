@@ -31,6 +31,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 	changed := false
 	renewed := false
 	joined := 0
+	var lastTransition time.Time
 	for i := range lease.Status.Instances {
 		entry := &lease.Status.Instances[i]
 		if entry.Phase != v1alpha1.InstancePhaseCreated && entry.Phase != v1alpha1.InstancePhaseJoined {
@@ -59,6 +60,9 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 			changed = true
 		}
 		joined++
+		if transition := nodeReadyTransition(node); transition.After(lastTransition) {
+			lastTransition = transition
+		}
 	}
 
 	if renewed {
@@ -72,7 +76,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady,
 			fmt.Sprintf("%d of %d nodes ready", joined, want)) || changed
 		if lease.Status.ReadyAt == nil {
-			ready := r.now()
+			ready := r.readyInstant(lease, lastTransition)
 			lease.Status.ReadyAt = &metav1.Time{Time: ready}
 			changed = true
 			records.add(readyRecord(attributionOf(lease), selectionOf(lease), ready.Sub(lease.Status.AcceptedAt.Time)))
@@ -191,12 +195,33 @@ func matchNode(nodes []corev1.Node, entry *v1alpha1.InstanceStatus) *corev1.Node
 }
 
 func nodeReady(node *corev1.Node) bool {
-	for _, condition := range node.Status.Conditions {
-		if condition.Type == corev1.NodeReady {
-			return condition.Status == corev1.ConditionTrue
+	condition := nodeReadyCondition(node)
+	return condition != nil && condition.Status == corev1.ConditionTrue
+}
+
+func nodeReadyTransition(node *corev1.Node) time.Time {
+	condition := nodeReadyCondition(node)
+	if condition == nil {
+		return time.Time{}
+	}
+	return condition.LastTransitionTime.Time
+}
+
+func nodeReadyCondition(node *corev1.Node) *corev1.NodeCondition {
+	for i := range node.Status.Conditions {
+		if node.Status.Conditions[i].Type == corev1.NodeReady {
+			return &node.Status.Conditions[i]
 		}
 	}
-	return false
+	return nil
+}
+
+// a burst node's clock can disagree with the control plane's, and a negative duration would poison the ready histogram
+func (r *CapacityLeaseReconciler) readyInstant(lease *v1alpha1.CapacityLease, transition time.Time) time.Time {
+	if transition.IsZero() || transition.Before(lease.Status.AcceptedAt.Time) {
+		return r.now()
+	}
+	return transition
 }
 
 func (r *CapacityLeaseReconciler) adoptNode(ctx context.Context, lease *v1alpha1.CapacityLease, node *corev1.Node, renewal watchdogRenewal) (bool, error) {

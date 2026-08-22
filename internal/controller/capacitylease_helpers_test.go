@@ -363,6 +363,11 @@ func (h *harness) joinNode(name string, ready bool) *corev1.Node {
 
 func (h *harness) setNodeReady(name string, ready bool) {
 	h.t.Helper()
+	h.setNodeReadyAt(name, ready, time.Time{})
+}
+
+func (h *harness) setNodeReadyAt(name string, ready bool, transition time.Time) {
+	h.t.Helper()
 	node, ok := h.node(name)
 	if !ok {
 		h.t.Fatalf("node %q disappeared", name)
@@ -371,7 +376,11 @@ func (h *harness) setNodeReady(name string, ready bool) {
 	if ready {
 		status = corev1.ConditionTrue
 	}
-	node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: status}}
+	node.Status.Conditions = []corev1.NodeCondition{{
+		Type:               corev1.NodeReady,
+		Status:             status,
+		LastTransitionTime: metav1.Time{Time: transition},
+	}}
 	if _, err := h.kube.CoreV1().Nodes().Update(h.t.Context(), node, metav1.UpdateOptions{}); err != nil {
 		h.t.Fatalf("set node %q ready=%v: %v", name, ready, err)
 	}

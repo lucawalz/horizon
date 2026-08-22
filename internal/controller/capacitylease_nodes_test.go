@@ -162,3 +162,93 @@ func TestAWaitingLeaseReportsWhichStageIsBlockingIt(t *testing.T) {
 	h.assertConditionDetail(v1alpha1.ConditionInstancesReady, reasonAwaitingReady,
 		"instance "+name+" was created 6m ago and its node is not ready")
 }
+
+func TestReadyAtIsTheNodeReadyTransitionNotTheReconcileClock(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, false)
+	transition := h.clock.Now().Add(20 * time.Second)
+	h.clock.Advance(5 * time.Minute)
+	h.setNodeReadyAt(name, true, transition)
+	h.settle()
+
+	readyAt := h.lease().Status.ReadyAt
+	if readyAt == nil {
+		t.Fatal("readyAt was not set when the node became ready")
+	}
+	if !readyAt.Time.Equal(transition) {
+		t.Errorf("readyAt is %s, want the node ready transition %s", readyAt.Time, transition)
+	}
+	h.assertObservations(leaseReadySecondsMetric,
+		map[string]string{"instance_type": testSize, "selection": pinnedSelection}, 1, 20)
+}
+
+func TestAZeroReadyTransitionFallsBackToTheReconcileClock(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, false)
+	h.clock.Advance(5 * time.Minute)
+	h.setNodeReadyAt(name, true, time.Time{})
+	h.settle()
+
+	readyAt := h.lease().Status.ReadyAt
+	if readyAt == nil {
+		t.Fatal("readyAt was not set when the node became ready")
+	}
+	if !readyAt.Time.Equal(h.clock.Now()) {
+		t.Errorf("readyAt is %s, want the reconcile clock %s", readyAt.Time, h.clock.Now())
+	}
+}
+
+func TestAReadyTransitionBeforeAcceptanceFallsBackToTheReconcileClock(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+
+	name := h.instanceName(0)
+	h.joinNode(name, false)
+	accepted := h.lease().Status.AcceptedAt.Time
+	h.clock.Advance(5 * time.Minute)
+	h.setNodeReadyAt(name, true, accepted.Add(-time.Hour))
+	h.settle()
+
+	readyAt := h.lease().Status.ReadyAt
+	if readyAt == nil {
+		t.Fatal("readyAt was not set when the node became ready")
+	}
+	if !readyAt.Time.Equal(h.clock.Now()) {
+		t.Errorf("readyAt is %s, want the reconcile clock %s", readyAt.Time, h.clock.Now())
+	}
+	if readyAt.Time.Before(accepted) {
+		t.Errorf("readyAt %s precedes acceptance %s, which records a negative duration", readyAt.Time, accepted)
+	}
+	h.assertObservations(leaseReadySecondsMetric,
+		map[string]string{"instance_type": testSize, "selection": pinnedSelection}, 1, 300)
+}
+
+func TestReadyAtIsTheLatestTransitionAcrossReplicas(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) { lease.Spec.Replicas = 2 })
+	h.settle()
+
+	first, second := h.instanceName(0), h.instanceName(1)
+	h.joinNode(first, false)
+	h.joinNode(second, false)
+
+	earliest := h.clock.Now().Add(30 * time.Second)
+	latest := h.clock.Now().Add(90 * time.Second)
+	h.clock.Advance(10 * time.Minute)
+	h.setNodeReadyAt(first, true, earliest)
+	h.setNodeReadyAt(second, true, latest)
+	h.settle()
+
+	readyAt := h.lease().Status.ReadyAt
+	if readyAt == nil {
+		t.Fatal("readyAt was not set when both nodes became ready")
+	}
+	if !readyAt.Time.Equal(latest) {
+		t.Errorf("readyAt is %s, want the slowest node's transition %s", readyAt.Time, latest)
+	}
+}
