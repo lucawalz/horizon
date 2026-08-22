@@ -54,6 +54,8 @@ That check is a byte comparison against a bundler, and it only holds while its i
 
 `npm run dev` serves the interface with hot reload and proxies `/api` to a `horizon dashboard` already running on its default port. The dev server binds `127.0.0.1`, and CI fails if that binding leaves `vite.config.ts`, if the file gains a `host` binding pointing anywhere else, or if an npm script passes `--host`, because the dashboard behind the proxy is unauthenticated. `npm test` runs the frontend unit tests and `npm run lint` runs oxlint.
 
+Reads work through the dev server and mutations do not. Creating and releasing a lease is refused there with a `403`, because the browser origin is the vite port and the dashboard's is its own, so the cross-origin guard can never see a matching pair; no option is added to admit the extra origin. Layout and reading work belong on the dev server, and every mutation is exercised against a built binary serving the interface from its own origin. [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) records the reasoning.
+
 ## Branch naming
 
 horizon follows [Conventional Branch](https://conventionalbranch.org/).
