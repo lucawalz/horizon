@@ -57,6 +57,8 @@ kubectl apply -f charts/horizon/crds/
 | `terminationGracePeriodSeconds` | `30` | Grace period for the controller to finish an in-flight reconcile. |
 | `priorityClassName` | `""` | Priority class for the controller pod. |
 
+The Deployment uses the `Recreate` strategy rather than a rolling update, and that is not configurable. The controller writes lease status with a full update, so a replica running the older image would strip any status field its own types do not carry. Recreate stops the old pod before the new one starts, so the two never write the same lease.
+
 ### Networking
 
 | Key | Default | Description |
