@@ -58,8 +58,10 @@ const (
 	reasonUnknownInstanceType = "UnknownInstanceType"
 
 	reasonUnsatisfiedRequirements = "UnsatisfiedRequirements"
+	reasonInstanceTypeSelected    = "InstanceTypeSelected"
 
 	actionMarkedWatchdogUnarmed = "MarkedWatchdogUnarmed"
+	actionSelectedInstanceType  = "SelectedInstanceType"
 )
 
 type ProviderFactory func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (provider.Provider, error)
@@ -190,7 +192,7 @@ func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alph
 	return ctrl.Result{}, cause
 }
 
-func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease, attributed leaseAttribution) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease, attributed leaseAttribution, alsoRecord ...func()) (ctrl.Result, error) {
 	accepted := r.now()
 	lease.Status.AcceptedAt = &metav1.Time{Time: accepted}
 	lease.Status.ExpiresAt = &metav1.Time{Time: accepted.Add(lease.Spec.Duration.Duration)}
@@ -201,6 +203,9 @@ func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alph
 	var records metricWrites
 	if unsized && lease.Status.InstanceType != "" {
 		records.add(selectedRecord(attributionOf(lease), selectionOf(lease)))
+	}
+	for _, record := range alsoRecord {
+		records.add(record)
 	}
 	if err := r.writeStatus(ctx, lease, records...); err != nil {
 		return ctrl.Result{}, err
