@@ -136,6 +136,35 @@ type InstanceStatus struct {
 	LastError string `json:"lastError,omitempty"`
 }
 
+type RejectedCandidates struct {
+	Reason string `json:"reason"`
+	Count  int32  `json:"count"`
+}
+
+type SelectionStatus struct {
+	Strategy SizingStrategy `json:"strategy"`
+
+	Chosen string `json:"chosen"`
+
+	// +optional
+	HourlyRate string `json:"hourlyRate,omitempty"`
+
+	// +optional
+	Currency string `json:"currency,omitempty"`
+
+	// +optional
+	RunnerUp string `json:"runnerUp,omitempty"`
+
+	Considered int32 `json:"considered"`
+
+	// +optional
+	// +listType=map
+	// +listMapKey=reason
+	Rejected []RejectedCandidates `json:"rejected,omitempty"`
+
+	DecidedAt metav1.Time `json:"decidedAt"`
+}
+
 type CapacityLeaseStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -160,6 +189,9 @@ type CapacityLeaseStatus struct {
 
 	// +optional
 	InstanceType string `json:"instanceType,omitempty"`
+
+	// +optional
+	Selection *SelectionStatus `json:"selection,omitempty"`
 
 	// +optional
 	ReadyAt *metav1.Time `json:"readyAt,omitempty"`
