@@ -36,6 +36,15 @@ const (
 	InstancePhaseReleased InstancePhase = "Released"
 )
 
+type InstanceStage string
+
+const (
+	InstanceStageAwaitingInstance     InstanceStage = "AwaitingInstance"
+	InstanceStageAwaitingRegistration InstanceStage = "AwaitingRegistration"
+	InstanceStageAwaitingReady        InstanceStage = "AwaitingReady"
+	InstanceStageReady                InstanceStage = "Ready"
+)
+
 type WorkloadRef struct {
 	// +kubebuilder:validation:MinLength=1
 	Namespace string `json:"namespace"`
@@ -128,6 +137,10 @@ type InstanceStatus struct {
 	NodeName string `json:"nodeName,omitempty"`
 
 	Phase InstancePhase `json:"phase"`
+
+	// +kubebuilder:validation:Enum=AwaitingInstance;AwaitingRegistration;AwaitingReady;Ready
+	// +optional
+	Stage InstanceStage `json:"stage,omitempty"`
 
 	// +optional
 	CreatedAt *metav1.Time `json:"createdAt,omitempty"`

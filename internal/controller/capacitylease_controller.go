@@ -60,6 +60,10 @@ const (
 	reasonUnsatisfiedRequirements = "UnsatisfiedRequirements"
 	reasonInstanceTypeSelected    = "InstanceTypeSelected"
 
+	reasonAwaitingInstance     = "AwaitingInstance"
+	reasonAwaitingRegistration = "AwaitingRegistration"
+	reasonAwaitingReady        = "AwaitingReady"
+
 	actionMarkedWatchdogUnarmed = "MarkedWatchdogUnarmed"
 	actionSelectedInstanceType  = "SelectedInstanceType"
 )
