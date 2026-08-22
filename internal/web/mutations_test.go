@@ -333,11 +333,15 @@ func TestMutationsRefuseEachCrossOriginFailureOnItsOwn(t *testing.T) {
 		"foreign origin":      func(r *http.Request) { r.Header.Set(originHeader, "http://evil.example") },
 	} {
 		t.Run(name, func(t *testing.T) {
+			// a name shared across the subtests lets whichever one a regression admits fail the rest, and the point of the table is that each check answers for itself
+			refused := "guarded-" + strings.ReplaceAll(name, " ", "-")
+			removeAfterTest(t, refused)
+
 			for method, target := range map[string]string{
 				http.MethodPost:   leasesEndpoint,
-				http.MethodDelete: leaseEndpoint("guarded-run"),
+				http.MethodDelete: leaseEndpoint(refused),
 			} {
-				request := newMutation(t, method, target, createRequestFixture("guarded-run"))
+				request := newMutation(t, method, target, createRequestFixture(refused))
 				spoil(request)
 
 				response := send(server, request)
@@ -347,7 +351,7 @@ func TestMutationsRefuseEachCrossOriginFailureOnItsOwn(t *testing.T) {
 			}
 
 			var lease v1alpha1.CapacityLease
-			err := testEnv.Client.Get(t.Context(), client.ObjectKey{Name: "guarded-run"}, &lease)
+			err := testEnv.Client.Get(t.Context(), client.ObjectKey{Name: refused}, &lease)
 			if !apierrors.IsNotFound(err) {
 				t.Errorf("reading the refused lease answered %v, want a not-found", err)
 			}

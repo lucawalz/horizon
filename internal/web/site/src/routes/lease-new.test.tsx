@@ -57,6 +57,17 @@ describe('the create form', () => {
     await view.unmount()
   })
 
+  // a fraction of a binary unit is not a byte count, and the quantity it parses to is stored in milli-bytes
+  it('steps the memory requirement in whole units', async () => {
+    stubCluster(() => jsonResponse(leaseDetailBody()))
+    const { view } = await newLeaseForm()
+
+    const memory = control<HTMLInputElement>(view.container, 'input[name="memory"]')
+    expect(memory.getAttribute('step')).toBe('1')
+
+    await view.unmount()
+  })
+
   it('submits the requirement the form holds, and the header the guard wants', async () => {
     const respond = stubCluster(() => jsonResponse(leaseDetailBody(), 201))
     const { view, form } = await newLeaseForm()
