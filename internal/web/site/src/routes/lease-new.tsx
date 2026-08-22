@@ -157,7 +157,7 @@ function RequirementFields({ sizing }: { sizing: Sizing }) {
             name={field.memory}
             type="number"
             min={1}
-            step="any"
+            step={1}
             placeholder="4"
             defaultValue={sizing.memory}
             className={`${controlClass} w-full`}

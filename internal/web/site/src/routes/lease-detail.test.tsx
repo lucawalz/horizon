@@ -14,6 +14,7 @@ import {
 } from '@/routes/test-support'
 
 const leaseName = 'batch-run'
+const acknowledgement = 'the controller was asked to release it'
 const releaseLabel = 'Release this lease'
 const confirmLabel = 'Ask the controller to release'
 const keepLabel = 'Keep the lease'
@@ -37,7 +38,7 @@ function stubLease(body: unknown) {
   return stubFetchWith((_input, init) =>
     Promise.resolve(
       init?.method === 'DELETE'
-        ? jsonResponse({ name: leaseName, detail: 'the controller was asked to release it' })
+        ? jsonResponse({ name: leaseName, detail: acknowledgement })
         : jsonResponse(body),
     ),
   )
@@ -91,6 +92,7 @@ describe('the lease detail', () => {
     const [target, init] = deletions(respond.mock.calls)[0]
     expect(target).toBe(leasePath(leaseName))
     expect(new Headers(init?.headers).get(interfaceHeader)).not.toBeNull()
+    expect(view.container.textContent).toContain(acknowledgement)
 
     await view.unmount()
   })

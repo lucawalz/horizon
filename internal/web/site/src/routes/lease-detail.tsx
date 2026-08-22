@@ -16,6 +16,7 @@ import type {
   ConditionEntry,
   LeaseDetailResponse,
   LeaseInstance,
+  LeaseReleaseResponse,
   LeaseRequirements,
   LeaseSelection,
 } from '@/lib/api'
@@ -34,7 +35,7 @@ import {
 } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { leasesHref, navigate } from '@/routes/router'
+import { leasesHref } from '@/routes/router'
 import { absent, formatInstant, formatRate, formatSpan } from '@/routes/units'
 
 const conditionColumns = 5
@@ -288,18 +289,19 @@ function ReleaseConfirmation({
 function ReleasePanel({ name, released }: { name: string; released: boolean }) {
   const [confirming, setConfirming] = useState(false)
   const [pending, setPending] = useState(false)
+  const [asked, setAsked] = useState<LeaseReleaseResponse | null>(null)
   const [failure, setFailure] = useState<Error | null>(null)
 
+  // the lease stays in the cluster while its finalizer runs, so the acknowledgement has to come from the answer rather than from the lease disappearing
   const release = async () => {
     setPending(true)
     setFailure(null)
     try {
-      await releaseLease(name)
-      navigate(leasesHref)
+      setAsked(await releaseLease(name))
     } catch (cause) {
       setFailure(errorFor(cause))
-      setPending(false)
     }
+    setPending(false)
   }
 
   if (released) {
@@ -320,17 +322,23 @@ function ReleasePanel({ name, released }: { name: string; released: boolean }) {
           Releasing deletes the CapacityLease, which is how the controller is asked for a teardown.
           The interface destroys nothing itself.
         </p>
-        {confirming ? (
-          <ReleaseConfirmation
-            name={name}
-            pending={pending}
-            onRelease={release}
-            onKeep={() => setConfirming(false)}
-          />
+        {asked === null ? (
+          confirming ? (
+            <ReleaseConfirmation
+              name={name}
+              pending={pending}
+              onRelease={release}
+              onKeep={() => setConfirming(false)}
+            />
+          ) : (
+            <Button type="button" tone="danger" onClick={() => setConfirming(true)}>
+              Release this lease
+            </Button>
+          )
         ) : (
-          <Button type="button" tone="danger" onClick={() => setConfirming(true)}>
-            Release this lease
-          </Button>
+          <Notice severity="info" title={`The controller was asked to release ${name}`}>
+            {asked.detail}
+          </Notice>
         )}
         {failure === null ? null : (
           <Notice severity="danger" title="The lease was not released">
