@@ -129,6 +129,29 @@ func TestTheShellIsNotStored(t *testing.T) {
 	}
 }
 
+func TestIconsAreServedAsThemselvesNotTheShell(t *testing.T) {
+	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
+
+	for target, wantType := range map[string]string{
+		"/favicon.svg": "image/svg+xml",
+		"/favicon.png": "image/png",
+	} {
+		t.Run(target, func(t *testing.T) {
+			response := get(t, server, target)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+			}
+			sent := sentHeaders(response)
+			if got := sent.Get("Content-Type"); got != wantType {
+				t.Errorf("Content-Type = %q, want %q", got, wantType)
+			}
+			if strings.Contains(response.Body.String(), mountElement) {
+				t.Errorf("%s served the application shell instead of the icon", target)
+			}
+		})
+	}
+}
+
 func TestUnknownAPIPathsReportAJSONError(t *testing.T) {
 	server := newTestServer(t, failingReader{err: errors.New("unused")}, AbsentCatalogue())
 

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <style>
+    .canvas { fill: hsl(32 16% 96.5%); }
+    .brand { stroke: hsl(266 58% 45%); }
+    @media (prefers-color-scheme: dark) {
+      .canvas { fill: hsl(220 6% 9%); }
+      .brand { stroke: hsl(266 78% 72%); }
+    }
+  </style>
+  <rect class="canvas" x="1" y="1" width="22" height="22" rx="6" />
+  <circle class="brand" cx="12" cy="12" r="7" fill="none" stroke-width="2.5" stroke-linecap="round"
+    stroke-dasharray="33 44" transform="rotate(-90 12 12)" />
+</svg>
