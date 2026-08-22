@@ -179,7 +179,7 @@ func TestHistogramBucketsArePinned(t *testing.T) {
 	populate(t)
 
 	cases := map[string][]float64{
-		"horizon_lease_ready_seconds":               {5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600},
+		"horizon_lease_ready_seconds":               {5, 10, 15, 20, 30, 45, 60, 75, 90, 120, 180, 300, 600},
 		"horizon_lease_release_seconds":             {1, 2, 5, 10, 15, 20, 30, 45, 60, 120, 300, 600},
 		"horizon_provider_request_duration_seconds": {0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30},
 	}

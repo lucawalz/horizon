@@ -151,7 +151,7 @@ func TestObserveLeaseReadyLandsInTheBucketAboveTheObservedJoinMode(t *testing.T)
 		cumulative = append(cumulative, bucket.GetCumulativeCount())
 	}
 
-	want := []uint64{0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1}
+	want := []uint64{0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1}
 	if !slices.Equal(cumulative, want) {
 		t.Errorf("a 71 second join fills buckets %v, want %v", cumulative, want)
 	}
@@ -171,7 +171,7 @@ func TestObserveLeaseReadySeparatesJoinsBelowThirtySeconds(t *testing.T) {
 		cumulative = append(cumulative, bucket.GetCumulativeCount())
 	}
 
-	want := []uint64{0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+	want := []uint64{0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
 	if !slices.Equal(cumulative, want) {
 		t.Errorf("an 18 second join fills buckets %v, want %v", cumulative, want)
 	}
