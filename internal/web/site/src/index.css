@@ -7,6 +7,9 @@
 /* The build output is tracked, so excluding it stops Tailwind harvesting class names out of its own previous bundle. */
 @source not "../dist";
 
+/* Static assets ship as markup Tailwind never renders, so its scanner should not mistake an attribute like an SVG's own transform for a utility class. */
+@source not "../public";
+
 /* The console ships dark, so the absence of an opt-in resolves to the dark theme rather than the light one. */
 @custom-variant dark (&:where(:root:not(.light), :root:not(.light) *));
 
