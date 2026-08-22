@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -223,6 +225,17 @@ func workloadNamespace(ref *v1alpha1.WorkloadRef) *string {
 	return nullable(ref.Namespace)
 }
 
+// a name the apiserver could never carry is refused here, since client-go rejects it locally and the failure is the request's rather than the cluster's
+func refusedAsAnInvalidName(w http.ResponseWriter, name string) bool {
+	violations := apivalidation.NameIsDNSSubdomain(name, false)
+	if len(violations) == 0 {
+		return false
+	}
+	writeAPIError(w, http.StatusBadRequest,
+		fmt.Sprintf("%q cannot name a capacity lease: %s", name, strings.Join(violations, "; ")))
+	return true
+}
+
 func writeLeaseNotFound(w http.ResponseWriter, name string) {
 	writeAPIError(w, http.StatusNotFound,
 		fmt.Sprintf("no capacity lease named %q exists in the cluster", name))
@@ -240,6 +253,9 @@ func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) leaseDetail(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if refusedAsAnInvalidName(w, name) {
+		return
+	}
 
 	var lease v1alpha1.CapacityLease
 	if err := s.client.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {

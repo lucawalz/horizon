@@ -148,6 +148,9 @@ func (s *Server) leaseCreate(w http.ResponseWriter, r *http.Request) {
 // deleting the lease asks the controller for a teardown through its finalizer rather than destroying anything here
 func (s *Server) leaseRelease(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	if refusedAsAnInvalidName(w, name) {
+		return
+	}
 
 	lease := &v1alpha1.CapacityLease{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	if err := s.writer.Delete(r.Context(), lease); err != nil {

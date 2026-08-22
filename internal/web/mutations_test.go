@@ -223,6 +223,9 @@ func TestLeaseCreateRefusesValuesOutsideTheirBounds(t *testing.T) {
 		"grace too long": func(r *leaseCreateRequest) {
 			r.TeardownGraceSeconds = ptr(seconds(16 * time.Minute))
 		},
+		"grace below zero": func(r *leaseCreateRequest) {
+			r.TeardownGraceSeconds = ptr(seconds(-1 * time.Second))
+		},
 		"no cores":   func(r *leaseCreateRequest) { r.Requirements.MinCPU = 0 },
 		"many cores": func(r *leaseCreateRequest) { r.Requirements.MinCPU = 65 },
 	} {
@@ -508,5 +511,46 @@ func TestAServerThatNeverBoundAnAddressRefusesEveryMutation(t *testing.T) {
 		if response.Code != http.StatusForbidden {
 			t.Errorf("%s answered %d, want %d, body %s", method, response.Code, http.StatusForbidden, response.Body)
 		}
+	}
+}
+
+func TestLeaseRoutesRefuseANameNoLeaseCouldCarry(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const traversal = "/api/leases/..%2Fvictim-run"
+	server := newWritingServer(t)
+
+	released := mutate(t, server, http.MethodDelete, traversal, nil)
+	if released.Code != http.StatusBadRequest {
+		t.Errorf("releasing answered %d, want %d, body %s", released.Code, http.StatusBadRequest, released.Body)
+	}
+
+	read := get(t, server, traversal)
+	if read.Code != http.StatusBadRequest {
+		t.Errorf("reading answered %d, want %d, body %s", read.Code, http.StatusBadRequest, read.Body)
+	}
+}
+
+func TestLeaseCreateStoresANamedMachineType(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "named-type-run"
+	removeAfterTest(t, name)
+
+	request := createRequestFixture(name)
+	request.Requirements = nil
+	request.Size = "cx23"
+
+	response := mutate(t, newWritingServer(t), http.MethodPost, leasesEndpoint, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusCreated, response.Body)
+	}
+
+	spec := readLease(t, name).Spec
+	if spec.Size != "cx23" {
+		t.Errorf("size = %q, want %q", spec.Size, "cx23")
+	}
+	if spec.Requirements != nil {
+		t.Errorf("requirements = %+v, want none alongside a named type", spec.Requirements)
 	}
 }
