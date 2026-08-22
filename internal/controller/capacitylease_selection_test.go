@@ -21,6 +21,16 @@ func offering(types ...provider.InstanceType) stubCatalogue {
 	return stubCatalogue{types: types}
 }
 
+// dyadic rationals, so the recorded rate and the margin over the runner-up are both exact in binary
+const (
+	chosenRate   = 0.00390625
+	runnerUpRate = 0.03125
+)
+
+func onARM(it *provider.InstanceType) {
+	it.Architecture = string(v1alpha1.ArchitectureARM)
+}
+
 func (h *harness) assertLatchedType(want string) {
 	h.t.Helper()
 	if got := h.lease().Status.InstanceType; got != want {
@@ -37,16 +47,32 @@ func (h *harness) selection() *v1alpha1.SelectionStatus {
 	return recorded
 }
 
-func (h *harness) assertSelectionEvents(want int) {
+func (h *harness) selectionEvents() []string {
 	h.t.Helper()
-	announced := 0
+	var announced []string
 	for _, event := range h.events() {
 		if strings.Contains(event, reasonInstanceTypeSelected) {
-			announced++
+			announced = append(announced, event)
 		}
 	}
-	if announced != want {
-		h.t.Errorf("the lease announced %d selections, want %d", announced, want)
+	return announced
+}
+
+func (h *harness) assertAnnouncedSelection(want string) {
+	h.t.Helper()
+	announced := h.selectionEvents()
+	if len(announced) != 1 {
+		h.t.Fatalf("the lease announced %d selections, want exactly one: %v", len(announced), announced)
+	}
+	if announced[0] != want {
+		h.t.Errorf("the lease announced %q, want %q", announced[0], want)
+	}
+}
+
+func (h *harness) assertAnnouncedNothing() {
+	h.t.Helper()
+	if announced := h.selectionEvents(); len(announced) != 0 {
+		h.t.Errorf("the lease announced %v, want no selection", announced)
 	}
 }
 
@@ -129,7 +155,9 @@ func TestALatchedInstanceTypeOutlivesACatalogueThatWouldNowChooseAnother(t *test
 	if got := h.selection().Chosen; got != testSize {
 		t.Errorf("the recorded selection now names %q, want %q", got, testSize)
 	}
-	h.assertSelectionEvents(1)
+	if got := len(h.selectionEvents()); got != 1 {
+		t.Errorf("the lease announced %d selections, want exactly one", got)
+	}
 	h.assertCounter(instanceTypeSelectedMetric,
 		map[string]string{"instance_type": testLargeSize, "strategy": "lowest-price"}, 0)
 
@@ -166,9 +194,8 @@ func TestRequirementsNoInstanceTypeCanMeetAreRejected(t *testing.T) {
 	h := newHarness(t, requiringCapacity(func(r *v1alpha1.SizeRequirements) { r.MinCPU = 64 }))
 	h.catalogue = offering(
 		candidate(testSize, 2, 4, 0.02),
-		candidate("fake-arm", 2, 4, 0.001, func(it *provider.InstanceType) {
-			it.Architecture = string(v1alpha1.ArchitectureARM)
-		}),
+		candidate("fake-arm-small", 2, 4, 0.001, onARM),
+		candidate("fake-arm-large", 8, 16, 0.002, onARM),
 	)
 
 	if err := h.acceptancePass(); err == nil {
@@ -176,8 +203,8 @@ func TestRequirementsNoInstanceTypeCanMeetAreRejected(t *testing.T) {
 	}
 
 	h.assertConditionDetail(v1alpha1.ConditionAccepted, reasonUnsatisfiedRequirements, testRegion)
-	h.assertConditionDetail(v1alpha1.ConditionAccepted, reasonUnsatisfiedRequirements, "2 offered")
-	h.assertConditionDetail(v1alpha1.ConditionAccepted, reasonUnsatisfiedRequirements, "Architecture 1, Cores 1")
+	h.assertConditionDetail(v1alpha1.ConditionAccepted, reasonUnsatisfiedRequirements, "3 offered")
+	h.assertConditionDetail(v1alpha1.ConditionAccepted, reasonUnsatisfiedRequirements, "Architecture 2, Cores 1")
 	h.assertUnaccepted()
 	h.assertCounter(selectionFailedMetric,
 		map[string]string{"strategy": "lowest-price", "reason": "no_match"}, 1)
@@ -227,11 +254,10 @@ func TestARejectedLeaseCountsOneSelectionFailureHoweverOftenItIsReconciled(t *te
 func TestASizedLeaseRecordsTheDecisionThatChoseItsMachine(t *testing.T) {
 	h := newHarness(t, requiringCapacity())
 	h.catalogue = offering(
-		candidate(testLargeSize, 8, 16, 0.06),
-		candidate(testSize, 2, 4, 0.0063),
-		candidate("fake-arm", 2, 4, 0.001, func(it *provider.InstanceType) {
-			it.Architecture = string(v1alpha1.ArchitectureARM)
-		}),
+		candidate(testLargeSize, 8, 16, runnerUpRate),
+		candidate(testSize, 2, 4, chosenRate),
+		candidate("fake-arm-small", 2, 4, 0.001, onARM),
+		candidate("fake-arm-large", 8, 16, 0.002, onARM),
 	)
 
 	if err := h.acceptancePass(); err != nil {
@@ -245,24 +271,52 @@ func TestASizedLeaseRecordsTheDecisionThatChoseItsMachine(t *testing.T) {
 	if recorded.Chosen != testSize {
 		t.Errorf("selection records chosen %q, want %q", recorded.Chosen, testSize)
 	}
-	if recorded.HourlyRate != "0.0063" || recorded.Currency != "EUR" {
+	if recorded.HourlyRate != "0.00390625" || recorded.Currency != "EUR" {
 		t.Errorf("selection records a rate of %q %q, want %q %q",
-			recorded.HourlyRate, recorded.Currency, "0.0063", "EUR")
+			recorded.HourlyRate, recorded.Currency, "0.00390625", "EUR")
 	}
 	if recorded.RunnerUp != testLargeSize {
 		t.Errorf("selection records runner-up %q, want %q", recorded.RunnerUp, testLargeSize)
 	}
-	if recorded.Considered != 2 {
-		t.Errorf("selection considered %d candidates, want %d", recorded.Considered, 2)
+	if recorded.Offered != 4 {
+		t.Errorf("selection records %d offered candidates, want %d", recorded.Offered, 4)
 	}
-	want := []v1alpha1.RejectedCandidates{{Reason: string(rejectedArchitecture), Count: 1}}
+	if recorded.Qualified != 2 {
+		t.Errorf("selection records %d qualifying candidates, want %d", recorded.Qualified, 2)
+	}
+	want := []v1alpha1.RejectedCandidates{{Reason: string(rejectedArchitecture), Count: 2}}
 	if !slices.Equal(recorded.Rejected, want) {
 		t.Errorf("selection records rejections %v, want %v", recorded.Rejected, want)
 	}
 	if recorded.DecidedAt.IsZero() {
 		t.Error("selection records no decision time")
 	}
-	h.assertSelectionEvents(1)
+}
+
+func TestASizedLeaseAnnouncesWhatItChoseAndWhatItBeat(t *testing.T) {
+	h := newHarness(t, requiringCapacity())
+	h.catalogue = offering(
+		candidate(testLargeSize, 8, 16, runnerUpRate),
+		candidate(testSize, 2, 4, chosenRate),
+		candidate("fake-arm-small", 2, 4, 0.001, onARM),
+		candidate("fake-arm-large", 8, 16, 0.002, onARM),
+	)
+
+	if err := h.acceptancePass(); err != nil {
+		t.Fatalf("acceptance refused a lease its requirements can be met: %v", err)
+	}
+
+	h.assertAnnouncedSelection(
+		"Normal InstanceTypeSelected LowestPrice chose fake-small from 2 of 4 offered candidates, runner-up fake-large")
+	h.assertLogged("selected an instance type from requirements",
+		`"instanceType"="fake-small"`,
+		`"strategy"="LowestPrice"`,
+		`"runnerUp"="fake-large"`,
+		`"margin"=0.02734375`,
+		`"offered"=4`,
+		`"qualified"=2`,
+		`"rejected"=[{"reason"="Architecture" "count"=2}]`,
+	)
 }
 
 func TestAPinnedLeaseRecordsNoSelection(t *testing.T) {
@@ -275,7 +329,7 @@ func TestAPinnedLeaseRecordsNoSelection(t *testing.T) {
 	if recorded := h.lease().Status.Selection; recorded != nil {
 		t.Errorf("a pinned lease recorded the selection %+v, want none", *recorded)
 	}
-	h.assertSelectionEvents(0)
+	h.assertAnnouncedNothing()
 }
 
 func TestARecordedSelectionIsNotOverwrittenByASecondResolve(t *testing.T) {

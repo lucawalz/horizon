@@ -2,11 +2,13 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr/funcr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +21,7 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/catalogue"
@@ -66,6 +69,7 @@ type harness struct {
 	recorder    *events.FakeRecorder
 	catalogue   catalogue.Reader
 	baseline    seriesSnapshot
+	logged      []string
 	name        string
 	providerErr error
 	wrapAPI     func(client.Client) client.Client
@@ -233,7 +237,28 @@ func (h *harness) reconciler() *CapacityLeaseReconciler {
 func (h *harness) reconcile() (ctrl.Result, error) {
 	h.t.Helper()
 	req := ctrl.Request{NamespacedName: client.ObjectKey{Name: h.name}}
-	return h.reconciler().Reconcile(h.t.Context(), req)
+	return h.reconciler().Reconcile(h.recordingLogs(), req)
+}
+
+func (h *harness) recordingLogs() context.Context {
+	sink := funcr.New(func(_, args string) { h.logged = append(h.logged, args) }, funcr.Options{})
+	return logf.IntoContext(h.t.Context(), sink)
+}
+
+func (h *harness) assertLogged(message string, fields ...string) {
+	h.t.Helper()
+	for _, line := range h.logged {
+		if !strings.Contains(line, fmt.Sprintf("%q=%q", "msg", message)) {
+			continue
+		}
+		for _, field := range fields {
+			if !strings.Contains(line, field) {
+				h.t.Errorf("the log line %s omits %s", line, field)
+			}
+		}
+		return
+	}
+	h.t.Errorf("no log line reports %q, of %d recorded", message, len(h.logged))
 }
 
 func (h *harness) settle() {

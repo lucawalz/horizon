@@ -46,7 +46,7 @@ func requirements(mutators ...func(*v1alpha1.SizeRequirements)) v1alpha1.SizeReq
 func assertChoice(t *testing.T, offered []provider.InstanceType, required v1alpha1.SizeRequirements, want string) {
 	t.Helper()
 	decision := selectInstanceType(offered, required)
-	if !decision.qualified() {
+	if !decision.hasWinner() {
 		t.Fatalf("no instance type was chosen from %d candidates, want %q", len(offered), want)
 	}
 	if decision.Chosen.Name != want {
@@ -99,7 +99,7 @@ func TestSelectionNamesTheFilterThatRejectedEachCandidate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			offered := []provider.InstanceType{candidate("only", 2, 4, 0.01, tc.spoil)}
 			decision := selectInstanceType(offered, required)
-			if decision.qualified() {
+			if decision.hasWinner() {
 				t.Fatalf("chose %q, want no candidate to survive the filter", decision.Chosen.Name)
 			}
 			if got := decision.Rejected[tc.want]; got != 1 {
@@ -136,8 +136,11 @@ func TestASelectionRecordsTheRunnerUpAndEveryCandidateItBeat(t *testing.T) {
 	if decision.RunnerUp == nil || decision.RunnerUp.Name != "middling" {
 		t.Errorf("runner-up is %v, want %q", decision.RunnerUp, "middling")
 	}
-	if decision.Considered != 3 {
-		t.Errorf("considered %d candidates, want %d", decision.Considered, 3)
+	if decision.Qualified != 3 {
+		t.Errorf("%d candidates qualified, want %d", decision.Qualified, 3)
+	}
+	if decision.Offered != 3 {
+		t.Errorf("the catalogue offered %d candidates, want %d", decision.Offered, 3)
 	}
 }
 
@@ -157,8 +160,11 @@ func TestTheOnlyQualifyingCandidateHasNoRunnerUp(t *testing.T) {
 	if decision.RunnerUp != nil {
 		t.Errorf("runner-up is %q, want none", decision.RunnerUp.Name)
 	}
-	if decision.Considered != 1 {
-		t.Errorf("considered %d candidates, want %d", decision.Considered, 1)
+	if decision.Qualified != 1 {
+		t.Errorf("%d candidates qualified, want %d", decision.Qualified, 1)
+	}
+	if decision.Offered != 2 {
+		t.Errorf("the catalogue offered %d candidates, want %d", decision.Offered, 2)
 	}
 }
 
@@ -309,7 +315,7 @@ func TestIdenticalCandidatesAlwaysYieldTheSameMachine(t *testing.T) {
 			names = append(names, it.Name)
 		}
 		decision := selectInstanceType(order, requirements())
-		if !decision.qualified() {
+		if !decision.hasWinner() {
 			t.Fatalf("no instance type was chosen from %v", names)
 		}
 		if decision.Chosen.Name != "alpha" {
@@ -318,5 +324,39 @@ func TestIdenticalCandidatesAlwaysYieldTheSameMachine(t *testing.T) {
 		if decision.RunnerUp == nil || decision.RunnerUp.Name != "beta" {
 			t.Errorf("catalogue order %v ranked %v second, want %q", names, decision.RunnerUp, "beta")
 		}
+	}
+}
+
+func TestTheMarginOverTheRunnerUpIsMeasuredInTheStrategysOwnUnits(t *testing.T) {
+	offered := []provider.InstanceType{
+		candidate("wide", 8, 16, 0.5),
+		candidate("narrow", 2, 4, 0.25),
+	}
+	tests := []struct {
+		strategy v1alpha1.SizingStrategy
+		want     float64
+	}{
+		{v1alpha1.StrategyLowestPrice, 0.25},
+		{v1alpha1.StrategyLowestPricePerCore, 0.0625},
+	}
+
+	for _, tc := range tests {
+		t.Run(string(tc.strategy), func(t *testing.T) {
+			decision := selectInstanceType(offered, requirements(func(r *v1alpha1.SizeRequirements) {
+				r.Strategy = tc.strategy
+			}))
+
+			if got := decision.margin(); got != tc.want {
+				t.Errorf("the margin over %q is %v, want %v", decision.runnerUpName(), got, tc.want)
+			}
+		})
+	}
+}
+
+func TestALoneCandidateBeatsNothingSoItsMarginIsZero(t *testing.T) {
+	decision := selectInstanceType([]provider.InstanceType{candidate("only", 2, 4, 0.25)}, requirements())
+
+	if got := decision.margin(); got != 0 {
+		t.Errorf("the margin over no runner-up is %v, want 0", got)
 	}
 }
