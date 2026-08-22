@@ -26,15 +26,16 @@ const (
 )
 
 type selectionDecision struct {
-	Chosen     provider.InstanceType
-	Strategy   v1alpha1.SizingStrategy
-	RunnerUp   *provider.InstanceType
-	Considered int
-	Rejected   map[rejectionReason]int
+	Chosen    provider.InstanceType
+	Strategy  v1alpha1.SizingStrategy
+	RunnerUp  *provider.InstanceType
+	Offered   int
+	Qualified int
+	Rejected  map[rejectionReason]int
 }
 
-func (d selectionDecision) qualified() bool {
-	return d.Considered > 0
+func (d selectionDecision) hasWinner() bool {
+	return d.Qualified > 0
 }
 
 func (d selectionDecision) runnerUpName() string {
@@ -55,6 +56,7 @@ func (d selectionDecision) margin() float64 {
 func selectInstanceType(offered []provider.InstanceType, required v1alpha1.SizeRequirements) selectionDecision {
 	decision := selectionDecision{
 		Strategy: effectiveStrategy(required.Strategy),
+		Offered:  len(offered),
 		Rejected: map[rejectionReason]int{},
 	}
 
@@ -67,7 +69,7 @@ func selectInstanceType(offered []provider.InstanceType, required v1alpha1.SizeR
 		candidates = append(candidates, it)
 	}
 
-	decision.Considered = len(candidates)
+	decision.Qualified = len(candidates)
 	if len(candidates) == 0 {
 		return decision
 	}
@@ -134,7 +136,8 @@ func selectionStatus(decision selectionDecision, decided time.Time) *v1alpha1.Se
 		HourlyRate: strconv.FormatFloat(decision.Chosen.HourlyRate.Amount, 'f', rateRoundTripPrecision, 64),
 		Currency:   decision.Chosen.HourlyRate.Currency,
 		RunnerUp:   decision.runnerUpName(),
-		Considered: int32(decision.Considered),
+		Offered:    int32(decision.Offered),
+		Qualified:  int32(decision.Qualified),
 		Rejected:   rejectedCounts(decision.Rejected),
 		DecidedAt:  metav1.Time{Time: decided},
 	}

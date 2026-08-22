@@ -48,7 +48,8 @@ func (r *CapacityLeaseReconciler) admit(ctx context.Context, lease *v1alpha1.Cap
 	if err := requireTeardownGuarantee(cfg, prov); err != nil {
 		return r.rejectLease(ctx, lease, attributed, reasonProviderUnavailable, err)
 	}
-	return r.acceptLease(ctx, lease, attributed, r.latchSelection(ctx, lease, sized.decision))
+	announce := r.latchSelection(ctx, lease, sized.decision)
+	return r.acceptLease(ctx, lease, attributed, announce)
 }
 
 func requireOfferedRegion(prov provider.Provider, region string) error {
@@ -100,22 +101,22 @@ func offersType(offered []provider.InstanceType, size string) bool {
 
 func chooseInstanceType(offered []provider.InstanceType, region string, required v1alpha1.SizeRequirements) (sizing, *sizingRejection) {
 	decision := selectInstanceType(offered, required)
-	if !decision.qualified() {
+	if !decision.hasWinner() {
 		return sizing{}, &sizingRejection{
 			reason: metrics.ReasonNoMatch,
-			cause:  unsatisfiedRequirements(region, len(offered), decision.Rejected),
+			cause:  unsatisfiedRequirements(region, decision),
 		}
 	}
 	return sizing{instanceType: decision.Chosen.Name, decision: &decision}, nil
 }
 
-func unsatisfiedRequirements(region string, offered int, tally map[rejectionReason]int) error {
-	rejected := make([]string, 0, len(tally))
-	for _, entry := range rejectedCounts(tally) {
+func unsatisfiedRequirements(region string, decision selectionDecision) error {
+	rejected := make([]string, 0, len(decision.Rejected))
+	for _, entry := range rejectedCounts(decision.Rejected) {
 		rejected = append(rejected, fmt.Sprintf("%s %d", entry.Reason, entry.Count))
 	}
 	return fmt.Errorf("no instance type in region %q qualified: %d offered, rejected by %s",
-		region, offered, strings.Join(rejected, ", "))
+		region, decision.Offered, strings.Join(rejected, ", "))
 }
 
 func (r *CapacityLeaseReconciler) latchInstanceType(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
@@ -144,14 +145,23 @@ func (r *CapacityLeaseReconciler) latchSelection(ctx context.Context, lease *v1a
 	}
 	lease.Status.Selection = selectionStatus(*decision, r.now())
 	recorded := *lease.Status.Selection
-	return func() { r.announceSelection(ctx, lease, *decision, recorded) }
+	margin := decision.margin()
+	return func() { r.announceSelection(ctx, lease, recorded, margin) }
 }
 
-func (r *CapacityLeaseReconciler) announceSelection(ctx context.Context, lease *v1alpha1.CapacityLease, decision selectionDecision, recorded v1alpha1.SelectionStatus) {
+func (r *CapacityLeaseReconciler) announceSelection(ctx context.Context, lease *v1alpha1.CapacityLease, recorded v1alpha1.SelectionStatus, margin float64) {
 	ctrl.LoggerFrom(ctx).Info("selected an instance type from requirements",
 		"instanceType", recorded.Chosen, "strategy", recorded.Strategy,
-		"runnerUp", recorded.RunnerUp, "margin", decision.margin(),
-		"considered", recorded.Considered, "rejected", recorded.Rejected)
+		"runnerUp", recorded.RunnerUp, "margin", margin,
+		"offered", recorded.Offered, "qualified", recorded.Qualified, "rejected", recorded.Rejected)
 	r.Recorder.Eventf(lease, nil, corev1.EventTypeNormal, reasonInstanceTypeSelected, actionSelectedInstanceType,
-		"%s chose %s from %d qualifying candidates", recorded.Strategy, recorded.Chosen, recorded.Considered)
+		"%s chose %s from %d of %d offered candidates, runner-up %s",
+		recorded.Strategy, recorded.Chosen, recorded.Qualified, recorded.Offered, announcedRunnerUp(recorded.RunnerUp))
+}
+
+func announcedRunnerUp(name string) string {
+	if name == "" {
+		return "none"
+	}
+	return name
 }
