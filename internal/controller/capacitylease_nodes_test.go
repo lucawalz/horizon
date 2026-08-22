@@ -658,25 +658,50 @@ func TestAFailingCreateNamesTheInstanceThatHasNoServer(t *testing.T) {
 	}
 }
 
-func TestAdoptingAnObservedInstanceDropsTheStageItWaitedIn(t *testing.T) {
+func adoptedEntry(t *testing.T, entry v1alpha1.InstanceStatus, observed provider.Instance) v1alpha1.InstanceStatus {
+	t.Helper()
 	lease := &v1alpha1.CapacityLease{ObjectMeta: metav1.ObjectMeta{Name: "burst"}}
-	lease.Status.Instances = []v1alpha1.InstanceStatus{{
-		Name:  "burst-0",
-		Phase: v1alpha1.InstancePhaseIntended,
-		Stage: v1alpha1.InstanceStageAwaitingInstance,
-	}}
+	lease.Status.Instances = []v1alpha1.InstanceStatus{entry}
 
 	var records metricWrites
-	observed := []provider.Instance{{Name: "burst-0", ProviderID: "fake://1"}}
-	changed, err := (&CapacityLeaseReconciler{}).adoptObservedInstances(t.Context(), lease, nil, observed, &records)
+	changed, err := (&CapacityLeaseReconciler{}).adoptObservedInstances(
+		t.Context(), lease, nil, []provider.Instance{observed}, &records)
 	if err != nil {
 		t.Fatalf("adopt an observed instance: %v", err)
 	}
 	if !changed {
 		t.Fatal("adopting an intended instance reported no change")
 	}
-	if got := lease.Status.Instances[0].Stage; got != "" {
-		t.Errorf("the adopted instance still reports stage %q, which names a server that now exists", got)
+	return lease.Status.Instances[0]
+}
+
+func TestAdoptingAnObservedInstanceDropsTheStageItWaitedIn(t *testing.T) {
+	adopted := adoptedEntry(t,
+		v1alpha1.InstanceStatus{
+			Name:  "burst-0",
+			Phase: v1alpha1.InstancePhaseIntended,
+			Stage: v1alpha1.InstanceStageAwaitingInstance,
+		},
+		provider.Instance{Name: "burst-0", ProviderID: "fake://1"})
+
+	if adopted.Stage != "" {
+		t.Errorf("the adopted instance still reports stage %q, which names a server that now exists", adopted.Stage)
+	}
+}
+
+// both stall timeouts and the waiting report measure from the instant the lease asked for the instance
+func TestAdoptingAnObservedInstanceKeepsTheInstantItWasRequested(t *testing.T) {
+	requested := metav1.Time{Time: testInstant}
+	adopted := adoptedEntry(t,
+		v1alpha1.InstanceStatus{
+			Name:      "burst-0",
+			Phase:     v1alpha1.InstancePhaseIntended,
+			CreatedAt: &requested,
+		},
+		provider.Instance{Name: "burst-0", ProviderID: "fake://1", CreatedAt: testInstant.Add(time.Hour)})
+
+	if adopted.CreatedAt == nil || !adopted.CreatedAt.Time.Equal(testInstant) {
+		t.Errorf("the adopted instance records %v as its request instant, want %v", adopted.CreatedAt, testInstant)
 	}
 }
 
