@@ -43,6 +43,7 @@ func activeStatus(now time.Time) v1alpha1.CapacityLeaseStatus {
 			ProviderID: "hcloud://42",
 			NodeName:   "burst-0",
 			Phase:      v1alpha1.InstancePhaseJoined,
+			Stage:      v1alpha1.InstanceStageReady,
 			CreatedAt:  &moment,
 		}},
 		MigratedWorkloads: []string{"batch/worker"},
@@ -146,6 +147,9 @@ func TestLeaseDetailRendersStatusConditionsAndInstances(t *testing.T) {
 	}
 	if providerID := present(t, "providerID", instance.ProviderID); providerID != "hcloud://42" {
 		t.Errorf("providerID = %q, want %q", providerID, "hcloud://42")
+	}
+	if stage := present(t, "stage", instance.Stage); stage != v1alpha1.InstanceStageReady {
+		t.Errorf("stage = %q, want %q", stage, v1alpha1.InstanceStageReady)
 	}
 
 	if len(detail.MigratedWorkloads) != 1 || detail.MigratedWorkloads[0] != "batch/worker" {

@@ -10,6 +10,8 @@ type KnownLeasePhase =
 
 type KnownInstancePhase = 'Intended' | 'Created' | 'Joined' | 'Draining' | 'Released'
 
+type KnownInstanceStage = 'AwaitingInstance' | 'AwaitingRegistration' | 'AwaitingReady' | 'Ready'
+
 type KnownCatalogueState =
   | 'NoSelection'
   | 'CatalogueAbsent'
@@ -23,6 +25,7 @@ type Open<T extends string> = T | (string & {})
 
 export type LeasePhase = Open<KnownLeasePhase>
 export type InstancePhase = Open<KnownInstancePhase>
+export type InstanceStage = Open<KnownInstanceStage>
 export type CatalogueState = Open<KnownCatalogueState>
 export type Architecture = Open<'x86' | 'arm'>
 export type CPUType = Open<'shared' | 'dedicated'>
@@ -60,6 +63,7 @@ export interface LeaseInstance {
   providerID: string | null
   nodeName: string | null
   phase: InstancePhase
+  stage: InstanceStage | null
   createdAt: string | null
   lastError: string | null
 }

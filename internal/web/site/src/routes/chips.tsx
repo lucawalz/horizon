@@ -1,6 +1,6 @@
 import { RelativeTime } from '@/components/relative-time'
 import { StatusPill } from '@/components/status-pill'
-import type { ConditionStatus, InstancePhase, LeasePhase } from '@/lib/api'
+import type { ConditionStatus, InstancePhase, InstanceStage, LeasePhase } from '@/lib/api'
 import type { Severity } from '@/lib/status'
 import { severityForStatus } from '@/lib/status'
 import { cn } from '@/lib/utils'
@@ -17,6 +17,13 @@ const instancePhaseSeverity: Record<string, Severity> = {
   joined: 'success',
   draining: 'attention',
   released: 'neutral',
+}
+
+const instanceStageSeverity: Record<string, Severity> = {
+  awaitinginstance: 'neutral',
+  awaitingregistration: 'info',
+  awaitingready: 'info',
+  ready: 'success',
 }
 
 const absentScale = {
@@ -39,6 +46,15 @@ export function InstancePhaseChip({ phase }: { phase: InstancePhase }) {
   return (
     <StatusPill severity={instancePhaseSeverity[phase.toLowerCase()] ?? 'neutral'}>
       {phase}
+    </StatusPill>
+  )
+}
+
+export function InstanceStageChip({ stage }: { stage: InstanceStage | null }) {
+  if (stage === null) return <span className="text-subtle">{unreported}</span>
+  return (
+    <StatusPill severity={instanceStageSeverity[stage.toLowerCase()] ?? 'neutral'}>
+      {stage}
     </StatusPill>
   )
 }

@@ -45,12 +45,13 @@ type conditionEntry struct {
 }
 
 type leaseInstance struct {
-	Name       string                 `json:"name"`
-	ProviderID *string                `json:"providerID"`
-	NodeName   *string                `json:"nodeName"`
-	Phase      v1alpha1.InstancePhase `json:"phase"`
-	CreatedAt  *string                `json:"createdAt"`
-	LastError  *string                `json:"lastError"`
+	Name       string                  `json:"name"`
+	ProviderID *string                 `json:"providerID"`
+	NodeName   *string                 `json:"nodeName"`
+	Phase      v1alpha1.InstancePhase  `json:"phase"`
+	Stage      *v1alpha1.InstanceStage `json:"stage"`
+	CreatedAt  *string                 `json:"createdAt"`
+	LastError  *string                 `json:"lastError"`
 }
 
 type leaseRequirements struct {
@@ -204,6 +205,7 @@ func newLeaseInstances(instances []v1alpha1.InstanceStatus) []leaseInstance {
 			ProviderID: nullable(instance.ProviderID),
 			NodeName:   nullable(instance.NodeName),
 			Phase:      instance.Phase,
+			Stage:      nullable(instance.Stage),
 			CreatedAt:  instant(instance.CreatedAt),
 			LastError:  nullable(instance.LastError),
 		})

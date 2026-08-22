@@ -22,7 +22,14 @@ import type {
 } from '@/lib/api'
 import { fetchLease, leasePath, notFound, releaseLease, RequestFailed } from '@/lib/api'
 import { errorFor } from '@/lib/errors'
-import { ConditionChip, Countdown, InstancePhaseChip, PhaseChip, Since } from '@/routes/chips'
+import {
+  ConditionChip,
+  Countdown,
+  InstancePhaseChip,
+  InstanceStageChip,
+  PhaseChip,
+  Since,
+} from '@/routes/chips'
 import {
   Definition,
   DefinitionGrid,
@@ -39,7 +46,7 @@ import { leasesHref } from '@/routes/router'
 import { absent, formatInstant, formatRate, formatSpan } from '@/routes/units'
 
 const conditionColumns = 5
-const instanceColumns = 6
+const instanceColumns = 7
 
 function BackLink() {
   return (
@@ -139,6 +146,7 @@ function InstancesPanel({ instances }: { instances: LeaseInstance[] }) {
           <Row>
             <HeadCell>Instance</HeadCell>
             <HeadCell>Phase</HeadCell>
+            <HeadCell>Stage</HeadCell>
             <HeadCell>Node</HeadCell>
             <HeadCell>Provider id</HeadCell>
             <HeadCell numeric>Created</HeadCell>
@@ -156,6 +164,9 @@ function InstancesPanel({ instances }: { instances: LeaseInstance[] }) {
                 <Cell className="font-emphasis text-ink-strong">{instance.name}</Cell>
                 <Cell>
                   <InstancePhaseChip phase={instance.phase} />
+                </Cell>
+                <Cell>
+                  <InstanceStageChip stage={instance.stage} />
                 </Cell>
                 <Cell muted>{instance.nodeName ?? 'not joined'}</Cell>
                 <Cell muted className="font-mono text-label-12">

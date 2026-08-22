@@ -47,7 +47,7 @@ func TestZeroValuedResponsesEncodeNullsAndEmptyLists(t *testing.T) {
 		},
 		"lease instance": {
 			newLeaseInstances([]v1alpha1.InstanceStatus{{}})[0],
-			`{"name":"","providerID":null,"nodeName":null,"phase":"","createdAt":null,"lastError":null}`,
+			`{"name":"","providerID":null,"nodeName":null,"phase":"","stage":null,"createdAt":null,"lastError":null}`,
 		},
 		"lease selection": {newLeaseSelection(&v1alpha1.SelectionStatus{}), zeroSelectionJSON},
 		"lease requirements": {

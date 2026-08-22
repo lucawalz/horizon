@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { LeaseSelection } from '@/lib/api'
+import type { LeaseInstance, LeaseSelection } from '@/lib/api'
 import { interfaceHeader, leasePath } from '@/lib/api'
 import { LeaseDetailRoute } from '@/routes/lease-detail'
 import {
@@ -34,6 +34,27 @@ const selection: LeaseSelection = {
   decidedAt: '2026-08-21T11:30:00Z',
 }
 
+const instances: LeaseInstance[] = [
+  {
+    name: 'batch-run-0',
+    providerID: 'hcloud://42',
+    nodeName: null,
+    phase: 'Created',
+    stage: 'AwaitingRegistration',
+    createdAt: '2026-08-21T11:30:00Z',
+    lastError: null,
+  },
+  {
+    name: 'batch-run-1',
+    providerID: null,
+    nodeName: null,
+    phase: 'Released',
+    stage: null,
+    createdAt: '2026-08-21T11:30:00Z',
+    lastError: null,
+  },
+]
+
 function stubLease(body: unknown) {
   return stubFetchWith((_input, init) =>
     Promise.resolve(
@@ -64,6 +85,19 @@ describe('the lease detail', () => {
     expect(shown).toContain('31')
     expect(shown).toContain('19 TooFewCores')
     expect(shown).toContain('8 TooLittleMemory')
+
+    await view.unmount()
+  })
+
+  it('names the stage each instance is waiting in', async () => {
+    stubLease(leaseDetailBody({ instances }))
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    const rows = [...view.container.querySelectorAll('tr')].map((row) => row.textContent ?? '')
+    const waiting = rows.find((row) => row.includes('batch-run-0')) ?? ''
+    const retired = rows.find((row) => row.includes('batch-run-1')) ?? ''
+    expect(waiting).toContain('AwaitingRegistration')
+    expect(retired).toContain('not reported')
 
     await view.unmount()
   })
