@@ -32,8 +32,8 @@ const (
 	LeaseNameLabelKey = "horizon.dev/lease"
 	LeaseUIDLabelKey  = provider.LeaseUIDLabelKey
 
-	leasePollInterval = 30 * time.Second
-	stepRequeue       = 250 * time.Millisecond
+	DefaultPollInterval = 30 * time.Second
+	stepRequeue         = 250 * time.Millisecond
 
 	defaultTeardownGrace = 2 * time.Minute
 )
@@ -79,6 +79,15 @@ type CapacityLeaseReconciler struct {
 	Catalogue catalogue.Reader
 	Clock     func() time.Time
 	Recorder  events.EventRecorder
+
+	PollInterval time.Duration
+}
+
+func (r *CapacityLeaseReconciler) pollInterval() time.Duration {
+	if r.PollInterval <= 0 {
+		return DefaultPollInterval
+	}
+	return r.PollInterval
 }
 
 func (r *CapacityLeaseReconciler) now() time.Time {
@@ -230,7 +239,7 @@ func (r *CapacityLeaseReconciler) expire(ctx context.Context, lease *v1alpha1.Ca
 }
 
 func (r *CapacityLeaseReconciler) nextPoll(lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy) ctrl.Result {
-	after := leasePollInterval
+	after := r.pollInterval()
 	if renew := policy.RenewInterval.Duration; renew > 0 && renew < after {
 		after = renew
 	}

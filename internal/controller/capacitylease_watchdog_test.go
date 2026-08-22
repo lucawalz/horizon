@@ -274,7 +274,7 @@ func TestNextPollFollowsTheShortestDeadlineInPlay(t *testing.T) {
 		want      time.Duration
 	}{
 		"a renew interval shorter than the poll wins":   {renew: 10 * time.Second, remaining: time.Hour, want: 10 * time.Second},
-		"a renew interval longer than the poll is kept": {renew: 5 * time.Minute, remaining: time.Hour, want: leasePollInterval},
+		"a renew interval longer than the poll is kept": {renew: 5 * time.Minute, remaining: time.Hour, want: DefaultPollInterval},
 		"an imminent expiry beats both":                 {renew: 10 * time.Second, remaining: 4 * time.Second, want: 4 * time.Second},
 	}
 
@@ -282,6 +282,28 @@ func TestNextPollFollowsTheShortestDeadlineInPlay(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r, _ := reconcilerWith()
 			got := r.nextPoll(leaseExpiringIn(tc.remaining), testPolicy(tc.renew, testSlack)).RequeueAfter
+			if got != tc.want {
+				t.Errorf("requeue after = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTheConfiguredPollIntervalIsHonouredAndZeroMeansTheDefault(t *testing.T) {
+	tests := map[string]struct {
+		configured time.Duration
+		want       time.Duration
+	}{
+		"zero falls back to the default": {configured: 0, want: DefaultPollInterval},
+		"a configured interval wins":     {configured: 5 * time.Second, want: 5 * time.Second},
+		"a longer interval also wins":    {configured: 2 * time.Minute, want: 2 * time.Minute},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			r, _ := reconcilerWith()
+			r.PollInterval = tc.configured
+			got := r.nextPoll(leaseExpiringIn(time.Hour), testPolicy(time.Hour, testSlack)).RequeueAfter
 			if got != tc.want {
 				t.Errorf("requeue after = %s, want %s", got, tc.want)
 			}

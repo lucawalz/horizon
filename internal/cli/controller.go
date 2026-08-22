@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/lucawalz/horizon/internal/controller"
 	"github.com/lucawalz/horizon/internal/manager"
 )
 
@@ -34,6 +35,8 @@ func newControllerCmd() *cobra.Command {
 		"Address the metrics endpoint binds to")
 	flags.StringVar(&opts.HealthAddress, "health-probe-bind-address", defaultHealthAddress,
 		"Address the health and readiness endpoints bind to")
+	flags.DurationVar(&opts.PollInterval, "lease-poll-interval", controller.DefaultPollInterval,
+		"Fallback interval between lease reconciles, used for whatever the node watch misses")
 
 	return cmd
 }

@@ -22,6 +22,10 @@ rbac:
 leaderElection:
   enabled: true
 
+lease:
+  # Fallback only: the controller reconciles on node events, and this bounds what a missed event can cost.
+  pollInterval: 30s
+
 ports:
   metrics: 8080
   health: 8081

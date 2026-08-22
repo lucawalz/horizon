@@ -13,6 +13,7 @@ func TestControllerCommandAcceptsTheChartFlags(t *testing.T) {
 		"leader-elect":              "true",
 		"metrics-bind-address":      ":8080",
 		"health-probe-bind-address": ":8081",
+		"lease-poll-interval":       "30s",
 	} {
 		flag := cmd.Flags().Lookup(name)
 		if flag == nil {

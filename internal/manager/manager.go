@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -36,6 +37,7 @@ type Options struct {
 	MetricsAddress string
 	HealthAddress  string
 	LeaderElection bool
+	PollInterval   time.Duration
 }
 
 func Scheme() *runtime.Scheme {
@@ -98,7 +100,7 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 	}
 
 	parts, err := newReconcilers(mgr.GetClient(), kube,
-		mgr.GetEventRecorder(controller.CapacityLeaseControllerName))
+		mgr.GetEventRecorder(controller.CapacityLeaseControllerName), opts.PollInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +118,7 @@ type reconcilers struct {
 }
 
 // the refresher fills the very cache the lease controller validates against, so both must hold the same one
-func newReconcilers(api client.Client, kube kubernetes.Interface, recorder events.EventRecorder) (*reconcilers, error) {
+func newReconcilers(api client.Client, kube kubernetes.Interface, recorder events.EventRecorder, pollInterval time.Duration) (*reconcilers, error) {
 	providers, err := controller.NewProviderFactory(kube)
 	if err != nil {
 		return nil, err
@@ -129,11 +131,12 @@ func newReconcilers(api client.Client, kube kubernetes.Interface, recorder event
 	types := catalogue.NewCache()
 	return &reconcilers{
 		leases: &controller.CapacityLeaseReconciler{
-			Client:    api,
-			Kube:      kube,
-			Provider:  providers,
-			Catalogue: types,
-			Recorder:  recorder,
+			Client:       api,
+			Kube:         kube,
+			Provider:     providers,
+			Catalogue:    types,
+			Recorder:     recorder,
+			PollInterval: pollInterval,
 		},
 		orphans: &controller.OrphanReconciler{
 			Client:   api,

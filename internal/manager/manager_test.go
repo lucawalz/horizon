@@ -2,6 +2,7 @@ package manager
 
 import (
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -66,7 +67,7 @@ func TestHighCardinalityTypesAreNotCached(t *testing.T) {
 func TestTheLeaseControllerReadsTheCatalogueTheRefresherFills(t *testing.T) {
 	t.Setenv(namespaceVar, testNamespace)
 
-	parts, err := newReconcilers(nil, k8sfake.NewSimpleClientset(), nil)
+	parts, err := newReconcilers(nil, k8sfake.NewSimpleClientset(), nil, 0)
 	if err != nil {
 		t.Fatalf("wire the reconcilers: %v", err)
 	}
@@ -75,5 +76,18 @@ func TestTheLeaseControllerReadsTheCatalogueTheRefresherFills(t *testing.T) {
 	}
 	if parts.leases.Catalogue != catalogue.Reader(parts.refresher.Cache) {
 		t.Error("the lease controller and the catalogue refresher hold different catalogues")
+	}
+}
+
+func TestThePollIntervalReachesTheLeaseReconciler(t *testing.T) {
+	t.Setenv(namespaceVar, testNamespace)
+
+	const configured = 90 * time.Second
+	parts, err := newReconcilers(nil, k8sfake.NewSimpleClientset(), nil, configured)
+	if err != nil {
+		t.Fatalf("wire the reconcilers: %v", err)
+	}
+	if parts.leases.PollInterval != configured {
+		t.Errorf("the lease controller polls every %s, want %s", parts.leases.PollInterval, configured)
 	}
 }

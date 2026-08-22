@@ -51,6 +51,7 @@ kubectl apply -f charts/horizon/crds/
 | --- | --- | --- |
 | `replicaCount` | `1` | Number of controller replicas. Values above 1 require `leaderElection.enabled`, and the chart refuses to render otherwise. |
 | `leaderElection.enabled` | `true` | Run leader election so only one replica reconciles a lease. Adds the namespaced Lease permissions. |
+| `lease.pollInterval` | `30s` | Fallback interval between lease reconciles. The controller watches Nodes and reacts to a registration or a readiness change as it happens, so this bounds only how long a missed event can go unnoticed. |
 | `extraArgs` | `[]` | Additional command line arguments appended to the container. |
 | `extraEnv` | `[]` | Additional environment variables, in the Kubernetes `env` list form. |
 | `terminationGracePeriodSeconds` | `30` | Grace period for the controller to finish an in-flight reconcile. |
