@@ -93,11 +93,14 @@ describe('the lease detail', () => {
     stubLease(leaseDetailBody({ instances }))
     const view = await mount(<LeaseDetailRoute name={leaseName} />)
 
-    const rows = [...view.container.querySelectorAll('tr')].map((row) => row.textContent ?? '')
-    const waiting = rows.find((row) => row.includes('batch-run-0')) ?? ''
-    const retired = rows.find((row) => row.includes('batch-run-1')) ?? ''
-    expect(waiting).toContain('AwaitingRegistration')
-    expect(retired).toContain('not reported')
+    const rows = [...view.container.querySelectorAll('tbody tr')]
+    const waiting = rows.find((row) => row.textContent?.includes('batch-run-0'))
+    const retired = rows.find((row) => row.textContent?.includes('batch-run-1'))
+    expect(waiting?.textContent).toContain('AwaitingRegistration')
+    expect(retired?.textContent).toContain('not reported')
+    expect(waiting?.closest('table')?.querySelectorAll('thead th')).toHaveLength(
+      waiting?.querySelectorAll('td').length ?? 0,
+    )
 
     await view.unmount()
   })
