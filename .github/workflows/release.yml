@@ -82,7 +82,7 @@ jobs:
           helm package charts/horizon
           helm push "horizon-${CHART_VERSION}.tgz" "$CHART_REGISTRY"
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - uses: goreleaser/goreleaser-action@v7
