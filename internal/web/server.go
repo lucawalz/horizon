@@ -40,6 +40,7 @@ type Server struct {
 	client    client.Reader
 	writer    LeaseWriter
 	catalogue catalogue.Reader
+	port      string
 }
 
 func New(opts Options) (*Server, error) {
@@ -50,6 +51,16 @@ func New(opts Options) (*Server, error) {
 		return nil, errors.New("web: a catalogue reader is required")
 	}
 	return &Server{client: opts.Client, writer: opts.Writer, catalogue: opts.Catalogue}, nil
+}
+
+// a request cannot vouch for its own Host header, so the guard is anchored to the address the listener actually bound
+func (s *Server) anchorTo(address string) error {
+	_, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("web: read the bound port from %s: %w", address, err)
+	}
+	s.port = port
+	return nil
 }
 
 // the address is built here rather than taken from a caller, so no flag or option can widen the binding
@@ -69,6 +80,9 @@ func (s *Server) ListenAndServe(ctx context.Context, port uint16) error {
 	listener, err := listenLoopback(port)
 	if err != nil {
 		return err
+	}
+	if err := s.anchorTo(listener.Addr().String()); err != nil {
+		return errors.Join(err, listener.Close())
 	}
 
 	server := &http.Server{Handler: s.routes(), ReadHeaderTimeout: readHeaderTimeout}

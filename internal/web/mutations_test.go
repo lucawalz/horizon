@@ -2,11 +2,14 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,12 +29,17 @@ const (
 
 func leaseEndpoint(name string) string { return leasesEndpoint + "/" + name }
 
+func writingOptions() Options {
+	return Options{Client: testEnv.Client, Writer: testEnv.Client, Catalogue: AbsentCatalogue()}
+}
+
 func newWritingServer(t *testing.T) *Server {
 	t.Helper()
-	server, err := New(Options{Client: testEnv.Client, Writer: testEnv.Client, Catalogue: AbsentCatalogue()})
+	server, err := New(writingOptions())
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	anchor(t, server)
 	return server
 }
 
@@ -48,9 +56,10 @@ func newMutation(t *testing.T, method, target string, body any) *http.Request {
 	}
 
 	request := httptest.NewRequest(method, target, payload)
+	request.Host = servedTestHost
 	request.Header.Set(interfaceHeader, "true")
 	request.Header.Set(fetchSiteHeader, sameOriginSite)
-	request.Header.Set(originHeader, httpScheme+request.Host)
+	request.Header.Set(originHeader, servedTestOrigin)
 	return request
 }
 
@@ -306,6 +315,15 @@ func TestMutationsRefuseEachCrossOriginFailureOnItsOwn(t *testing.T) {
 
 	server := newWritingServer(t)
 	for name, spoil := range map[string]func(*http.Request){
+		// a rebound name reaches this socket while the browser still calls the request same-origin, so every other signal it carries is genuine
+		"rebound host": func(r *http.Request) {
+			r.Host = "evil.example:8973"
+			r.Header.Set(originHeader, "http://evil.example:8973")
+		},
+		"another port on the loopback address": func(r *http.Request) {
+			r.Host = "127.0.0.1:5173"
+			r.Header.Set(originHeader, "http://127.0.0.1:5173")
+		},
 		"no interface header": func(r *http.Request) { r.Header.Del(interfaceHeader) },
 		"no fetch metadata":   func(r *http.Request) { r.Header.Del(fetchSiteHeader) },
 		"cross site fetch":    func(r *http.Request) { r.Header.Set(fetchSiteHeader, "cross-site") },
@@ -392,5 +410,103 @@ func TestAServerWithoutAWriterServesReadsAndRefusesMutations(t *testing.T) {
 func TestNewBuildsAReadOnlyServerWithoutAWriter(t *testing.T) {
 	if _, err := New(Options{Client: failingReader{err: errors.New("unused")}, Catalogue: AbsentCatalogue()}); err != nil {
 		t.Errorf("building a server without a writer failed with %v, want a read-only server", err)
+	}
+}
+
+func overTheWire(t *testing.T, method, target, host string, body any) *http.Response {
+	t.Helper()
+
+	var payload io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("encode the request body: %v", err)
+		}
+		payload = bytes.NewReader(encoded)
+	}
+
+	request, err := http.NewRequestWithContext(t.Context(), method, target, payload)
+	if err != nil {
+		t.Fatalf("build the request: %v", err)
+	}
+	request.Host = host
+	request.Header.Set(interfaceHeader, "true")
+	request.Header.Set(fetchSiteHeader, sameOriginSite)
+	request.Header.Set(originHeader, httpScheme+host)
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("send the request: %v", err)
+	}
+	t.Cleanup(func() { _ = response.Body.Close() })
+	return response
+}
+
+// a name whose zone the caller owns can be pointed at this socket, and the browser will then call the request same-origin
+func TestTheServedInterfaceAnchorsTheGuardToTheAddressItBound(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const addressed, rebound = "wire-run", "rebound-run"
+	removeAfterTest(t, addressed)
+	removeAfterTest(t, rebound)
+
+	server, err := New(writingOptions())
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	port := freePort(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	served := make(chan error, 1)
+	go func() { served <- server.ListenAndServe(ctx, port) }()
+
+	address := net.JoinHostPort(loopbackHost, strconv.Itoa(int(port)))
+	shell := poll(t, httpScheme+address+"/")
+	if err := shell.Body.Close(); err != nil {
+		t.Errorf("close the response body: %v", err)
+	}
+
+	target := httpScheme + address + leasesEndpoint
+	if created := overTheWire(t, http.MethodPost, target, address, createRequestFixture(addressed)); created.StatusCode != http.StatusCreated {
+		t.Fatalf("a request addressed to %s answered %d, want %d", address, created.StatusCode, http.StatusCreated)
+	}
+	readLease(t, addressed)
+
+	foreign := net.JoinHostPort("evil.example", strconv.Itoa(int(port)))
+	if refused := overTheWire(t, http.MethodPost, target, foreign, createRequestFixture(rebound)); refused.StatusCode != http.StatusForbidden {
+		t.Errorf("a request that reached the socket as %s answered %d, want %d", foreign, refused.StatusCode, http.StatusForbidden)
+	}
+	if err := testEnv.Client.Get(t.Context(), client.ObjectKey{Name: rebound}, &v1alpha1.CapacityLease{}); !apierrors.IsNotFound(err) {
+		t.Errorf("reading the rebound lease answered %v, want a not-found", err)
+	}
+
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Errorf("serve: %v", err)
+		}
+	case <-time.After(shutdownGrace * 2):
+		t.Error("the interface did not stop once the context was cancelled")
+	}
+}
+
+func TestAServerThatNeverBoundAnAddressRefusesEveryMutation(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	server, err := New(writingOptions())
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	for method, target := range map[string]string{
+		http.MethodPost:   leasesEndpoint,
+		http.MethodDelete: leaseEndpoint("unanchored-run"),
+	} {
+		response := send(server, newMutation(t, method, target, createRequestFixture("unanchored-run")))
+		if response.Code != http.StatusForbidden {
+			t.Errorf("%s answered %d, want %d, body %s", method, response.Code, http.StatusForbidden, response.Body)
+		}
 	}
 }

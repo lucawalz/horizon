@@ -24,6 +24,12 @@ import (
 	"github.com/lucawalz/horizon/internal/testenv"
 )
 
+// the guard is anchored to the address a listener bound, so a handler-level test states that address rather than deriving it from the request it is about to send
+const (
+	servedTestHost   = "127.0.0.1:8973"
+	servedTestOrigin = "http://127.0.0.1:8973"
+)
+
 var testEnv *testenv.Environment
 
 func TestMain(m *testing.M) {
@@ -78,7 +84,15 @@ func newTestServer(t *testing.T, reader client.Reader, types catalogue.Reader) *
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	anchor(t, server)
 	return server
+}
+
+func anchor(t *testing.T, server *Server) {
+	t.Helper()
+	if err := server.anchorTo(servedTestHost); err != nil {
+		t.Fatalf("anchor the server to %s: %v", servedTestHost, err)
+	}
 }
 
 func get(t *testing.T, server *Server, target string) *httptest.ResponseRecorder {
