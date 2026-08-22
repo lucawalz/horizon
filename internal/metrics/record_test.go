@@ -151,11 +151,28 @@ func TestObserveLeaseReadyLandsInTheBucketAboveTheObservedJoinMode(t *testing.T)
 		cumulative = append(cumulative, bucket.GetCumulativeCount())
 	}
 
-	want := []uint64{0, 0, 0, 0, 1, 1, 1, 1, 1, 1}
+	want := []uint64{0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1}
 	if !slices.Equal(cumulative, want) {
 		t.Errorf("a 71 second join fills buckets %v, want %v", cumulative, want)
 	}
 	if sum := histogram.GetSampleSum(); sum != 71 {
 		t.Errorf("the observed sum is %v, want 71", sum)
+	}
+}
+
+func TestObserveLeaseReadySeparatesJoinsBelowThirtySeconds(t *testing.T) {
+	config, region, instanceType := ownedByTest(t, "subthirty"), "hel1", "cx23"
+
+	ObserveLeaseReady(config, region, instanceType, SelectionPinned, 18*time.Second)
+
+	histogram := soleSeriesFor(t, leaseReadySeconds, config).GetHistogram()
+	var cumulative []uint64
+	for _, bucket := range histogram.GetBucket() {
+		cumulative = append(cumulative, bucket.GetCumulativeCount())
+	}
+
+	want := []uint64{0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1}
+	if !slices.Equal(cumulative, want) {
+		t.Errorf("an 18 second join fills buckets %v, want %v", cumulative, want)
 	}
 }
