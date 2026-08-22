@@ -21,8 +21,9 @@ func newRootCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	controllerCmd, _ := newControllerCmd()
 	cmd.AddCommand(newVersionCmd())
-	cmd.AddCommand(newControllerCmd())
+	cmd.AddCommand(controllerCmd)
 	cmd.AddCommand(newDashboardCmd())
 	cmd.AddCommand(newWatchdogCmd())
 	cmd.AddCommand(newCloudInitCmd())

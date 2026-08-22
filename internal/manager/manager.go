@@ -33,6 +33,8 @@ import (
 
 const LeaderElectionID = "horizon-operator.horizon.dev"
 
+const DefaultPollInterval = controller.DefaultPollInterval
+
 type Options struct {
 	MetricsAddress string
 	HealthAddress  string
@@ -67,6 +69,11 @@ func cacheOptions() cache.Options {
 }
 
 func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
+	mgr, _, err := newManager(restConfig, opts)
+	return mgr, err
+}
+
+func newManager(restConfig *rest.Config, opts Options) (ctrl.Manager, *reconcilers, error) {
 	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:  Scheme(),
 		Cache:   cacheOptions(),
@@ -80,35 +87,35 @@ func New(restConfig *rest.Config, opts Options) (ctrl.Manager, error) {
 		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("build manager: %w", err)
+		return nil, nil, fmt.Errorf("build manager: %w", err)
 	}
 
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
-		return nil, fmt.Errorf("add liveness check: %w", err)
+		return nil, nil, fmt.Errorf("add liveness check: %w", err)
 	}
 	if err := mgr.AddReadyzCheck("cache-sync", cacheSyncChecker(mgr)); err != nil {
-		return nil, fmt.Errorf("add readiness check: %w", err)
+		return nil, nil, fmt.Errorf("add readiness check: %w", err)
 	}
 
 	if err := metrics.SetLeaseStateSource(leaseStateSource(mgr.GetCache(), leaseStateReadTimeout)); err != nil {
-		return nil, fmt.Errorf("serve the lease state gauges: %w", err)
+		return nil, nil, fmt.Errorf("serve the lease state gauges: %w", err)
 	}
 
 	kube, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		return nil, fmt.Errorf("build kubernetes clientset: %w", err)
+		return nil, nil, fmt.Errorf("build kubernetes clientset: %w", err)
 	}
 
 	parts, err := newReconcilers(mgr.GetClient(), kube,
 		mgr.GetEventRecorder(controller.CapacityLeaseControllerName), opts.PollInterval)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := parts.setupWithManager(mgr); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return mgr, nil
+	return mgr, parts, nil
 }
 
 type reconcilers struct {

@@ -26,6 +26,8 @@ const (
 
 	seriesWaitTimeout = 10 * time.Second
 	seriesPoll        = 20 * time.Millisecond
+
+	testPollInterval = 97 * time.Second
 )
 
 var errCacheUnreadable = errors.New("stub: the lease cache cannot be read")
@@ -61,15 +63,19 @@ func reporting(condition string, status metav1.ConditionStatus) metav1.Condition
 	return metav1.Condition{Type: condition, Status: status, Reason: "Test"}
 }
 
+var wiredReconcilers *reconcilers
+
 // controller-runtime refuses a second manager naming the same controllers, so one serves every run of this suite
 var wiredManager = sync.OnceValues(func() (ctrl.Manager, error) {
 	if err := os.Setenv(namespaceVar, testNamespace); err != nil {
 		return nil, err
 	}
-	mgr, err := New(testEnv.Config, Options{MetricsAddress: "0", HealthAddress: "0"})
+	mgr, parts, err := newManager(testEnv.Config,
+		Options{MetricsAddress: "0", HealthAddress: "0", PollInterval: testPollInterval})
 	if err != nil {
 		return nil, err
 	}
+	wiredReconcilers = parts
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stopWiredManager = cancel

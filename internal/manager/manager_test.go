@@ -79,6 +79,16 @@ func TestTheLeaseControllerReadsTheCatalogueTheRefresherFills(t *testing.T) {
 	}
 }
 
+func TestTheManagerThreadsItsPollIntervalToTheLeaseController(t *testing.T) {
+	if _, err := wiredManager(); err != nil {
+		t.Fatalf("wire the manager: %v", err)
+	}
+	if wiredReconcilers.leases.PollInterval != testPollInterval {
+		t.Errorf("the wired lease controller polls every %s, want the configured %s",
+			wiredReconcilers.leases.PollInterval, testPollInterval)
+	}
+}
+
 func TestThePollIntervalReachesTheLeaseReconciler(t *testing.T) {
 	t.Setenv(namespaceVar, testNamespace)
 
