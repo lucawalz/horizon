@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
+	clientfake "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lucawalz/horizon/internal/cli"
+	"github.com/lucawalz/horizon/internal/manager"
 )
 
 func TestDashboardCommandIsReachableFromRoot(t *testing.T) {
@@ -44,4 +46,19 @@ func TestDashboardCommandExposesNoAddressFlag(t *testing.T) {
 			t.Errorf("flag --%s takes a string, want no flag able to carry an address", flag.Name)
 		}
 	})
+}
+
+// the dashboard is the one caller that supplies a writer, so a reader-only wiring would leave every create and release answering as read-only
+func TestDashboardSuppliesAWriterAlongsideTheReader(t *testing.T) {
+	opts := cli.DashboardOptionsForTest(clientfake.NewClientBuilder().WithScheme(manager.Scheme()).Build())
+
+	if opts.Client == nil {
+		t.Error("the dashboard supplies no cluster reader")
+	}
+	if opts.Writer == nil {
+		t.Error("the dashboard supplies no writer, want the interface able to create and release leases")
+	}
+	if opts.Catalogue == nil {
+		t.Error("the dashboard supplies no catalogue reader")
+	}
 }

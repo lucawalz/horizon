@@ -17,6 +17,8 @@ const defaultDashboardPort = 8973
 
 func NewDashboardCmdForTest() *cobra.Command { return newDashboardCmd() }
 
+func DashboardOptionsForTest(api client.Client) web.Options { return dashboardOptions(api) }
+
 func newDashboardCmd() *cobra.Command {
 	var port uint16
 
@@ -36,6 +38,11 @@ func newDashboardCmd() *cobra.Command {
 	return cmd
 }
 
+// the interface writes with the caller's own kubeconfig credentials, which is the whole of its authorisation
+func dashboardOptions(api client.Client) web.Options {
+	return web.Options{Client: api, Writer: api, Catalogue: web.AbsentCatalogue()}
+}
+
 func runDashboard(ctx context.Context, out io.Writer, port uint16) error {
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
@@ -45,8 +52,7 @@ func runDashboard(ctx context.Context, out io.Writer, port uint16) error {
 	if err != nil {
 		return fmt.Errorf("build the cluster client: %w", err)
 	}
-	// the interface writes with the caller's own kubeconfig credentials, which is the whole of its authorisation
-	server, err := web.New(web.Options{Client: api, Writer: api, Catalogue: web.AbsentCatalogue()})
+	server, err := web.New(dashboardOptions(api))
 	if err != nil {
 		return err
 	}
