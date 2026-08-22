@@ -33,11 +33,13 @@ The thirty-second requeue stays, demoted from the primary mechanism to a safety 
 
 Each instance entry carries a `Stage`, one of `AwaitingInstance`, `AwaitingRegistration`, `AwaitingReady` or `Ready`, derived at each of the points that previously discarded the distinction. The stage refines the existing `Phase` and does not replace it: `Phase` records lifecycle ownership and keeps its meaning. An entry that is draining or released names no stage, because it has stopped working towards readiness, and a lease whose only remaining entry is a retired one still reports `WaitingForNodes` exactly as before.
 
-The per-instance stages aggregate to the least advanced one, which picks the `InstancesReady=False` reason and message. The message names the blocking instance and how long it has been waiting, computed from `entry.CreatedAt`, which is the provider's own creation timestamp and is already the input to the fifteen-minute registration timeout. It also keeps the `%d of %d nodes ready` count, which is what the web interface and the existing tests read.
+The per-instance stages aggregate to the least advanced one, which picks the `InstancesReady=False` reason and message. The message names the blocking instance and how long it has been waiting, computed from `entry.CreatedAt`, which is the provider's own creation timestamp and is already the input to the fifteen-minute registration timeout. The `%d of %d nodes ready` count is kept and follows the diagnostic rather than leading it, because the web interface truncates a condition message and shows the rest only on hover, and no consumer parses the message: `internal/web/leases.go` reads the condition's status alone.
+
+The condition exists from the moment the lease is accepted, and the stage that names a missing provider instance is reported before instance creation is attempted. Without both, the state this vocabulary most needed to describe was the one state it could never reach: `reconcileCapacity` returns on any non-zero result, and every path that leaves an entry waiting for a provider instance produces one, so a lease whose provider create kept failing said nothing at all.
 
 The message states the observation and stops there. Nothing inside the machine is observable from the control plane: there is no console read and no cloud-init probe. `AwaitingRegistration` persisting past a few minutes is consistent with a failed cloud-init or a failed k3s join, and it is equally consistent with a slow boot, so the message says that no node has registered and does not name a cause.
 
-No printer column is added. A per-instance stage cannot be expressed in a printer column without an array index, and an index would report the first replica's stage as though it were the lease's on any multi-replica lease. The aggregate is available as the reason on the `InstancesReady` condition, which the existing `Ready` column already points at, so the printer columns are left alone.
+No printer column is added, for two reasons. A per-instance stage cannot be expressed in a printer column without an array index, and an index would report the first replica's stage as though it were the lease's on any multi-replica lease. The aggregate could be projected from the `InstancesReady` condition's reason, whose constants are the stage names, but a printer column reaches a cluster only through the generated schema, and the generated artefacts are deliberately not regenerated alongside this change. A column added here would have been inert.
 
 ### The poll interval becomes a declared instrument
 
@@ -45,7 +47,7 @@ No printer column is added. A per-instance stage cannot be expressed in a printe
 
 ### The histogram is re-cut
 
-`horizon_lease_ready_seconds` used a fifteen-second grid, which loses sub-thirty-second resolution a second time even once the poll grid is gone. The buckets are now 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300 and 600 seconds, so the region the fix opens up is actually resolved.
+`horizon_lease_ready_seconds` used a fifteen-second grid, which loses sub-thirty-second resolution a second time even once the poll grid is gone. The buckets are now 5, 10, 15, 20, 30, 45, 60, 75, 90, 120, 180, 300 and 600 seconds. The region the fix opens up is resolved, and the 75-second boundary is kept rather than dropped, because it is the one that separates the campaign's two observed modes at 60 and 90 seconds; a grid that merged them would have made the published result harder to compare against, not easier.
 
 ## Options considered
 
@@ -64,7 +66,7 @@ Continuity with previously scraped `horizon_lease_ready_seconds` series is broke
 
 The `InstancesReady=False` message now carries an elapsed figure, so it changes on most reconciles while a lease is waiting, and each change is a status write. That window is bounded by the fifteen-minute registration timeout, and the elapsed figure is only as accurate as the reconcile that wrote it, which is the second reason the watch matters.
 
-The lease controller now wakes on every `Node` event in the reserved pool, and for an unadopted node that means one `CapacityLease` list per event. The manager cache already restricts `corev1.Node` to objects carrying `horizon.dev/pool`, so the event rate is the burst fleet's, not the cluster's.
+The lease controller wakes on `Node` events in the reserved pool, filtered by the same predicate shape the orphan reconciler already uses: a readiness change or an adoption-label change, and nothing else. Without that filter every kubelet status update and every watchdog annotation renewal would wake a reconcile that lists nodes uncached and writes status. The manager cache already restricts `corev1.Node` to objects carrying `horizon.dev/pool`, so the event rate is the burst fleet's before the predicate and its two real signals after it.
 
 What is still invisible is unchanged. The stage says which side of the boundary a machine is on, not what is happening inside it. The `horizon.dev/watchdog-armed` annotation from [0023](0023-observe-the-armed-watchdog-from-the-control-plane.md) remains the only in-machine signal the control plane gets, and it arrives only after the node has joined, which is after the stage that most often stalls.
 
