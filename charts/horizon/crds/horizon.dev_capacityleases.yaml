@@ -245,6 +245,13 @@ spec:
                       type: string
                     providerID:
                       type: string
+                    stage:
+                      enum:
+                      - AwaitingInstance
+                      - AwaitingRegistration
+                      - AwaitingReady
+                      - Ready
+                      type: string
                   required:
                   - name
                   - phase
@@ -271,6 +278,50 @@ spec:
               releasedAt:
                 format: date-time
                 type: string
+              selection:
+                properties:
+                  chosen:
+                    type: string
+                  currency:
+                    type: string
+                  decidedAt:
+                    format: date-time
+                    type: string
+                  hourlyRate:
+                    type: string
+                  offered:
+                    format: int32
+                    type: integer
+                  qualified:
+                    format: int32
+                    type: integer
+                  rejected:
+                    items:
+                      properties:
+                        count:
+                          format: int32
+                          type: integer
+                        reason:
+                          type: string
+                      required:
+                      - count
+                      - reason
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - reason
+                    x-kubernetes-list-type: map
+                  runnerUp:
+                    type: string
+                  strategy:
+                    type: string
+                required:
+                - chosen
+                - decidedAt
+                - offered
+                - qualified
+                - strategy
+                type: object
               watchdogDeadline:
                 format: date-time
                 type: string

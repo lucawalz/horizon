@@ -245,6 +245,13 @@ spec:
                       type: string
                     providerID:
                       type: string
+                    stage:
+                      enum:
+                      - AwaitingInstance
+                      - AwaitingRegistration
+                      - AwaitingReady
+                      - Ready
+                      type: string
                   required:
                   - name
                   - phase
