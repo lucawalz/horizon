@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +15,9 @@ import (
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/provider"
 )
+
+// the vanished entry has to be adopted as released, refilled as intended, and then fail to create
+const passesToStallARecreate = 8
 
 func stagedInstance(name string, phase v1alpha1.InstancePhase, created time.Time) *v1alpha1.InstanceStatus {
 	return &v1alpha1.InstanceStatus{
@@ -488,6 +492,8 @@ func TestElapsedSinceStaysReadableForEveryTimestampItIsGiven(t *testing.T) {
 func TestTheLeaseWatchWakesOnReadinessAdoptionAndFirstArming(t *testing.T) {
 	armed := map[string]string{provider.WatchdogArmedAnnotationKey: provider.FormatArmed(testInstant)}
 	renewed := map[string]string{provider.WatchdogArmedAnnotationKey: provider.FormatArmed(testInstant.Add(15 * time.Second))}
+	deadline := map[string]string{provider.WatchdogDeadlineAnnotationKey: provider.FormatExpiry(testInstant)}
+	renewedDeadline := map[string]string{provider.WatchdogDeadlineAnnotationKey: provider.FormatExpiry(testInstant.Add(time.Minute))}
 
 	tests := map[string]struct {
 		before *corev1.Node
@@ -513,6 +519,14 @@ func TestTheLeaseWatchWakesOnReadinessAdoptionAndFirstArming(t *testing.T) {
 			before: leaseWatchNode(true, "burst", armed),
 			after:  leaseWatchNode(true, "burst", nil),
 			want:   true,
+		},
+		"a watchdog deadline arriving does not wake the lease": {
+			before: leaseWatchNode(true, "burst", nil),
+			after:  leaseWatchNode(true, "burst", deadline),
+		},
+		"a watchdog deadline renewal does not wake the lease": {
+			before: leaseWatchNode(true, "burst", deadline),
+			after:  leaseWatchNode(true, "burst", renewedDeadline),
 		},
 		"an armed renewal does not wake the lease": {
 			before: leaseWatchNode(true, "burst", armed),
@@ -549,7 +563,10 @@ func leaseWatchNode(ready bool, leaseName string, annotations map[string]string)
 	if leaseName != "" {
 		node.Labels[LeaseNameLabelKey] = leaseName
 	}
-	node.Annotations = annotations
+	if node.Annotations == nil {
+		node.Annotations = map[string]string{}
+	}
+	maps.Copy(node.Annotations, annotations)
 	node.Status = readyNode(node.Name, ready).Status
 	return node
 }
@@ -590,7 +607,7 @@ func TestAStalledRecreateNeverClaimsANodeIsReady(t *testing.T) {
 	}
 	h.prov.FailCreate = func(string) error { return errors.New("provider is unreachable") }
 	h.setNodeReady(first, false)
-	h.settleIgnoringErrors(8)
+	h.settleIgnoringErrors(passesToStallARecreate)
 
 	if node, ok := h.node(first); !ok || nodeReady(node) {
 		t.Fatal("node zero is still ready, so this no longer reproduces the disagreement")

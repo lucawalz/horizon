@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,12 +33,16 @@ const (
 	watchSettleTimeout  = 30 * time.Second
 	watchSettlePoll     = 50 * time.Millisecond
 	watchEventBufferLen = 64
+
+	quietPollsRequired = 4
+	watchQuietWindow   = 2 * time.Second
 )
 
 type watchedLease struct {
-	t    *testing.T
-	kube kubernetes.Interface
-	name string
+	t     *testing.T
+	kube  kubernetes.Interface
+	name  string
+	ticks *atomic.Int64
 }
 
 // controller-runtime refuses a second manager naming the same controllers, so this suite starts at most one
@@ -61,10 +66,11 @@ func startWatchingManager(t *testing.T) *watchedLease {
 		t.Fatalf("build clientset: %v", err)
 	}
 
+	ticks := &atomic.Int64{}
 	reconciler := &CapacityLeaseReconciler{
 		Client:       mgr.GetClient(),
 		Kube:         kube,
-		Clock:        time.Now,
+		Clock:        func() time.Time { ticks.Add(1); return time.Now() },
 		Recorder:     events.NewFakeRecorder(watchEventBufferLen),
 		Catalogue:    stubCatalogue{types: []provider.InstanceType{offeredType(testSize, testRegion, true)}},
 		Provider:     watchProviderFactory(fake.NewWithClock(time.Now)),
@@ -81,7 +87,7 @@ func startWatchingManager(t *testing.T) *watchedLease {
 		t.Fatal("the manager cache never synced")
 	}
 
-	w := &watchedLease{t: t, kube: kube, name: objectName(t)}
+	w := &watchedLease{t: t, kube: kube, name: objectName(t), ticks: ticks}
 	w.create()
 	return w
 }
@@ -182,6 +188,68 @@ func (w *watchedLease) registerNode(ready bool) {
 	w.setReady(created.Name, ready)
 }
 
+// the status write that follows a reconcile re-enqueues the lease, so an observed condition never means the queue drained
+func (w *watchedLease) quiesce() {
+	w.t.Helper()
+	deadline := time.Now().Add(watchSettleTimeout)
+	last, stable := int64(-1), 0
+	for time.Now().Before(deadline) {
+		observed := w.ticks.Load()
+		if observed == last {
+			stable++
+		} else {
+			last, stable = observed, 0
+		}
+		if stable >= quietPollsRequired {
+			return
+		}
+		time.Sleep(watchSettlePoll)
+	}
+	w.t.Fatalf("the lease controller never stopped reconciling within %s", watchSettleTimeout)
+}
+
+func (w *watchedLease) quietThrough(what string, change func()) {
+	w.t.Helper()
+	w.quiesce()
+	before := w.ticks.Load()
+	change()
+	time.Sleep(watchQuietWindow)
+	if woken := w.ticks.Load() - before; woken != 0 {
+		w.t.Errorf("%s woke the lease controller, want it filtered by the watch predicate", what)
+	}
+}
+
+func (w *watchedLease) wakesThrough(what string, change func()) {
+	w.t.Helper()
+	w.quiesce()
+	before := w.ticks.Load()
+	change()
+	deadline := time.Now().Add(watchSettleTimeout)
+	for time.Now().Before(deadline) {
+		if w.ticks.Load() != before {
+			return
+		}
+		time.Sleep(watchSettlePoll)
+	}
+	w.t.Errorf("%s never woke the lease controller within %s", what, watchSettleTimeout)
+}
+
+func (w *watchedLease) relabel(name string, mutate func(map[string]string)) {
+	w.t.Helper()
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		node, err := w.kube.CoreV1().Nodes().Get(w.t.Context(), name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		mutate(node.Labels)
+		_, err = w.kube.CoreV1().Nodes().Update(w.t.Context(), node, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		w.t.Fatalf("relabel node %q: %v", name, err)
+	}
+}
+
 func (w *watchedLease) arm(name string) {
 	w.t.Helper()
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -248,12 +316,16 @@ func TestANodeGoingReadyWakesTheLeaseWithoutWaitingForThePoll(t *testing.T) {
 		t.Error("the lease became ready without recording a ready instant")
 	}
 
-	w.await("published an unarmed watchdog, so its queue has drained", func(lease *v1alpha1.CapacityLease) bool {
-		condition := conditionOf(lease, v1alpha1.ConditionWatchdogArmed)
-		return condition != nil && condition.Status == metav1.ConditionFalse
+	node := w.name + "-0"
+	w.quietThrough("a change confined to the lease uid label", func() {
+		w.relabel(node, func(labels map[string]string) { labels[LeaseUIDLabelKey] = "not-this-lease" })
+	})
+	w.wakesThrough("a change to the lease name label", func() {
+		w.relabel(node, func(labels map[string]string) { delete(labels, LeaseNameLabelKey) })
 	})
 
-	w.arm(w.name + "-0")
+	w.quiesce()
+	w.arm(node)
 	w.await("noticed the watchdog arming", func(lease *v1alpha1.CapacityLease) bool {
 		condition := conditionOf(lease, v1alpha1.ConditionWatchdogArmed)
 		return condition != nil && condition.Status == metav1.ConditionTrue
