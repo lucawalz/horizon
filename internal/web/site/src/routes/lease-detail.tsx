@@ -1,5 +1,7 @@
 import { ArrowLeft } from 'lucide-react'
+import { useState } from 'react'
 
+import { Button } from '@/components/controls'
 import {
   Cell,
   HeadCell,
@@ -9,13 +11,16 @@ import {
   TableEmpty,
   TableHead,
 } from '@/components/data-table'
+import { StatusPill } from '@/components/status-pill'
 import type {
   ConditionEntry,
   LeaseDetailResponse,
   LeaseInstance,
   LeaseRequirements,
+  LeaseSelection,
 } from '@/lib/api'
-import { fetchLease, leasePath, notFound, RequestFailed } from '@/lib/api'
+import { fetchLease, leasePath, notFound, releaseLease, RequestFailed } from '@/lib/api'
+import { errorFor } from '@/lib/errors'
 import { ConditionChip, Countdown, InstancePhaseChip, PhaseChip, Since } from '@/routes/chips'
 import {
   Definition,
@@ -29,8 +34,8 @@ import {
 } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { leasesHref } from '@/routes/router'
-import { absent, formatInstant, formatSpan } from '@/routes/units'
+import { leasesHref, navigate } from '@/routes/router'
+import { absent, formatInstant, formatRate, formatSpan } from '@/routes/units'
 
 const conditionColumns = 5
 const instanceColumns = 6
@@ -170,6 +175,173 @@ function InstancesPanel({ instances }: { instances: LeaseInstance[] }) {
   )
 }
 
+function HourlyRate({ selection }: { selection: LeaseSelection }) {
+  if (selection.hourlyRate === null) return null
+
+  const amount = Number(selection.hourlyRate)
+  const quoted =
+    selection.currency !== null && Number.isFinite(amount)
+      ? formatRate({ amount, currency: selection.currency })
+      : selection.hourlyRate
+  return <span className="text-subtle"> at {quoted} an hour</span>
+}
+
+function RejectionTally({ rejected }: { rejected: LeaseSelection['rejected'] }) {
+  if (rejected.length === 0) {
+    return <span className="text-subtle">every candidate qualified</span>
+  }
+  return (
+    <span className="flex flex-wrap gap-tight">
+      {rejected.map((candidates) => (
+        <StatusPill key={candidates.reason} severity="neutral">
+          {candidates.count} {candidates.reason}
+        </StatusPill>
+      ))}
+    </span>
+  )
+}
+
+// a lease that named its own machine type was never sized by a policy, so the absence is the answer rather than a gap
+function SelectionPanel({
+  selection,
+  size,
+}: {
+  selection: LeaseSelection | null
+  size: string | null
+}) {
+  if (selection === null) {
+    return (
+      <Panel title="Selection">
+        <p className="px-gutter py-section text-center text-copy-13 text-subtle">
+          {size === null
+            ? 'The controller has not chosen a machine type for this lease yet. It records the choice, and what it beat, as soon as the lease is accepted.'
+            : `This lease named ${size} itself, so no policy chose it and there is nothing to explain.`}
+        </p>
+      </Panel>
+    )
+  }
+
+  return (
+    <Panel
+      title="Selection"
+      note={
+        <span>
+          Decided <Since at={selection.decidedAt} />
+        </span>
+      }
+    >
+      <DefinitionGrid>
+        <Definition label="Strategy">{selection.strategy}</Definition>
+        <Definition label="Chosen">
+          {selection.chosen}
+          <HourlyRate selection={selection} />
+        </Definition>
+        <Definition label="Runner up">
+          {selection.runnerUp ?? <span className="text-subtle">nothing else qualified</span>}
+        </Definition>
+        <Definition label="Offered">{selection.offered}</Definition>
+        <Definition label="Qualified">{selection.qualified}</Definition>
+        <Definition label="Rejected">
+          <RejectionTally rejected={selection.rejected} />
+        </Definition>
+      </DefinitionGrid>
+    </Panel>
+  )
+}
+
+function ReleaseConfirmation({
+  name,
+  pending,
+  onRelease,
+  onKeep,
+}: {
+  name: string
+  pending: boolean
+  onRelease: () => void
+  onKeep: () => void
+}) {
+  return (
+    <div
+      data-severity="attention"
+      className="space-y-cell rounded-panel border border-tint-line bg-tint p-gutter"
+    >
+      <p className="text-label-14 font-emphasis text-tint-fg">Release {name}</p>
+      <p className="max-w-[70ch] text-copy-13 text-tint-fg/85">
+        The controller is one clock and this starts it: it drains the leased nodes, deletes their
+        machines at the provider and removes the lease when its finalizer completes. The watchdog on
+        each leased node is the second clock and it is already running. It powers its node off at
+        its own deadline whether or not the controller acts, so nothing here is what destroys a
+        machine.
+      </p>
+      <div className="flex flex-wrap gap-snug">
+        <Button type="button" tone="danger" onClick={onRelease} disabled={pending}>
+          {pending ? 'Asking the controller' : 'Ask the controller to release'}
+        </Button>
+        <Button type="button" onClick={onKeep} disabled={pending}>
+          Keep the lease
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function ReleasePanel({ name, released }: { name: string; released: boolean }) {
+  const [confirming, setConfirming] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [failure, setFailure] = useState<Error | null>(null)
+
+  const release = async () => {
+    setPending(true)
+    setFailure(null)
+    try {
+      await releaseLease(name)
+      navigate(leasesHref)
+    } catch (cause) {
+      setFailure(errorFor(cause))
+      setPending(false)
+    }
+  }
+
+  if (released) {
+    return (
+      <Panel title="Release">
+        <p className="p-gutter text-copy-13 text-subtle">
+          This lease has been released. Its machines are gone and the controller has nothing left to
+          tear down.
+        </p>
+      </Panel>
+    )
+  }
+
+  return (
+    <Panel title="Release">
+      <div className="space-y-cell p-gutter">
+        <p className="max-w-[70ch] text-copy-13 text-subtle">
+          Releasing deletes the CapacityLease, which is how the controller is asked for a teardown.
+          The interface destroys nothing itself.
+        </p>
+        {confirming ? (
+          <ReleaseConfirmation
+            name={name}
+            pending={pending}
+            onRelease={release}
+            onKeep={() => setConfirming(false)}
+          />
+        ) : (
+          <Button type="button" tone="danger" onClick={() => setConfirming(true)}>
+            Release this lease
+          </Button>
+        )}
+        {failure === null ? null : (
+          <Notice severity="danger" title="The lease was not released">
+            {failure.message}
+          </Notice>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
 function LeaseFacts({ lease }: { lease: LeaseDetailResponse }) {
   const summary = lease.summary
   return (
@@ -266,9 +438,11 @@ function LeaseDetailBody({ name, view }: { name: string; view: Polled<LeaseDetai
   return (
     <div className="space-y-gutter">
       <LeaseFacts lease={view.data} />
+      <SelectionPanel selection={view.data.selection} size={view.data.size} />
       <InstancesPanel instances={view.data.instances} />
       <ConditionsPanel conditions={view.data.conditions} />
       <MigratedPanel workloads={view.data.migratedWorkloads} />
+      <ReleasePanel name={name} released={view.data.summary.releasedAt !== null} />
     </div>
   )
 }

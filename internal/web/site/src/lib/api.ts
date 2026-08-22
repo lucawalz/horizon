@@ -72,11 +72,29 @@ export interface LeaseRequirements {
   strategy: SizingStrategy | null
 }
 
+export interface RejectedCandidates {
+  reason: string
+  count: number
+}
+
+export interface LeaseSelection {
+  strategy: SizingStrategy
+  chosen: string
+  hourlyRate: string | null
+  currency: string | null
+  runnerUp: string | null
+  offered: number
+  qualified: number
+  rejected: RejectedCandidates[]
+  decidedAt: string
+}
+
 export interface LeaseDetailResponse {
   summary: LeaseSummary
   providerRef: string
   size: string | null
   requirements: LeaseRequirements | null
+  selection: LeaseSelection | null
   durationSeconds: number
   teardownGraceSeconds: number | null
   workloadNamespace: string | null
@@ -124,6 +142,31 @@ export interface MachineCatalogueResponse {
   observedAt: string
 }
 
+export interface LeaseRequirementsRequest {
+  minCPU: number
+  minMemory: string
+  architecture: string
+  cpuType: string
+  strategy: string
+}
+
+export interface LeaseCreateRequest {
+  name: string
+  providerRef: string
+  region: string
+  size: string
+  requirements: LeaseRequirementsRequest | null
+  replicas: number
+  durationSeconds: number
+  teardownGraceSeconds: number | null
+  workloadNamespace: string
+}
+
+export interface LeaseReleaseResponse {
+  name: string
+  detail: string
+}
+
 interface ApiErrorBody {
   status: number
   title: string
@@ -142,6 +185,12 @@ export class RequestFailed extends Error {
 
 export const notFound = 404
 
+export const interfaceHeader = 'X-Horizon-Interface'
+
+const interfaceHeaderValue = 'true'
+const jsonContentType = 'application/json'
+const createMethod = 'POST'
+const releaseMethod = 'DELETE'
 const configQueryKey = 'config'
 const regionQueryKey = 'region'
 
@@ -168,12 +217,26 @@ async function failureDetail(response: Response): Promise<string> {
   return response.statusText || `the request failed with status ${response.status}`
 }
 
-async function read<T>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: { Accept: 'application/json' } })
+async function submit<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(path, init)
   if (!response.ok) {
     throw new RequestFailed(response.status, await failureDetail(response))
   }
   return (await response.json()) as T
+}
+
+function read<T>(path: string): Promise<T> {
+  return submit<T>(path, { headers: { Accept: jsonContentType } })
+}
+
+// a simple form post cannot set a header, and a scripted cross-origin request that tries must first pass a preflight this server never answers
+function change<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {
+    Accept: jsonContentType,
+    [interfaceHeader]: interfaceHeaderValue,
+  }
+  if (body !== undefined) headers['Content-Type'] = jsonContentType
+  return submit<T>(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
 }
 
 export function fetchLeases(): Promise<LeaseListResponse> {
@@ -186,4 +249,12 @@ export function fetchLease(name: string): Promise<LeaseDetailResponse> {
 
 export function fetchMachines(config: string, region: string): Promise<MachineCatalogueResponse> {
   return read<MachineCatalogueResponse>(machinesPath(config, region))
+}
+
+export function createLease(request: LeaseCreateRequest): Promise<LeaseDetailResponse> {
+  return change<LeaseDetailResponse>(leasesPath, createMethod, request)
+}
+
+export function releaseLease(name: string): Promise<LeaseReleaseResponse> {
+  return change<LeaseReleaseResponse>(leasePath(name), releaseMethod)
 }

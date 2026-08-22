@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react'
 
+import { Button, controlClass } from '@/components/controls'
 import { Cell, HeadCell, Row, Table, TableBody, TableHead } from '@/components/data-table'
 import { StatusPill } from '@/components/status-pill'
 import type {
@@ -8,6 +9,7 @@ import type {
   ProviderConfigSummary,
 } from '@/lib/api'
 import { fetchMachines, machinesPath } from '@/lib/api'
+import { fieldValue } from '@/lib/form'
 import { ConditionChip, Since } from '@/routes/chips'
 import { EmptyState, Loading, Notice, PageHeader, Panel } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
@@ -18,13 +20,6 @@ import { absent, formatBytes, formatRate } from '@/routes/units'
 const configField = 'config'
 const regionField = 'region'
 const readyCondition = 'Ready'
-const controlClass =
-  'h-control rounded-control border border-line bg-elevated px-snug text-label-13 text-ink transition-colors hover:bg-wash focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand'
-
-function fieldValue(form: FormData, field: string): string {
-  const held = form.get(field)
-  return typeof held === 'string' ? held.trim() : ''
-}
 
 function Picker({
   configs,
@@ -73,12 +68,9 @@ function Picker({
           className={controlClass}
         />
       </label>
-      <button
-        type="submit"
-        className="h-control rounded-control bg-brand px-gutter text-label-13 font-emphasis text-brand-ink transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-      >
+      <Button type="submit" tone="primary">
         Show types
-      </button>
+      </Button>
     </form>
   )
 }

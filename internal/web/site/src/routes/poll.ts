@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { secondMs } from '@/lib/duration'
+import { errorFor } from '@/lib/errors'
 
 // the countdown advances on its own, so the poll only has to observe phase transitions
 export const pollIntervalMs = 20 * secondMs
@@ -16,10 +17,6 @@ interface Held<T> extends Polled<T> {
 }
 
 const pending: Polled<never> = { data: null, error: null, settled: false }
-
-function errorFor(cause: unknown): Error {
-  return cause instanceof Error ? cause : new Error(String(cause))
-}
 
 export function usePolled<T>(load: () => Promise<T>, key: string): Polled<T> {
   const [held, setHeld] = useState<Held<T>>(() => ({ ...pending, key }))

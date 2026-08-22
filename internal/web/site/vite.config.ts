@@ -15,9 +15,9 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     proxy: {
+      // the host is forwarded as the browser sent it, so it still matches the origin the mutation guard compares it against
       '/api': {
         target: `http://127.0.0.1:${dashboardPort}`,
-        changeOrigin: true,
       },
     },
   },

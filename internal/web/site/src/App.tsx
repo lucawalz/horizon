@@ -1,6 +1,7 @@
 import { AppFrame, AppHeader, AppMain, NavLink } from '@/components/app-frame'
 import { LeaseDetailRoute } from '@/routes/lease-detail'
 import { LeaseListRoute } from '@/routes/lease-list'
+import { LeaseNewRoute } from '@/routes/lease-new'
 import { MachinesRoute } from '@/routes/machines'
 import type { Route } from '@/routes/router'
 import { leasesHref, machinesHref, useRoute } from '@/routes/router'
@@ -10,6 +11,8 @@ function View({ route }: { route: Route }) {
   switch (route.name) {
     case 'leases':
       return <LeaseListRoute />
+    case 'new':
+      return <LeaseNewRoute />
     case 'lease':
       return <LeaseDetailRoute name={route.lease} />
     case 'machines':
@@ -25,7 +28,10 @@ export default function App() {
   return (
     <AppFrame>
       <AppHeader>
-        <NavLink href={leasesHref} current={route.name === 'leases' || route.name === 'lease'}>
+        <NavLink
+          href={leasesHref}
+          current={route.name === 'leases' || route.name === 'lease' || route.name === 'new'}
+        >
           Leases
         </NavLink>
         <NavLink href={machinesHref} current={route.name === 'machines'}>

@@ -1,13 +1,14 @@
+import { ButtonLink } from '@/components/controls'
 import { Cell, HeadCell, Row, Table, TableBody, TableHead } from '@/components/data-table'
 import type { LeaseListResponse, LeaseSummary } from '@/lib/api'
 import { fetchLeases, leasesPath } from '@/lib/api'
 import type { Severity } from '@/lib/status'
 import { severityForStatus } from '@/lib/status'
 import { ConditionChip, Countdown, PhaseChip, Since } from '@/routes/chips'
-import { EmptyState, Loading, Notice, PageHeader, Snippet } from '@/routes/page'
+import { EmptyState, Loading, Notice, PageHeader } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { leaseHref } from '@/routes/router'
+import { leaseHref, newLeaseHref } from '@/routes/router'
 
 const readyCondition = 'InstancesReady'
 const armedCondition = 'WatchdogArmed'
@@ -82,10 +83,14 @@ function NoLeases() {
   return (
     <EmptyState
       title="No capacity lease exists yet"
-      action={<Snippet>kubectl apply -f capacitylease.yaml</Snippet>}
+      action={
+        <ButtonLink href={newLeaseHref} tone="primary">
+          New lease
+        </ButtonLink>
+      }
     >
-      A lease is created by applying a CapacityLease to the cluster. As soon as the controller
-      accepts one it appears here, counting down to the moment its machines are released.
+      A lease describes the capacity a run needs and how long it may keep it. As soon as the
+      controller accepts one it appears here, counting down to the moment its machines are released.
     </EmptyState>
   )
 }
@@ -105,6 +110,11 @@ export function LeaseListRoute() {
       <PageHeader
         title="Leases"
         lede="Every capacity lease the cluster holds, and how long each one has left before its machines are released."
+        aside={
+          <ButtonLink href={newLeaseHref} tone="primary">
+            New lease
+          </ButtonLink>
+        }
       />
       <div className="space-y-gutter">
         {view.error ? (
