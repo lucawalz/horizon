@@ -271,6 +271,46 @@ spec:
               releasedAt:
                 format: date-time
                 type: string
+              selection:
+                properties:
+                  chosen:
+                    type: string
+                  considered:
+                    format: int32
+                    type: integer
+                  currency:
+                    type: string
+                  decidedAt:
+                    format: date-time
+                    type: string
+                  hourlyRate:
+                    type: string
+                  rejected:
+                    items:
+                      properties:
+                        count:
+                          format: int32
+                          type: integer
+                        reason:
+                          type: string
+                      required:
+                      - count
+                      - reason
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - reason
+                    x-kubernetes-list-type: map
+                  runnerUp:
+                    type: string
+                  strategy:
+                    type: string
+                required:
+                - chosen
+                - considered
+                - decidedAt
+                - strategy
+                type: object
               watchdogDeadline:
                 format: date-time
                 type: string
