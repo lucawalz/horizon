@@ -2,8 +2,8 @@ apiVersion: v2
 name: horizon
 description: Leases on-demand cloud capacity for a Kubernetes cluster and destroys it when the lease expires
 type: application
-version: 0.9.1
-appVersion: "0.9.1"
+version: 0.9.2
+appVersion: "0.9.2"
 kubeVersion: ">=1.29.0-0"
 home: https://github.com/lucawalz/horizon
 sources:
