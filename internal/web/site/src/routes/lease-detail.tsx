@@ -97,93 +97,89 @@ function Stamp({ at }: { at: string | null }) {
 
 function ConditionsPanel({ conditions }: { conditions: ConditionEntry[] }) {
   return (
-    <Panel title="Conditions">
-      <Table>
-        <TableHead>
-          <Row>
-            <HeadCell>Condition</HeadCell>
-            <HeadCell>Status</HeadCell>
-            <HeadCell>Reason</HeadCell>
-            <HeadCell>Message</HeadCell>
-            <HeadCell numeric>Changed</HeadCell>
-          </Row>
-        </TableHead>
-        <TableBody>
-          {conditions.length === 0 ? (
-            <TableEmpty span={conditionColumns}>
-              The controller has not written a condition for this lease yet.
-            </TableEmpty>
-          ) : (
-            conditions.map((condition) => (
-              <Row key={condition.type}>
-                <Cell className="font-emphasis text-ink-strong">{condition.type}</Cell>
-                <Cell>
-                  <ConditionChip type={condition.type} status={condition.status} />
-                </Cell>
-                <Cell muted>{condition.reason ?? absent}</Cell>
-                <Cell muted>
-                  <span className="block max-w-[40ch] truncate" title={condition.message ?? undefined}>
-                    {condition.message ?? absent}
-                  </span>
-                </Cell>
-                <Cell numeric muted>
-                  <Since at={condition.lastTransitionTime} />
-                </Cell>
-              </Row>
-            ))
-          )}
-        </TableBody>
-      </Table>
-    </Panel>
+    <Table>
+      <TableHead>
+        <Row>
+          <HeadCell>Condition</HeadCell>
+          <HeadCell>Status</HeadCell>
+          <HeadCell>Reason</HeadCell>
+          <HeadCell>Message</HeadCell>
+          <HeadCell numeric>Changed</HeadCell>
+        </Row>
+      </TableHead>
+      <TableBody>
+        {conditions.length === 0 ? (
+          <TableEmpty span={conditionColumns}>
+            The controller has not written a condition for this lease yet.
+          </TableEmpty>
+        ) : (
+          conditions.map((condition) => (
+            <Row key={condition.type}>
+              <Cell className="font-emphasis text-ink-strong">{condition.type}</Cell>
+              <Cell>
+                <ConditionChip type={condition.type} status={condition.status} />
+              </Cell>
+              <Cell muted>{condition.reason ?? absent}</Cell>
+              <Cell muted>
+                <span className="block max-w-[40ch] truncate" title={condition.message ?? undefined}>
+                  {condition.message ?? absent}
+                </span>
+              </Cell>
+              <Cell numeric muted>
+                <Since at={condition.lastTransitionTime} />
+              </Cell>
+            </Row>
+          ))
+        )}
+      </TableBody>
+    </Table>
   )
 }
 
 function InstancesPanel({ instances }: { instances: LeaseInstance[] }) {
   return (
-    <Panel title="Instances">
-      <Table>
-        <TableHead>
-          <Row>
-            <HeadCell>Instance</HeadCell>
-            <HeadCell>Phase</HeadCell>
-            <HeadCell>Stage</HeadCell>
-            <HeadCell>Node</HeadCell>
-            <HeadCell>Provider id</HeadCell>
-            <HeadCell numeric>Created</HeadCell>
-            <HeadCell>Last error</HeadCell>
-          </Row>
-        </TableHead>
-        <TableBody>
-          {instances.length === 0 ? (
-            <TableEmpty span={instanceColumns}>
-              No machine has been claimed for this lease yet.
-            </TableEmpty>
-          ) : (
-            instances.map((instance) => (
-              <Row key={instance.name}>
-                <Cell className="font-emphasis text-ink-strong">{instance.name}</Cell>
-                <Cell>
-                  <InstancePhaseChip phase={instance.phase} />
-                </Cell>
-                <Cell>
-                  <InstanceStageChip stage={instance.stage} />
-                </Cell>
-                <Cell muted>{instance.nodeName ?? 'not joined'}</Cell>
-                <Cell muted className="font-mono text-label-12">
-                  {instance.providerID ?? absent}
-                </Cell>
-                <Cell numeric muted>
-                  <Since at={instance.createdAt} />
-                </Cell>
-                <Cell className={instance.lastError === null ? 'text-subtle' : 'text-tint-fg'}>
-                  {instance.lastError === null ? 'none' : instance.lastError}
-                </Cell>
-              </Row>
-            ))
-          )}
-        </TableBody>
-      </Table>
-    </Panel>
+    <Table>
+      <TableHead>
+        <Row>
+          <HeadCell>Instance</HeadCell>
+          <HeadCell>Phase</HeadCell>
+          <HeadCell>Stage</HeadCell>
+          <HeadCell>Node</HeadCell>
+          <HeadCell>Provider id</HeadCell>
+          <HeadCell numeric>Created</HeadCell>
+          <HeadCell>Last error</HeadCell>
+        </Row>
+      </TableHead>
+      <TableBody>
+        {instances.length === 0 ? (
+          <TableEmpty span={instanceColumns}>
+            No machine has been claimed for this lease yet.
+          </TableEmpty>
+        ) : (
+          instances.map((instance) => (
+            <Row key={instance.name}>
+              <Cell className="font-emphasis text-ink-strong">{instance.name}</Cell>
+              <Cell>
+                <InstancePhaseChip phase={instance.phase} />
+              </Cell>
+              <Cell>
+                <InstanceStageChip stage={instance.stage} />
+              </Cell>
+              <Cell muted>{instance.nodeName ?? 'not joined'}</Cell>
+              <Cell muted className="font-mono text-label-12">
+                {instance.providerID ?? absent}
+              </Cell>
+              <Cell numeric muted>
+                <Since at={instance.createdAt} />
+              </Cell>
+              <Cell className={instance.lastError === null ? 'text-subtle' : 'text-tint-fg'}>
+                {instance.lastError === null ? 'none' : instance.lastError}
+              </Cell>
+            </Row>
+          ))
+        )}
+      </TableBody>
+    </Table>
   )
 }
 
