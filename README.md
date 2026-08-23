@@ -19,9 +19,9 @@ The cluster horizon operates over lives in the companion [bedrock](https://githu
 
 The chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`, one version per release tag, and the badge above names the latest. `charts/horizon/Chart.yaml` declares the version the next tag will publish, so a checkout is ahead of both registries while a release is being prepared.
 
-Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the single-page web interface served locally by `horizon dashboard`, which creates and releases leases as well as reading them; five commands, `horizon controller`, `horizon dashboard`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
+Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the single-page web interface served locally by `horizon dashboard`, which creates and releases leases as well as reading them; the in-cluster mode of the same interface, served by `horizon serve` behind a verified OIDC token and Kubernetes impersonation, templated by the chart behind `ui.enabled` and off by default; six commands, `horizon controller`, `horizon dashboard`, `horizon serve`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
 
-Not implemented: the in-cluster mode of the web interface from [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), along with the forward authentication, the network policy and the access review it requires, so the chart carries no port or ingress for it; provider credential writing from the interface, which is the half of its mutating surface that stays unbuilt now that lease creation and release have landed; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
+Not implemented: provider credential writing from the interface, which is the half of its mutating surface that stays unbuilt now that lease creation and release have landed; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
 
 ## How teardown is enforced
 
@@ -303,7 +303,7 @@ An unusual image is not a reason to leave the generator. A pre-baked image that 
 horizon dashboard
 ```
 
-It reads the cluster with the caller's own kubeconfig credentials, which is the whole of its authentication, and it therefore binds to `127.0.0.1` and nothing else. The address is not a flag: only the port is, and the loopback address is built inside the server rather than accepted from a caller, so no invocation can widen it. Serving the same interface from inside the cluster is a separate mode that does not exist yet, because it needs forward authentication, a network policy restricting the service to the proxy, and an access review before any mutation.
+It reads the cluster with the caller's own kubeconfig credentials, which is the whole of its authentication, and it therefore binds to `127.0.0.1` and nothing else. The address is not a flag: only the port is, and the loopback address is built inside the server rather than accepted from a caller, so no invocation can widen it. Serving the same interface from inside the cluster is a separate mode and a separate command, `horizon serve`, described under [Serving the interface in a cluster](#serving-the-interface-in-a-cluster) below.
 
 Four routes are served. The lease list carries the printer columns, one row per `CapacityLease`, with the time each lease has left counting down in its own column. The lease behind each row carries the reservation and the timeline, the conditions, the per-instance table and the workloads that were drained onto it. Its sizing reads the same whether the lease named an instance type or asked for a minimum core count, memory, architecture, CPU type and selection strategy, so a lease sized by requirements no longer shows an empty field. A lease sized by requirements also carries the selection panel, which names the strategy, the type it chose and its hourly rate, the runner-up, how many candidates were offered and how many qualified, and the tally of why the rest were rejected; a lease that named its own type states that absence rather than showing an empty panel. The new lease route is the create form, and the machines route lists the `ProviderConfig` resources in the cluster and the instance types a chosen one offers in a chosen region.
 
@@ -317,11 +317,27 @@ Writing is authorised by the caller's own kubeconfig, exactly as `kubectl` is, a
 
 The interface is a single-page application, decided in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), which supersedes the server-rendered interface of [ADR 0019](docs/adr/0019-replace-terminal-interface-with-web-and-printer-columns.md). `internal/web/site` holds a Vite project in React and TypeScript styled with Tailwind, and `internal/web/api.go` serves the state behind the routes as JSON at `/api/leases`, `/api/leases/{name}` and `/api/machines`, with `POST /api/leases` and `DELETE /api/leases/{name}` behind the guard. The built bundle is committed at `internal/web/site/dist` and embedded with `//go:embed`, so `go build` still needs no JavaScript toolchain, and `go build -tags no_ui` produces the same operator with no interface in it. The rebuild changed how the interface is constructed and how much it can show; it did not change what it reads or how it authenticates.
 
+### Serving the interface in a cluster
+
+`horizon serve` serves the same interface on a routable address, for a team rather than for one operator at one terminal:
+
+```
+horizon serve --oidc-issuer=https://sso.example.com/application/o/horizon/ \
+  --oidc-audience=horizon --external-origin=https://horizon.example.com
+```
+
+Every request has to carry a signed JWT in a configured header, `Authorization` by default. The token is verified against the key set discovered from the issuer's own `/.well-known/openid-configuration` document, which is why there is no separate key set setting: an issuer and a key set from two places would verify tokens minted by whoever owned the second one. Only asymmetric algorithms are accepted, by allowlist, because a symmetric signature makes the published key set a signing key. The command refuses to start unless the issuer, the audience, the header and both claim names are set, so an endpoint that cannot identify its callers never reaches the point of binding.
+
+Authorisation is Kubernetes impersonation of the username and groups the verified token names, so the cluster's own RBAC decides what a caller reaches and the interface grants nothing on its own. An identity with no rights over `capacityleases` receives the apiserver's refusal, and admitting an operator is a RoleBinding rather than a change to horizon. The cross-origin guard is anchored to `--external-origin` in this mode rather than to the loopback address, since behind a proxy the address the listener bound and the origin a browser reaches are two different things.
+
+The chart templates the mode behind `ui.enabled` and the default is off. Enabled, it renders a second Deployment from the same image with its own ServiceAccount, whose only permission is `impersonate` on users and groups and which never holds the controller's, alongside a Service and a NetworkPolicy admitting only named namespaces. It refuses to render when the mode is enabled without an issuer and an audience, and when the two ServiceAccount names collide. [docs/serving-the-interface.md](docs/serving-the-interface.md) covers the chart values, what an identity provider has to publish, a sample RBAC grant for an impersonated operator, and narrowing the impersonation permission with `resourceNames`. The reasoning is in [ADR 0028](docs/adr/0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md).
+
 ### Command line reference
 
 ```
 horizon controller   Run the in-cluster capacity lease controller
 horizon dashboard    Serve the web interface on loopback
+horizon serve        Serve the web interface on a routable address behind an OIDC issuer
 horizon watchdog     Enforce the node-side teardown deadline from the leased server itself
 horizon cloud-init   Render the cloud-init a burst node needs to join a cluster
 horizon version      Print the build version
@@ -341,6 +357,18 @@ horizon version      Print the build version
 | Flag | Default | Description |
 | --- | --- | --- |
 | `--port` | `8973` | Loopback port the interface listens on. The host is always `127.0.0.1`. |
+
+`horizon serve` takes an address rather than a port, and refuses to start unless it can verify who is calling:
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--bind-address` | `0.0.0.0:8082` | Address the interface binds to. |
+| `--oidc-issuer` | none, required | Issuer whose tokens are accepted, and whose discovery document names the key set they are verified against. |
+| `--oidc-audience` | none, required | Audience a token has to be issued for. |
+| `--auth-header` | `Authorization` | Request header the bearer token arrives in. |
+| `--username-claim` | `preferred_username` | Claim the impersonated username is read from. |
+| `--groups-claim` | `groups` | Claim the impersonated group memberships are read from. |
+| `--external-origin` | empty | Origin a browser reaches the interface at. Unset, every create and release is refused, since the cross-origin guard has no anchor behind a proxy. |
 
 `horizon watchdog` runs on the leased server rather than in the cluster, started by the cloud-init that boots it:
 
@@ -375,11 +403,12 @@ The image is distroless and runs as uid 65532. The archive binaries and the imag
 ```
 api/v1alpha1/       CapacityLease and ProviderConfig types
 cmd/horizon/        main entry point
-internal/cli/       cobra root, version, controller, dashboard, watchdog, and cloud-init commands
+internal/cli/       cobra root, version, controller, dashboard, serve, watchdog, and cloud-init commands
 internal/agent/     node-side dead man's switch
 internal/manager/   controller-runtime wiring
 internal/web/       web interface, json endpoints and the embedded bundle
                     site/ vite, react and typescript project, dist/ committed
+internal/oidc/      bearer token verification against the issuer's published key set
 internal/controller/  lease reconciler, orphan collector, provider factory
 internal/k8s/       workload migration, placement restore, node drain
 internal/cloudinit/ cloud-init join document generator, one file per flavour
@@ -389,7 +418,8 @@ internal/provider/  instance lifecycle interface, capabilities, label constants
                     fake/ in-memory implementation with a create and delete ledger
 internal/version/   build stamp
 config/crd/bases/   generated custom resource definitions
-charts/horizon/     Helm chart for the in-cluster controller
+charts/horizon/     Helm chart for the in-cluster controller and the optional interface
+docs/               evaluation report, and the guide to serving the interface in a cluster
 docs/adr/           architecture decision records
 ```
 
