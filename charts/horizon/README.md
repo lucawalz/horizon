@@ -59,6 +59,15 @@ kubectl apply -f charts/horizon/crds/
 
 The Deployment uses the `Recreate` strategy rather than a rolling update, and that is not configurable. The controller writes lease status with a full update, so a replica running the older image would strip any status field its own types do not carry. Recreate stops the old pod before the new one starts, so the two never write the same lease.
 
+Upgrading an existing release across the change of strategy needs one manual step, which a fresh install does not. Releases before 0.8.0 left the strategy unset, so the API server defaulted it to `RollingUpdate` and wrote a `strategy.rollingUpdate` block that no field manager owned. Server-side apply does not prune a defaulted field it never owned, so the upgrade to 0.8.0 was rejected for holding `rollingUpdate` alongside `type: Recreate`. Clearing the stale block and setting the new type in the same merge patch resolves it:
+
+```
+kubectl patch deployment horizon --namespace horizon-system --type merge \
+  -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
+```
+
+The patch is needed once, on releases installed before 0.8.0. A release installed at 0.8.0 or later never carries the defaulted block.
+
 ### Networking
 
 | Key | Default | Description |
