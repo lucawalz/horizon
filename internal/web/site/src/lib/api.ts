@@ -194,7 +194,7 @@ export const interfaceHeader = 'X-Horizon-Interface'
 const interfaceHeaderValue = 'true'
 const jsonContentType = 'application/json'
 const createMethod = 'POST'
-const releaseMethod = 'DELETE'
+const deleteMethod = 'DELETE'
 const configQueryKey = 'config'
 const regionQueryKey = 'region'
 
@@ -259,6 +259,6 @@ export function createLease(request: LeaseCreateRequest): Promise<LeaseDetailRes
   return change<LeaseDetailResponse>(leasesPath, createMethod, request)
 }
 
-export function releaseLease(name: string): Promise<LeaseReleaseResponse> {
-  return change<LeaseReleaseResponse>(leasePath(name), releaseMethod)
+export function deleteLease(name: string): Promise<LeaseReleaseResponse> {
+  return change<LeaseReleaseResponse>(leasePath(name), deleteMethod)
 }

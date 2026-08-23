@@ -1,4 +1,5 @@
 import { ArrowLeft } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useState } from 'react'
 
 import { Button } from '@/components/controls'
@@ -20,7 +21,7 @@ import type {
   LeaseRequirements,
   LeaseSelection,
 } from '@/lib/api'
-import { fetchLease, leasePath, notFound, releaseLease, RequestFailed } from '@/lib/api'
+import { deleteLease, fetchLease, leasePath, notFound, RequestFailed } from '@/lib/api'
 import { errorFor } from '@/lib/errors'
 import {
   ConditionChip,
@@ -42,7 +43,7 @@ import {
 } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { leasesHref } from '@/routes/router'
+import { leasesHref, navigate } from '@/routes/router'
 import { absent, formatInstant, formatRate, formatSpan } from '@/routes/units'
 
 const conditionColumns = 5
@@ -257,70 +258,83 @@ function SelectionPanel({
   )
 }
 
-function ReleaseConfirmation({
-  name,
+function Confirmation({
+  heading,
+  confirmLabel,
+  pendingLabel,
+  declineLabel,
   pending,
-  onRelease,
-  onKeep,
+  onConfirm,
+  onDecline,
+  children,
 }: {
-  name: string
+  heading: string
+  confirmLabel: string
+  pendingLabel: string
+  declineLabel: string
   pending: boolean
-  onRelease: () => void
-  onKeep: () => void
+  onConfirm: () => void
+  onDecline: () => void
+  children: ReactNode
 }) {
   return (
     <div
       data-severity="attention"
       className="space-y-cell rounded-panel border border-tint-line bg-tint p-gutter"
     >
-      <p className="text-label-14 font-emphasis text-tint-fg">Release {name}</p>
-      <p className="max-w-[70ch] text-copy-13 text-tint-fg/85">
-        The controller is one clock and this starts it: it drains the leased nodes, deletes their
-        machines at the provider and removes the lease when its finalizer completes. The watchdog on
-        each leased node is the second clock and it is already running. It powers its node off at
-        its own deadline whether or not the controller acts, so nothing here is what destroys a
-        machine.
-      </p>
+      <p className="text-label-14 font-emphasis text-tint-fg">{heading}</p>
+      <p className="max-w-[70ch] text-copy-13 text-tint-fg/85">{children}</p>
       <div className="flex flex-wrap gap-snug">
-        <Button type="button" tone="danger" onClick={onRelease} disabled={pending}>
-          {pending ? 'Asking the controller' : 'Ask the controller to release'}
+        <Button type="button" tone="danger" onClick={onConfirm} disabled={pending}>
+          {pending ? pendingLabel : confirmLabel}
         </Button>
-        <Button type="button" onClick={onKeep} disabled={pending}>
-          Keep the lease
+        <Button type="button" onClick={onDecline} disabled={pending}>
+          {declineLabel}
         </Button>
       </div>
     </div>
   )
 }
 
-function ReleasePanel({ name, released }: { name: string; released: boolean }) {
+interface Deletion {
+  confirming: boolean
+  pending: boolean
+  failure: Error | null
+  ask: () => void
+  decline: () => void
+  confirm: () => void
+}
+
+function useLeaseDeletion(name: string, onDeleted: (answer: LeaseReleaseResponse) => void): Deletion {
   const [confirming, setConfirming] = useState(false)
   const [pending, setPending] = useState(false)
-  const [asked, setAsked] = useState<LeaseReleaseResponse | null>(null)
   const [failure, setFailure] = useState<Error | null>(null)
 
-  // the lease stays in the cluster while its finalizer runs, so the acknowledgement has to come from the answer rather than from the lease disappearing
-  const release = async () => {
+  const confirm = async () => {
     setPending(true)
     setFailure(null)
     try {
-      setAsked(await releaseLease(name))
+      onDeleted(await deleteLease(name))
     } catch (cause) {
       setFailure(errorFor(cause))
     }
     setPending(false)
   }
 
-  if (released) {
-    return (
-      <Panel title="Release">
-        <p className="p-gutter text-copy-13 text-subtle">
-          This lease has been released. Its machines are gone and the controller has nothing left to
-          tear down.
-        </p>
-      </Panel>
-    )
+  return {
+    confirming,
+    pending,
+    failure,
+    ask: () => setConfirming(true),
+    decline: () => setConfirming(false),
+    confirm,
   }
+}
+
+function ReleasePanel({ name }: { name: string }) {
+  // the lease stays in the cluster while its finalizer runs, so the acknowledgement has to come from the answer rather than from the lease disappearing
+  const [asked, setAsked] = useState<LeaseReleaseResponse | null>(null)
+  const release = useLeaseDeletion(name, setAsked)
 
   return (
     <Panel title="Release">
@@ -330,15 +344,24 @@ function ReleasePanel({ name, released }: { name: string; released: boolean }) {
           The interface destroys nothing itself.
         </p>
         {asked === null ? (
-          confirming ? (
-            <ReleaseConfirmation
-              name={name}
-              pending={pending}
-              onRelease={release}
-              onKeep={() => setConfirming(false)}
-            />
+          release.confirming ? (
+            <Confirmation
+              heading={`Release ${name}`}
+              confirmLabel="Ask the controller to release"
+              pendingLabel="Asking the controller"
+              declineLabel="Keep the lease"
+              pending={release.pending}
+              onConfirm={release.confirm}
+              onDecline={release.decline}
+            >
+              The controller is one clock and this starts it: it drains the leased nodes, deletes
+              their machines at the provider and removes the lease when its finalizer completes. The
+              watchdog on each leased node is the second clock and it is already running. It powers
+              its node off at its own deadline whether or not the controller acts, so nothing here is
+              what destroys a machine.
+            </Confirmation>
           ) : (
-            <Button type="button" tone="danger" onClick={() => setConfirming(true)}>
+            <Button type="button" tone="danger" onClick={release.ask}>
               Release this lease
             </Button>
           )
@@ -347,9 +370,48 @@ function ReleasePanel({ name, released }: { name: string; released: boolean }) {
             {asked.detail}
           </Notice>
         )}
-        {failure === null ? null : (
+        {release.failure === null ? null : (
           <Notice severity="danger" title="The lease was not released">
-            {failure.message}
+            {release.failure.message}
+          </Notice>
+        )}
+      </div>
+    </Panel>
+  )
+}
+
+function RecordPanel({ name }: { name: string }) {
+  const removal = useLeaseDeletion(name, () => navigate(leasesHref))
+
+  return (
+    <Panel title="Record">
+      <div className="space-y-cell p-gutter">
+        <p className="max-w-[70ch] text-copy-13 text-subtle">
+          This lease has been released. Its machines are gone and the controller has nothing left to
+          tear down, so what remains is the record of it in the cluster.
+        </p>
+        {removal.confirming ? (
+          <Confirmation
+            heading={`Delete the record of ${name}`}
+            confirmLabel="Delete the record"
+            pendingLabel="Deleting the record"
+            declineLabel="Keep the record"
+            pending={removal.pending}
+            onConfirm={removal.confirm}
+            onDecline={removal.decline}
+          >
+            Nothing is destroyed here. Releasing a running lease is what destroys machines, and this
+            lease has none left: the record is all that is still in the cluster. Deleting removes
+            that record and its entry from the lease list, and it does not come back.
+          </Confirmation>
+        ) : (
+          <Button type="button" tone="danger" onClick={removal.ask}>
+            Delete this record
+          </Button>
+        )}
+        {removal.failure === null ? null : (
+          <Notice severity="danger" title="The record was not deleted">
+            {removal.failure.message}
           </Notice>
         )}
       </div>
@@ -457,7 +519,11 @@ function LeaseDetailBody({ name, view }: { name: string; view: Polled<LeaseDetai
       <InstancesPanel instances={view.data.instances} />
       <ConditionsPanel conditions={view.data.conditions} />
       <MigratedPanel workloads={view.data.migratedWorkloads} />
-      <ReleasePanel name={name} released={view.data.summary.releasedAt !== null} />
+      {view.data.summary.releasedAt === null ? (
+        <ReleasePanel name={name} />
+      ) : (
+        <RecordPanel name={name} />
+      )}
     </div>
   )
 }

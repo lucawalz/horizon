@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LeaseInstance, LeaseSelection } from '@/lib/api'
 import { interfaceHeader, leasePath } from '@/lib/api'
 import { LeaseDetailRoute } from '@/routes/lease-detail'
+import { leaseHref, leasesHref } from '@/routes/router'
 import {
   buttonLabelled,
   click,
@@ -18,6 +19,9 @@ const acknowledgement = 'the controller was asked to release it'
 const releaseLabel = 'Release this lease'
 const confirmLabel = 'Ask the controller to release'
 const keepLabel = 'Keep the lease'
+const deleteLabel = 'Delete this record'
+const confirmDeleteLabel = 'Delete the record'
+const releasedAt = '2026-08-21T11:45:00Z'
 
 const selection: LeaseSelection = {
   strategy: 'LowestPricePerCore',
@@ -72,6 +76,7 @@ function deletions(calls: [RequestInfo | URL, (RequestInit | undefined)?][]) {
 describe('the lease detail', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    window.history.pushState(null, '', leasesHref)
   })
 
   it('shows why the instance type was chosen and what it beat', async () => {
@@ -147,14 +152,31 @@ describe('the lease detail', () => {
     await view.unmount()
   })
 
-  it('offers no release for a lease that has already been released', async () => {
-    stubLease(
-      leaseDetailBody({ summary: leaseSummary({ releasedAt: '2026-08-21T11:45:00Z' }) }),
-    )
+  it('offers the leftover record rather than a release once the lease is released', async () => {
+    stubLease(leaseDetailBody({ summary: leaseSummary({ releasedAt }) }))
     const view = await mount(<LeaseDetailRoute name={leaseName} />)
 
     expect(view.container.textContent).not.toContain(releaseLabel)
     expect(view.container.textContent).toContain('has been released')
+    expect(buttonLabelled(view.container, deleteLabel).textContent).toBe(deleteLabel)
+
+    await view.unmount()
+  })
+
+  it('deletes the leftover record on confirmation and returns to the lease list', async () => {
+    const respond = stubLease(leaseDetailBody({ summary: leaseSummary({ releasedAt }) }))
+    window.history.pushState(null, '', leaseHref(leaseName))
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    await click(buttonLabelled(view.container, deleteLabel))
+    expect(deletions(respond.mock.calls)).toHaveLength(0)
+    expect(view.container.textContent).toContain('Nothing is destroyed here')
+
+    await click(buttonLabelled(view.container, confirmDeleteLabel))
+    const [target, init] = deletions(respond.mock.calls)[0]
+    expect(target).toBe(leasePath(leaseName))
+    expect(new Headers(init?.headers).get(interfaceHeader)).not.toBeNull()
+    expect(window.location.pathname).toBe(leasesHref)
 
     await view.unmount()
   })
