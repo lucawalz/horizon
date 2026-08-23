@@ -107,7 +107,7 @@ func (r *CapacityLeaseReconciler) adoptVanishedInstance(ctx context.Context, lea
 		return false, nil
 	}
 
-	entry.Phase = v1alpha1.InstancePhaseReleased
+	markReleased(entry)
 	records.add(r.instanceReleaseRecord(lease, *entry, vanishedPath(lease, r.now())))
 	return true, nil
 }
@@ -181,6 +181,11 @@ func markCreated(entry *v1alpha1.InstanceStatus, providerID string) {
 	entry.ProviderID = providerID
 	entry.Stage = ""
 	entry.LastError = ""
+}
+
+func markReleased(entry *v1alpha1.InstanceStatus) {
+	entry.Phase = v1alpha1.InstancePhaseReleased
+	entry.Stage = ""
 }
 
 func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, entry *v1alpha1.InstanceStatus) (ctrl.Result, error) {

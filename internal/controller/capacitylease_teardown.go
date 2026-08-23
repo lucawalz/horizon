@@ -100,7 +100,7 @@ func (r *CapacityLeaseReconciler) releaseInstance(ctx context.Context, lease *v1
 		skipped = errors.Join(skipped, err)
 	}
 
-	entry.Phase = v1alpha1.InstancePhaseReleased
+	markReleased(entry)
 	records.add(r.instanceReleaseRecord(lease, *entry, metrics.PathController))
 	if skipped != nil {
 		entry.LastError = skipped.Error()
@@ -128,6 +128,8 @@ func (r *CapacityLeaseReconciler) finishTeardown(ctx context.Context, lease *v1a
 		records.add(terminalRecord(attributionOf(lease), releaseOutcome(lease)))
 	}
 	changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonReleased, "capacity released") || changed
+	changed = setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse, reasonReleased,
+		"no joined node remains to report an armed watchdog") || changed
 	if lease.Status.ReleasedAt == nil {
 		released := r.now()
 		lease.Status.ReleasedAt = &metav1.Time{Time: released}

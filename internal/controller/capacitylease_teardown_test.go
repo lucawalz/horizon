@@ -280,6 +280,89 @@ func TestReadyAtSurvivesTeardown(t *testing.T) {
 	}
 }
 
+func TestAReleasedInstanceDropsItsStageAndKeepsItsIdentity(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.armNode(name, h.clock.Now())
+	h.settle()
+
+	before := h.instanceStatus(name)
+	if before.Stage != v1alpha1.InstanceStageReady {
+		t.Fatalf("instance stage is %q before teardown, want %q", before.Stage, v1alpha1.InstanceStageReady)
+	}
+	if before.CreatedAt == nil {
+		t.Fatal("instance carries no createdAt before teardown")
+	}
+
+	h.clock.Advance(testLeaseDuration + time.Minute)
+	h.settle()
+
+	got := h.instanceStatus(name)
+	if got.Stage != "" {
+		t.Errorf("a released instance reports stage %q, want none", got.Stage)
+	}
+	if got.Phase != v1alpha1.InstancePhaseReleased {
+		t.Errorf("instance phase is %q, want %q", got.Phase, v1alpha1.InstancePhaseReleased)
+	}
+	if got.Name != before.Name {
+		t.Errorf("instance name is %q after release, want %q", got.Name, before.Name)
+	}
+	if got.ProviderID != before.ProviderID {
+		t.Errorf("instance provider id is %q after release, want %q", got.ProviderID, before.ProviderID)
+	}
+	if got.CreatedAt == nil || !got.CreatedAt.Time.Equal(before.CreatedAt.Time) {
+		t.Errorf("instance createdAt is %v after release, want %s", got.CreatedAt, before.CreatedAt.Time)
+	}
+}
+
+func TestReleaseDisarmsTheWatchdogConditionAndReportsWhy(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.armNode(name, h.clock.Now())
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue)
+
+	h.clock.Advance(testLeaseDuration + time.Minute)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse)
+	h.assertConditionDetail(v1alpha1.ConditionWatchdogArmed, reasonReleased, "no joined node remains")
+	h.assertCondition(v1alpha1.ConditionReleased, metav1.ConditionTrue)
+	h.assertConditionDetail(v1alpha1.ConditionReleased, reasonReleased, "every instance is confirmed absent")
+	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionFalse)
+	h.assertConditionDetail(v1alpha1.ConditionInstancesReady, reasonReleased, "capacity released")
+}
+
+func TestADrainingInstanceKeepsItsStageAndItsArmedWatchdog(t *testing.T) {
+	h := newHarness(t)
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.armNode(name, h.clock.Now())
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue)
+
+	h.prov.FailDelete = func(string) error { return errors.New("provider refuses to delete") }
+	h.deleteLease()
+	h.settleIgnoringErrors(3)
+
+	got := h.instanceStatus(name)
+	if got.Phase != v1alpha1.InstancePhaseDraining {
+		t.Fatalf("instance phase is %q, want %q", got.Phase, v1alpha1.InstancePhaseDraining)
+	}
+	if got.Stage != v1alpha1.InstanceStageReady {
+		t.Errorf("a draining instance reports stage %q, want %q", got.Stage, v1alpha1.InstanceStageReady)
+	}
+	h.assertCondition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue)
+	h.assertCondition(v1alpha1.ConditionReleased, metav1.ConditionFalse)
+}
+
 func TestReleasedAtIsSetExactlyOnceWhenReleased(t *testing.T) {
 	h := newHarness(t)
 	h.settle()
