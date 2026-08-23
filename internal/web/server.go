@@ -34,12 +34,16 @@ type Options struct {
 	Writer LeaseWriter
 
 	Catalogue catalogue.Reader
+
+	// a binding wider than loopback is reachable by anyone who can route to it, so it only serves once this stands in front of it
+	Authentication *Authentication
 }
 
 type Server struct {
 	client    client.Reader
 	writer    LeaseWriter
 	catalogue catalogue.Reader
+	auth      *Authentication
 	port      string
 }
 
@@ -50,7 +54,17 @@ func New(opts Options) (*Server, error) {
 	if opts.Catalogue == nil {
 		return nil, errors.New("web: a catalogue reader is required")
 	}
-	return &Server{client: opts.Client, writer: opts.Writer, catalogue: opts.Catalogue}, nil
+	if opts.Authentication != nil {
+		if err := opts.Authentication.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	return &Server{
+		client:    opts.Client,
+		writer:    opts.Writer,
+		catalogue: opts.Catalogue,
+		auth:      opts.Authentication,
+	}, nil
 }
 
 // a request cannot vouch for its own Host header, so the guard is anchored to the address the listener actually bound
@@ -101,7 +115,7 @@ func (s *Server) ListenAndServe(ctx context.Context, bind BindAddress) error {
 		return errors.Join(err, listener.Close())
 	}
 
-	server := &http.Server{Handler: s.routes(), ReadHeaderTimeout: readHeaderTimeout}
+	server := &http.Server{Handler: s.handler(), ReadHeaderTimeout: readHeaderTimeout}
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)

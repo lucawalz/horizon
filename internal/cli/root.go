@@ -22,9 +22,11 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	controllerCmd, _ := newControllerCmd()
+	serveCmd, _ := newServeCmd()
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(controllerCmd)
 	cmd.AddCommand(newDashboardCmd())
+	cmd.AddCommand(serveCmd)
 	cmd.AddCommand(newWatchdogCmd())
 	cmd.AddCommand(newCloudInitCmd())
 	return cmd
