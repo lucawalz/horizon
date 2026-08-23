@@ -5,8 +5,25 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/client-go/rest"
+
 	"github.com/lucawalz/horizon/internal/cli"
+	"github.com/lucawalz/horizon/internal/impersonate"
+	"github.com/lucawalz/horizon/internal/manager"
+	"github.com/lucawalz/horizon/internal/web"
 )
+
+const servedTestAPIServer = "https://127.0.0.1:6443"
+
+func servedTestAuthentication() web.Authentication {
+	return web.Authentication{
+		Issuer:        "https://issuer.example",
+		Audience:      "horizon",
+		Header:        "Authorization",
+		UsernameClaim: "preferred_username",
+		GroupsClaim:   "groups",
+	}
+}
 
 func TestServeCommandIsReachableFromRoot(t *testing.T) {
 	for _, sub := range cli.NewRootCmdForTest().Commands() {
@@ -152,5 +169,28 @@ func TestServeRefusesAnUnreachableIssuer(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), issuer) {
 		t.Errorf("error = %q, want it to name the issuer", err)
+	}
+}
+
+// the served interface must lend a caller none of this process's own permissions, so it holds no client built at startup
+func TestServeSuppliesImpersonatedClientsRatherThanItsOwn(t *testing.T) {
+	clients, err := impersonate.New(&rest.Config{Host: servedTestAPIServer}, manager.Scheme())
+	if err != nil {
+		t.Fatalf("build the impersonated clients: %v", err)
+	}
+
+	opts := cli.ServeOptionsForTest(clients, servedTestAuthentication())
+
+	if opts.Client != nil || opts.Writer != nil {
+		t.Error("serve supplies a cluster client built at startup, want one built for each request")
+	}
+	if opts.Impersonation == nil || opts.Impersonation.Client == nil {
+		t.Fatal("serve supplies no cluster client factory")
+	}
+	if opts.Impersonation.Writer == nil {
+		t.Error("serve supplies no writer factory, want the interface able to create and release leases")
+	}
+	if _, err := web.New(opts); err != nil {
+		t.Errorf("the interface refused the options serve builds: %v", err)
 	}
 }

@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lucawalz/horizon/internal/impersonate"
 	"github.com/lucawalz/horizon/internal/manager"
 	"github.com/lucawalz/horizon/internal/oidc"
 	"github.com/lucawalz/horizon/internal/web"
@@ -41,6 +41,10 @@ func NewServeCmdForTest() (*cobra.Command, *ServeOptions) { return newServeCmd()
 
 func RunServeForTest(ctx context.Context, out io.Writer, opts ServeOptions) error {
 	return runServe(ctx, out, opts)
+}
+
+func ServeOptionsForTest(clients *impersonate.Clients, auth web.Authentication) web.Options {
+	return serveOptions(clients, auth)
 }
 
 func newServeCmd() (*cobra.Command, *ServeOptions) {
@@ -79,8 +83,13 @@ func newServeCmd() (*cobra.Command, *ServeOptions) {
 	return cmd, opts
 }
 
-func serveOptions(api client.Client, auth web.Authentication) web.Options {
-	return web.Options{Client: api, Writer: api, Catalogue: web.AbsentCatalogue(), Authentication: &auth}
+// every request reaches the cluster as the verified end user, so this process lends none of its own permissions to a caller
+func serveOptions(clients *impersonate.Clients, auth web.Authentication) web.Options {
+	return web.Options{
+		Impersonation:  &web.Impersonation{Client: clients, Writer: clients},
+		Catalogue:      web.AbsentCatalogue(),
+		Authentication: &auth,
+	}
 }
 
 func runServe(ctx context.Context, out io.Writer, opts ServeOptions) error {
@@ -97,11 +106,11 @@ func runServe(ctx context.Context, out io.Writer, opts ServeOptions) error {
 	if err != nil {
 		return fmt.Errorf("load the kubeconfig: %w", err)
 	}
-	api, err := client.New(restConfig, client.Options{Scheme: manager.Scheme()})
+	clients, err := impersonate.New(restConfig, manager.Scheme())
 	if err != nil {
-		return fmt.Errorf("build the cluster client: %w", err)
+		return fmt.Errorf("build the cluster clients: %w", err)
 	}
-	server, err := web.New(serveOptions(api, opts.Authentication))
+	server, err := web.New(serveOptions(clients, opts.Authentication))
 	if err != nil {
 		return err
 	}
