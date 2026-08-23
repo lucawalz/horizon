@@ -65,7 +65,7 @@ The `Host` a browser reaches and the address the interface bound are different t
 
 The interface holds no permissions over horizon's own resources and never acts under its own name. Every call it makes to the apiserver impersonates the identity the token named, so an operator who has not been granted anything sees the apiserver's refusal. Access is granted in the cluster, with ordinary RBAC, and revoked the same way.
 
-`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. This role covers everything the interface can do: list and read leases, create one, release one by deleting it, and read the provider configurations the create form offers.
+`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. This role covers everything the interface can do: list and read leases, create one, release one by deleting it, delete the leftover record of one already released, and read the provider configurations the create form offers.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
