@@ -17,7 +17,6 @@ type keySetLocation struct {
 	URL string `json:"jwks_uri"`
 }
 
-// the key set is otherwise fetched on the first verification, which turns an unreachable or empty one into a process that starts and rejects everything
 func assertKeySetCanVerify(ctx context.Context, provider *gooidc.Provider, issuer string) error {
 	var location keySetLocation
 	if err := provider.Claims(&location); err != nil {

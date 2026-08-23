@@ -270,7 +270,6 @@ func servedTestSymmetricKeySet() map[string]any {
 	}}}
 }
 
-// a startup that reaches its listener never returns on its own, so serving is observed through the banner rather than waited for
 func runServeAgainst(t *testing.T, issuer string) error {
 	t.Helper()
 	t.Setenv("KUBECONFIG", writeTestKubeconfig(t))

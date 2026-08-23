@@ -231,7 +231,6 @@ func TestAuthenticatedInterfaceRecordsWhyACredentialWasRejected(t *testing.T) {
 	}
 }
 
-// a bearer token in a log file is a credential in a log file
 func TestAuthenticatedInterfaceRecordsNoPartOfTheRejectedCredential(t *testing.T) {
 	recorded := recordedLog(t)
 	auth := completeAuthentication()

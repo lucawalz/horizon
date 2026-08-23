@@ -126,7 +126,6 @@ func (s *Server) authenticated(next http.Handler) http.Handler {
 		}
 		identity, err := verifier.VerifyToken(r.Context(), token)
 		if err != nil {
-			// the answer stays generic so an unauthenticated caller learns nothing, which leaves the log as the only record of why
 			slog.Warn(credentialRejected, "error", err)
 			writeAPIError(w, http.StatusUnauthorized, credentialRejected)
 			return
