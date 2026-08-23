@@ -437,6 +437,39 @@ func TestWorkloadMigrationRunsOnceInstancesAreReady(t *testing.T) {
 	}
 }
 
+func TestARepeatedMigrationPassReportsTheSameWorkloads(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload()
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	if _, err := h.reconciler().migrateWorkload(t.Context(), h.lease(), testWorkloadNS); err != nil {
+		t.Fatalf("second migration pass: %v", err)
+	}
+
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "deployment/api" {
+		t.Errorf("migrated workloads are %v after a second pass, want [deployment/api]", got)
+	}
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrated, "1 workloads moved onto burst capacity")
+}
+
+func TestAWorkloadNamespaceWithoutWorkloadsReportsNone(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrated, "0 workloads moved onto burst capacity")
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 0 {
+		t.Errorf("the lease lists migrated workloads %v for a namespace that holds none", got)
+	}
+}
+
 func TestWatchdogArmedIsTrueWhenEveryJoinedNodeIsFresh(t *testing.T) {
 	h := newHarness(t)
 	h.settle()

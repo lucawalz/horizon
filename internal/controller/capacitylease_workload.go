@@ -38,9 +38,6 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 
 func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, namespace string) (ctrl.Result, error) {
 	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, provider.ReservedPoolValue)
-	if len(migrated) > 0 {
-		lease.Status.MigratedWorkloads = migrated
-	}
 	if migrateErr != nil {
 		migrateErr = fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr)
 		setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())
@@ -50,6 +47,7 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 		return ctrl.Result{}, migrateErr
 	}
 
+	lease.Status.MigratedWorkloads = migrated
 	setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue, reasonMigrated,
 		fmt.Sprintf("%d workloads moved onto burst capacity", len(migrated)))
 	if err := r.writeStatus(ctx, lease); err != nil {

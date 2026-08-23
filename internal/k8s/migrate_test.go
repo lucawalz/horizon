@@ -78,6 +78,23 @@ func patchTypes(kc *fake.Clientset, resource string) []types.PatchType {
 	return kinds
 }
 
+func evictionNames(kc *fake.Clientset) []string {
+	var names []string
+	for _, a := range kc.Actions() {
+		if a.GetVerb() != "create" || a.GetSubresource() != "eviction" {
+			continue
+		}
+		create, ok := a.(k8stesting.CreateAction)
+		if !ok {
+			continue
+		}
+		if ev, ok := create.GetObject().(interface{ GetName() string }); ok {
+			names = append(names, ev.GetName())
+		}
+	}
+	return names
+}
+
 func getDeployment(t *testing.T, kc *fake.Clientset, name string) *appsv1.Deployment {
 	t.Helper()
 	dep, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), name, metav1.GetOptions{})
@@ -117,6 +134,17 @@ func burstToleration() corev1.Toleration {
 		Key:      k8s.BurstTaintKey,
 		Operator: corev1.TolerationOpExists,
 		Effect:   corev1.TaintEffectNoSchedule,
+	}
+}
+
+func hostSpreadAffinity(weight int32) *corev1.Affinity {
+	return &corev1.Affinity{
+		PodAntiAffinity: &corev1.PodAntiAffinity{
+			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
+				Weight:          weight,
+				PodAffinityTerm: corev1.PodAffinityTerm{TopologyKey: "kubernetes.io/hostname"},
+			}},
+		},
 	}
 }
 
@@ -164,18 +192,12 @@ func TestMigrateEviction(t *testing.T) {
 		t.Errorf("migrated = %v, want [deployment/app]", migrated)
 	}
 
-	var evictions []k8stesting.CreateAction
-	for _, a := range kc.Actions() {
-		if a.GetVerb() == "create" && a.GetSubresource() == "eviction" {
-			evictions = append(evictions, a.(k8stesting.CreateAction))
-		}
+	evicted := evictionNames(kc)
+	if len(evicted) != 1 {
+		t.Fatalf("eviction count = %d, want 1", len(evicted))
 	}
-	if len(evictions) != 1 {
-		t.Fatalf("eviction count = %d, want 1", len(evictions))
-	}
-	ev := evictions[0].GetObject().(interface{ GetName() string })
-	if ev.GetName() != "app-pod" {
-		t.Errorf("evicted pod = %q, want app-pod", ev.GetName())
+	if evicted[0] != "app-pod" {
+		t.Errorf("evicted pod = %q, want app-pod", evicted[0])
 	}
 }
 
@@ -291,14 +313,7 @@ func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
 
 func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
-	originalAffinity := &corev1.Affinity{
-		PodAntiAffinity: &corev1.PodAntiAffinity{
-			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-				Weight:          100,
-				PodAffinityTerm: corev1.PodAffinityTerm{TopologyKey: "kubernetes.io/hostname"},
-			}},
-		},
-	}
+	originalAffinity := hostSpreadAffinity(100)
 	originalToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
@@ -342,7 +357,7 @@ func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) 
 	}
 }
 
-func TestMigrateSkipsAlreadyMigratedWorkload(t *testing.T) {
+func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -359,8 +374,8 @@ func TestMigrateSkipsAlreadyMigratedWorkload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if len(migrated) != 0 {
-		t.Errorf("migrated = %v, want none: the placement record is already written", migrated)
+	if len(migrated) != 1 || migrated[0] != "deployment/dep1" {
+		t.Errorf("migrated = %v, want [deployment/dep1]: the workload sits on burst capacity", migrated)
 	}
 	if got := patchCount(kc, "deployments", "dep1"); got != 0 {
 		t.Errorf("dep1 patched %d times, which would overwrite the saved placement", got)
@@ -370,19 +385,114 @@ func TestMigrateSkipsAlreadyMigratedWorkload(t *testing.T) {
 	}
 }
 
+func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: hostSpreadAffinity(100)}},
+		},
+	}
+	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
+	pod := makePod("dep1-pod", testNS, "homelab-1", corev1.PodRunning)
+	kc := fake.NewSimpleClientset(node, dep, sts, pod)
+	evictAndDelete(kc)
+
+	want := []string{"deployment/dep1", "statefulset/sts1"}
+	first, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	if err != nil {
+		t.Fatalf("first Migrate: %v", err)
+	}
+	if !reflect.DeepEqual(first, want) {
+		t.Fatalf("first pass reported %v, want %v", first, want)
+	}
+	saved := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]
+	if _, err := kc.CoreV1().Pods(testNS).Create(context.Background(), makePod("dep1-pod-2", testNS, "burst-1", corev1.PodRunning), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create the replacement pod: %v", err)
+	}
+	kc.ClearActions()
+
+	second, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	if err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+	if !reflect.DeepEqual(second, want) {
+		t.Errorf("second pass reported %v, want the same %v", second, want)
+	}
+	if got := patchCount(kc, "deployments", "dep1"); got != 0 {
+		t.Errorf("dep1 patched %d times on the second pass, want none", got)
+	}
+	if got := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]; got != saved {
+		t.Errorf("placement annotation = %q, want the original %q", got, saved)
+	}
+	if got := evictionNames(kc); len(got) != 0 {
+		t.Errorf("second pass evicted %v, want no eviction when nothing changed", got)
+	}
+}
+
+func TestMigrateReportsNoWorkloadsForAnEmptyNamespace(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	elsewhere := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"}}
+	kc := fake.NewSimpleClientset(node, elsewhere)
+	evictAndDelete(kc)
+
+	migrated, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if len(migrated) != 0 {
+		t.Errorf("migrated = %v, want none", migrated)
+	}
+	if got := evictionNames(kc); len(got) != 0 {
+		t.Errorf("evicted %v, want no eviction for a namespace without workloads", got)
+	}
+}
+
+func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	originalAffinity := hostSpreadAffinity(100)
+	originalToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Affinity: originalAffinity, Tolerations: []corev1.Toleration{originalToleration}},
+			},
+		},
+	}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	for pass := range 2 {
+		if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+			t.Fatalf("Migrate pass %d: %v", pass+1, err)
+		}
+	}
+
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+	if len(restored) != 1 || restored[0] != "deployment/dep1" {
+		t.Fatalf("restored = %v, want [deployment/dep1]", restored)
+	}
+
+	stored := getDeployment(t, kc, "dep1")
+	if got := stored.Spec.Template.Spec.Affinity; !reflect.DeepEqual(got, originalAffinity) {
+		t.Errorf("affinity = %+v, want exactly the original %+v", got, originalAffinity)
+	}
+	if got := stored.Spec.Template.Spec.Tolerations; !reflect.DeepEqual(got, []corev1.Toleration{originalToleration}) {
+		t.Errorf("tolerations = %+v, want only the original %+v", got, originalToleration)
+	}
+	if _, ok := stored.Annotations[k8s.PrePlacementAnnotationKey]; ok {
+		t.Error("restore must remove the placement annotation")
+	}
+}
+
 func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 
-	originalAffinity := &corev1.Affinity{
-		PodAntiAffinity: &corev1.PodAntiAffinity{
-			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-				Weight: 100,
-				PodAffinityTerm: corev1.PodAffinityTerm{
-					TopologyKey: "kubernetes.io/hostname",
-				},
-			}},
-		},
-	}
+	originalAffinity := hostSpreadAffinity(100)
 
 	dep1 := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
@@ -435,14 +545,7 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 
 func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
-	existingAffinity := &corev1.Affinity{
-		PodAntiAffinity: &corev1.PodAntiAffinity{
-			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-				Weight:          50,
-				PodAffinityTerm: corev1.PodAffinityTerm{TopologyKey: "kubernetes.io/hostname"},
-			}},
-		},
-	}
+	existingAffinity := hostSpreadAffinity(50)
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{

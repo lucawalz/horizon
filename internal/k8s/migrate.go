@@ -218,43 +218,44 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelV
 
 	targetAffinity := poolNodeAffinity(poolLabelValue)
 
-	var patched []string
+	var onBurst []string
+	moved := false
 	for _, wc := range workloadClients(kc, namespace) {
-		names, err := migrateWorkloads(ctx, wc, targetAffinity)
-		patched = append(patched, names...)
+		names, patched, err := migrateWorkloads(ctx, wc, targetAffinity)
+		onBurst = append(onBurst, names...)
+		moved = moved || patched
 		if err != nil {
-			return patched, err
+			return onBurst, err
 		}
 	}
-	if len(patched) == 0 {
-		return patched, nil
+	if !moved {
+		return onBurst, nil
 	}
 	if err := evictNonDaemonSetPods(ctx, kc, namespace); err != nil {
-		return patched, err
+		return onBurst, err
 	}
-	return patched, nil
+	return onBurst, nil
 }
 
-func migrateWorkloads(ctx context.Context, wc workloadClient, affinity *corev1.Affinity) ([]string, error) {
+func migrateWorkloads(ctx context.Context, wc workloadClient, affinity *corev1.Affinity) (onBurst []string, patched bool, err error) {
 	targets, err := wc.list(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
+		return nil, false, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
 	}
-	var patched []string
 	for _, t := range targets {
-		if _, ok := t.annotations[PrePlacementAnnotationKey]; ok {
-			continue
+		if _, ok := t.annotations[PrePlacementAnnotationKey]; !ok {
+			patchData, err := buildMigratePatch(t, affinity)
+			if err != nil {
+				return onBurst, patched, err
+			}
+			if err := wc.patch(ctx, t.name, patchData); err != nil {
+				return onBurst, patched, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
+			}
+			patched = true
 		}
-		patchData, err := buildMigratePatch(t, affinity)
-		if err != nil {
-			return patched, err
-		}
-		if err := wc.patch(ctx, t.name, patchData); err != nil {
-			return patched, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
-		}
-		patched = append(patched, wc.kind+"/"+t.name)
+		onBurst = append(onBurst, wc.kind+"/"+t.name)
 	}
-	return patched, nil
+	return onBurst, patched, nil
 }
 
 func buildMigratePatch(t workloadTarget, affinity *corev1.Affinity) ([]byte, error) {
