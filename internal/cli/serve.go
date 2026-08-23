@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/internal/manager"
+	"github.com/lucawalz/horizon/internal/oidc"
 	"github.com/lucawalz/horizon/internal/web"
 )
 
@@ -37,6 +38,10 @@ func (o ServeOptions) Validate() error {
 }
 
 func NewServeCmdForTest() (*cobra.Command, *ServeOptions) { return newServeCmd() }
+
+func RunServeForTest(ctx context.Context, out io.Writer, opts ServeOptions) error {
+	return runServe(ctx, out, opts)
+}
 
 func newServeCmd() (*cobra.Command, *ServeOptions) {
 	opts := &ServeOptions{}
@@ -82,6 +87,12 @@ func runServe(ctx context.Context, out io.Writer, opts ServeOptions) error {
 	if err := opts.Validate(); err != nil {
 		return err
 	}
+	verifier, err := oidc.NewVerifier(ctx, opts.Authentication)
+	if err != nil {
+		return err
+	}
+	opts.Authentication.Verifier = verifier
+
 	restConfig, err := ctrl.GetConfig()
 	if err != nil {
 		return fmt.Errorf("load the kubeconfig: %w", err)

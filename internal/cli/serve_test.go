@@ -117,3 +117,20 @@ func TestServeOptionsRefuseAnEmptyBindAddress(t *testing.T) {
 		t.Error("an empty bind address was accepted, want a rejection")
 	}
 }
+
+// the issuer is unreachable before anything is served, so the refusal must name what could not be reached
+func TestServeRefusesAnUnreachableIssuer(t *testing.T) {
+	const issuer = "http://127.0.0.1:1/realms/horizon"
+	cmd, opts := cli.NewServeCmdForTest()
+	if err := cmd.ParseFlags([]string{"--oidc-issuer=" + issuer, "--oidc-audience=horizon"}); err != nil {
+		t.Fatalf("parse the flags: %v", err)
+	}
+
+	err := cli.RunServeForTest(t.Context(), io.Discard, *opts)
+	if err == nil {
+		t.Fatal("serve started against an unreachable issuer, want a refusal")
+	}
+	if !strings.Contains(err.Error(), issuer) {
+		t.Errorf("error = %q, want it to name the issuer", err)
+	}
+}
