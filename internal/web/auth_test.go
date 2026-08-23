@@ -1,8 +1,10 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,9 +12,10 @@ import (
 )
 
 const (
-	testIssuer   = "https://issuer.example/realms/horizon"
-	testAudience = "horizon"
-	testToken    = "a-token"
+	testIssuer     = "https://issuer.example/realms/horizon"
+	testAudience   = "horizon"
+	testToken      = "a-token"
+	credentialText = "eyJhbGciOiJSUzI1NiJ9.nobody-should-ever-log-this"
 )
 
 func completeAuthentication() Authentication {
@@ -193,6 +196,54 @@ func TestAuthenticatedInterfaceRejectsAnUnverifiedCredential(t *testing.T) {
 	response := fetchMachines(server, "Bearer "+testToken)
 	if response.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func recordedLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var recorded bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&recorded, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &recorded
+}
+
+func TestAuthenticatedInterfaceRecordsWhyACredentialWasRejected(t *testing.T) {
+	const reason = "the signature does not verify"
+	recorded := recordedLog(t)
+	auth := completeAuthentication()
+	auth.Verifier = stubVerifier{err: errors.New(reason)}
+	server := newAuthenticatedTestServer(t, auth)
+
+	response := fetchMachines(server, "Bearer "+credentialText)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+	if !strings.Contains(response.Body.String(), credentialRejected) {
+		t.Errorf("body = %q, want it to carry %q", response.Body.String(), credentialRejected)
+	}
+	if strings.Contains(response.Body.String(), reason) {
+		t.Errorf("body = %q, want it to name no reason to an unauthenticated caller", response.Body.String())
+	}
+	if !strings.Contains(recorded.String(), reason) {
+		t.Errorf("log = %q, want it to carry the reason verification failed", recorded.String())
+	}
+}
+
+// a bearer token in a log file is a credential in a log file
+func TestAuthenticatedInterfaceRecordsNoPartOfTheRejectedCredential(t *testing.T) {
+	recorded := recordedLog(t)
+	auth := completeAuthentication()
+	auth.Verifier = stubVerifier{err: errors.New("the signature does not verify")}
+	server := newAuthenticatedTestServer(t, auth)
+
+	fetchMachines(server, "Bearer "+credentialText)
+
+	for _, part := range strings.Split(credentialText, ".") {
+		if strings.Contains(recorded.String(), part) {
+			t.Errorf("log = %q, want it to carry no part of the credential", recorded.String())
+		}
 	}
 }
 
