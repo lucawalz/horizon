@@ -44,6 +44,7 @@ type Server struct {
 	writer    LeaseWriter
 	catalogue catalogue.Reader
 	auth      *Authentication
+	external  originAnchor
 	port      string
 }
 
@@ -54,16 +55,16 @@ func New(opts Options) (*Server, error) {
 	if opts.Catalogue == nil {
 		return nil, errors.New("web: a catalogue reader is required")
 	}
-	if opts.Authentication != nil {
-		if err := opts.Authentication.Validate(); err != nil {
-			return nil, err
-		}
+	external, err := validatedAnchor(opts.Authentication)
+	if err != nil {
+		return nil, err
 	}
 	return &Server{
 		client:    opts.Client,
 		writer:    opts.Writer,
 		catalogue: opts.Catalogue,
 		auth:      opts.Authentication,
+		external:  external,
 	}, nil
 }
 

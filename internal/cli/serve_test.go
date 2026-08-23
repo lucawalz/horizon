@@ -78,6 +78,26 @@ func TestServeCommandRefusesToStartWithoutTheOIDCSettings(t *testing.T) {
 	}
 }
 
+// the guard anchors to the configured origin, so an origin it cannot anchor to must never reach the point of binding
+func TestServeCommandRefusesAnExternalOriginThatIsNotOne(t *testing.T) {
+	cmd, _ := cli.NewServeCmdForTest()
+	cmd.SetArgs([]string{
+		"--oidc-issuer=https://issuer.example",
+		"--oidc-audience=horizon",
+		"--external-origin=horizon.example",
+	})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("serve started with a bare name as its external origin, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "external-origin") {
+		t.Errorf("error = %q, want it to name external-origin", err)
+	}
+}
+
 func TestServeOptionsCarryTheOIDCSettingsIntoTheInterface(t *testing.T) {
 	cmd, opts := cli.NewServeCmdForTest()
 	if err := cmd.ParseFlags([]string{

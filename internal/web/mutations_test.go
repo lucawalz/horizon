@@ -359,6 +359,132 @@ func TestMutationsRefuseEachCrossOriginFailureOnItsOwn(t *testing.T) {
 	}
 }
 
+const (
+	externalTestHost   = "horizon.example"
+	externalTestOrigin = "https://" + externalTestHost
+)
+
+func externalOptions() Options {
+	auth := completeAuthentication()
+	auth.ExternalOrigin = externalTestOrigin
+
+	options := writingOptions()
+	options.Authentication = &auth
+	return options
+}
+
+func newExternalServer(t *testing.T) *Server {
+	t.Helper()
+	server, err := New(externalOptions())
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	anchor(t, server)
+	return server
+}
+
+func newExternalMutation(t *testing.T, method, target string, body any) *http.Request {
+	t.Helper()
+	request := newMutation(t, method, target, body)
+	request.Host = externalTestHost
+	request.Header.Set(originHeader, externalTestOrigin)
+	return request
+}
+
+func TestMutationsThroughTheConfiguredExternalOriginAreServed(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "proxied-run"
+	removeAfterTest(t, name)
+
+	response := send(newExternalServer(t), newExternalMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture(name)))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusCreated, response.Body)
+	}
+	readLease(t, name)
+}
+
+func TestMutationsBehindAProxyRefuseEachCrossOriginFailureOnItsOwn(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	server := newExternalServer(t)
+	for name, spoil := range map[string]func(*http.Request){
+		// a name whose zone the caller owns can be pointed at the pod, and the browser calls that request same-origin too
+		"rebound name reaching the pod": func(r *http.Request) {
+			r.Host = "evil.example"
+			r.Header.Set(originHeader, "https://evil.example")
+		},
+		"rebound name carrying the served origin": func(r *http.Request) {
+			r.Host = "evil.example"
+		},
+		// anything that can reach the pod directly writes these itself, so a decision must never rest on them
+		"forwarded headers naming the served origin": func(r *http.Request) {
+			r.Host = "evil.example"
+			r.Header.Set("X-Forwarded-Host", externalTestHost)
+			r.Header.Set("X-Forwarded-Proto", "https")
+		},
+		"the loopback origin the dashboard serves": func(r *http.Request) {
+			r.Host = servedTestHost
+			r.Header.Set(originHeader, servedTestOrigin)
+		},
+		"origin of another host": func(r *http.Request) {
+			r.Header.Set(originHeader, "https://evil.example")
+		},
+		"origin differing only by scheme": func(r *http.Request) {
+			r.Header.Set(originHeader, httpScheme+externalTestHost)
+		},
+		"no interface header": func(r *http.Request) { r.Header.Del(interfaceHeader) },
+		"no fetch metadata":   func(r *http.Request) { r.Header.Del(fetchSiteHeader) },
+		"cross site fetch":    func(r *http.Request) { r.Header.Set(fetchSiteHeader, "cross-site") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			refused := "proxied-" + strings.ReplaceAll(name, " ", "-")
+			removeAfterTest(t, refused)
+
+			for method, target := range map[string]string{
+				http.MethodPost:   leasesEndpoint,
+				http.MethodDelete: leaseEndpoint(refused),
+			} {
+				request := newExternalMutation(t, method, target, createRequestFixture(refused))
+				spoil(request)
+
+				response := send(server, request)
+				if response.Code != http.StatusForbidden {
+					t.Errorf("%s answered %d, want %d, body %s", method, response.Code, http.StatusForbidden, response.Body)
+				}
+			}
+
+			var lease v1alpha1.CapacityLease
+			err := testEnv.Client.Get(t.Context(), client.ObjectKey{Name: refused}, &lease)
+			if !apierrors.IsNotFound(err) {
+				t.Errorf("reading the refused lease answered %v, want a not-found", err)
+			}
+		})
+	}
+}
+
+// a proxied interface that was never told the origin it is reached at must refuse rather than guess one
+func TestMutationsBehindAProxyWithoutAConfiguredOriginAreRefused(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "unconfigured-run"
+	removeAfterTest(t, name)
+
+	auth := completeAuthentication()
+	options := writingOptions()
+	options.Authentication = &auth
+	server, err := New(options)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	anchor(t, server)
+
+	response := send(server, newExternalMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture(name)))
+	if response.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d, body %s", response.Code, http.StatusForbidden, response.Body)
+	}
+}
+
 func TestMutationsAnswerNoCorsHeaders(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 

@@ -66,6 +66,66 @@ func TestAuthenticationValidateAcceptsAnIssuerAndAudience(t *testing.T) {
 	}
 }
 
+// the guard anchors to this value, so a value it cannot anchor to has to stop the process rather than pass through it
+func TestAuthenticationValidateRefusesAnExternalOriginThatIsNotOne(t *testing.T) {
+	for name, value := range map[string]string{
+		"a bare name":        "horizon.example",
+		"a scheme alone":     "https://",
+		"a scheme-less pair": "//horizon.example",
+		"a path":             "https://horizon.example/interface",
+		"a query":            "https://horizon.example?view=leases",
+		"a fragment":         "https://horizon.example#leases",
+		"credentials":        "https://ada@horizon.example",
+		"a foreign scheme":   "ftp://horizon.example",
+		"an unreadable port": "https://horizon.example:port",
+	} {
+		t.Run(name, func(t *testing.T) {
+			auth := completeAuthentication()
+			auth.ExternalOrigin = value
+
+			err := auth.Validate()
+			if err == nil {
+				t.Fatalf("%q was accepted, want a rejection", value)
+			}
+			if !strings.Contains(err.Error(), externalOriginSetting) {
+				t.Errorf("error = %q, want it to name %s", err, externalOriginSetting)
+			}
+		})
+	}
+}
+
+func TestAuthenticationValidateAcceptsAnAbsoluteExternalOrigin(t *testing.T) {
+	for _, value := range []string{
+		"https://horizon.example",
+		"https://horizon.example/",
+		"https://horizon.example:8443",
+		"http://horizon.example",
+	} {
+		if err := completeAuthenticationOn(value).Validate(); err != nil {
+			t.Errorf("%q was rejected with %v, want it accepted", value, err)
+		}
+	}
+}
+
+func TestNewRefusesAnExternalOriginThatIsNotOne(t *testing.T) {
+	auth := completeAuthenticationOn("horizon.example")
+
+	_, err := New(Options{
+		Client:         failingReader{err: errors.New("unused")},
+		Catalogue:      AbsentCatalogue(),
+		Authentication: &auth,
+	})
+	if err == nil {
+		t.Error("the server was built, want a rejection")
+	}
+}
+
+func completeAuthenticationOn(origin string) Authentication {
+	auth := completeAuthentication()
+	auth.ExternalOrigin = origin
+	return auth
+}
+
 func TestNewRefusesAnIncompleteAuthentication(t *testing.T) {
 	auth := completeAuthentication()
 	auth.Audience = ""

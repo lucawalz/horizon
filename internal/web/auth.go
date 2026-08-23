@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	issuerSetting        = "oidc-issuer"
-	audienceSetting      = "oidc-audience"
-	headerSetting        = "auth-header"
-	usernameClaimSetting = "username-claim"
-	groupsClaimSetting   = "groups-claim"
+	issuerSetting         = "oidc-issuer"
+	audienceSetting       = "oidc-audience"
+	headerSetting         = "auth-header"
+	usernameClaimSetting  = "username-claim"
+	groupsClaimSetting    = "groups-claim"
+	externalOriginSetting = "external-origin"
 
 	bearerPrefix       = "Bearer "
 	credentialMissing  = "this interface requires a bearer token in "
@@ -55,10 +56,28 @@ func (a Authentication) Validate() error {
 			missing = append(missing, setting.name)
 		}
 	}
-	if len(missing) == 0 {
-		return nil
+	if len(missing) > 0 {
+		return fmt.Errorf("an authenticated interface requires %s", strings.Join(missing, ", "))
 	}
-	return fmt.Errorf("an authenticated interface requires %s", strings.Join(missing, ", "))
+	_, err := a.anchor()
+	return err
+}
+
+func (a Authentication) anchor() (originAnchor, error) {
+	if a.ExternalOrigin == "" {
+		return originAnchor{}, nil
+	}
+	return parseExternalOrigin(a.ExternalOrigin)
+}
+
+func validatedAnchor(a *Authentication) (originAnchor, error) {
+	if a == nil {
+		return originAnchor{}, nil
+	}
+	if err := a.Validate(); err != nil {
+		return originAnchor{}, err
+	}
+	return a.anchor()
 }
 
 type rejectingVerifier struct{}
