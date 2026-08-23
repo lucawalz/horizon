@@ -1,0 +1,22 @@
+{{- if .Values.ui.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "horizon.interfaceFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "horizon.interfaceLabels" . | nindent 4 }}
+  {{- with .Values.ui.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ui.service.type }}
+  selector:
+    {{- include "horizon.interfaceSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: interface
+      port: {{ .Values.ui.port }}
+      targetPort: interface
+      protocol: TCP
+{{- end }}

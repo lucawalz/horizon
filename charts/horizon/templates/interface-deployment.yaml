@@ -1,0 +1,52 @@
+{{- if .Values.ui.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "horizon.interfaceFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "horizon.interfaceLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.ui.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "horizon.interfaceSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "horizon.interfaceSelectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "horizon.interfaceIdentity" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.ui.podSecurityContext | nindent 8 }}
+      containers:
+        - name: interface
+          image: {{ include "horizon.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- include "horizon.interfaceArgs" . | nindent 12 }}
+          ports:
+            - name: interface
+              containerPort: {{ .Values.ui.port }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: interface
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.ui.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -9,6 +9,10 @@ Leases:
   kubectl get capacityleases
 
 Metrics are served on the {{ include "horizon.fullname" . }} service, port {{ .Values.service.metricsPort }}, named metrics.
+{{- if .Values.ui.enabled }}
+
+The web interface is served on the {{ include "horizon.interfaceFullname" . }} service, port {{ .Values.ui.port }}. It verifies every caller against {{ .Values.ui.oidc.issuer }} and then impersonates the identity the token names, so a caller reaches exactly what its own permissions allow.
+{{- end }}
 {{- if and .Values.serviceMonitor.enabled (not (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")) }}
 
 serviceMonitor.enabled is set, but the cluster serves no monitoring.coreos.com/v1 API, so no ServiceMonitor was created. Install the Prometheus operator custom resource definitions and upgrade the release.

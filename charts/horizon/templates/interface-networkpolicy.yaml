@@ -1,0 +1,29 @@
+{{- if and .Values.ui.enabled .Values.ui.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "horizon.interfaceFullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "horizon.interfaceLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "horizon.interfaceSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  {{- if .Values.ui.networkPolicy.ingressNamespaces }}
+  ingress:
+    - from:
+        {{- range .Values.ui.networkPolicy.ingressNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.ui.port }}
+  {{- else }}
+  ingress: []
+  {{- end }}
+{{- end }}

@@ -41,6 +41,58 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 
+{{- define "horizon.interfaceComponent" -}}interface{{- end -}}
+
+{{- define "horizon.interfaceFullname" -}}
+{{- printf "%s-%s" (include "horizon.fullname" .) (include "horizon.interfaceComponent" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "horizon.interfaceSelectorLabels" -}}
+{{ include "horizon.selectorLabels" . }}
+app.kubernetes.io/component: {{ include "horizon.interfaceComponent" . }}
+{{- end -}}
+
+{{- define "horizon.interfaceLabels" -}}
+{{ include "horizon.labels" . }}
+app.kubernetes.io/component: {{ include "horizon.interfaceComponent" . }}
+{{- end -}}
+
+{{- define "horizon.interfaceServiceAccountName" -}}
+{{- if .Values.ui.serviceAccount.create -}}
+{{- default (include "horizon.interfaceFullname" .) .Values.ui.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.ui.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "horizon.interfaceIdentity" -}}
+{{- $controller := include "horizon.serviceAccountName" . -}}
+{{- $interface := include "horizon.interfaceServiceAccountName" . -}}
+{{- if eq $controller $interface -}}
+{{- fail (printf "ui.serviceAccount.name must not be the controller service account %s; a shared account would grant the controller impersonation" $controller) -}}
+{{- end -}}
+{{- $interface -}}
+{{- end -}}
+
+{{- define "horizon.interfaceArgs" -}}
+{{- $missing := list -}}
+{{- if not .Values.ui.oidc.issuer }}{{- $missing = append $missing "ui.oidc.issuer" -}}{{- end -}}
+{{- if not .Values.ui.oidc.audience }}{{- $missing = append $missing "ui.oidc.audience" -}}{{- end -}}
+{{- if $missing -}}
+{{- fail (printf "ui.enabled requires OIDC verification; empty values: %s. The interface would otherwise serve cluster impersonation to unauthenticated callers" (join ", " $missing)) -}}
+{{- end -}}
+- serve
+- {{ printf "--bind-address=%s:%v" .Values.ui.bindHost .Values.ui.port | quote }}
+- {{ printf "--auth-header=%s" .Values.ui.authHeader | quote }}
+- {{ printf "--oidc-issuer=%s" .Values.ui.oidc.issuer | quote }}
+- {{ printf "--oidc-audience=%s" .Values.ui.oidc.audience | quote }}
+- {{ printf "--username-claim=%s" .Values.ui.usernameClaim | quote }}
+- {{ printf "--groups-claim=%s" .Values.ui.groupsClaim | quote }}
+{{- with .Values.ui.externalOrigin }}
+- {{ printf "--external-origin=%s" . | quote }}
+{{- end }}
+{{- end -}}
+
 {{- define "horizon.image" -}}
 {{- if .Values.image.digest -}}
 {{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
