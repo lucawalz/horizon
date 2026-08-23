@@ -1,0 +1,152 @@
+# Serving the web interface in a cluster
+
+`horizon serve` serves the same web interface as `horizon dashboard`, on a routable address instead of loopback, for a team rather than for one operator at one terminal. The two modes differ in who is trusted and how. The local dashboard trusts whoever reaches the socket, because on loopback that is the person whose kubeconfig it is already spending. The served mode trusts nobody by default: it verifies a signed token on every request, impersonates the identity that token names, and lets the cluster's own RBAC decide what happens next.
+
+The chart ships the mode off. Enabling it is a deliberate step, and it cannot be taken without configuring an identity provider first. The reasoning behind every choice described here is recorded in [ADR 0028](adr/0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md), and the cross-origin guard it inherits is recorded in [ADR 0027](adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md).
+
+## What the interface expects
+
+Every request has to carry a signed JWT in a configured header, `Authorization` by default, with or without the `Bearer` scheme. The token has to be issued by the configured issuer and name the configured audience, and it has to be signed with an asymmetric algorithm using a key the issuer publishes.
+
+The key set is discovered from the issuer's own `/.well-known/openid-configuration` document and is not configurable separately. An issuer stated in one place and a key set taken from another would verify tokens minted by whoever owned the second setting, which is a signature verification bypass rather than a misconfiguration, so the issuer is the single value an adopter states and the key set follows from it.
+
+Two claims are read off the verified token: one naming the user and one listing group memberships, `preferred_username` and `groups` by default. The username claim has to be present and non-empty or the token is rejected. The groups claim may be absent, which yields an identity with no group memberships.
+
+## Enabling it
+
+```yaml
+ui:
+  enabled: true
+  oidc:
+    issuer: https://sso.example.com/application/o/horizon/
+    audience: horizon
+  externalOrigin: https://horizon.example.com
+  rbac:
+    impersonateGroups:
+      - platform
+```
+
+| Value | What it does |
+| --- | --- |
+| `ui.enabled` | Templates the interface Deployment, Service, ServiceAccount, ClusterRole, binding and NetworkPolicy. Off by default. |
+| `ui.oidc.issuer` | The identity provider whose tokens are accepted, and the document the verification key set is discovered from. Required. |
+| `ui.oidc.audience` | The audience a token has to name. Required. A token issued for another application is refused. |
+| `ui.externalOrigin` | The origin a browser reaches the interface at. Required for creating and releasing leases from the interface, because the cross-origin guard compares a mutating request against it. |
+| `ui.authHeader` | The request header the token arrives in. `Authorization` by default. |
+| `ui.usernameClaim` | The claim the impersonated username is read from. |
+| `ui.groupsClaim` | The claim the impersonated group memberships are read from. |
+| `ui.rbac.impersonateUsers` | Usernames the interface is permitted to impersonate. Empty leaves the rule unrestricted. |
+| `ui.rbac.impersonateGroups` | Groups the interface is permitted to impersonate. Empty leaves the rule unrestricted. |
+| `ui.networkPolicy.ingressNamespaces` | Namespaces permitted to reach the interface port. `traefik` by default; an empty list admits nothing. |
+
+The full set, including the port, the service type, resources and security contexts, is documented in the [chart README](../charts/horizon/README.md#web-interface).
+
+Two guards make a half-configured install fail early rather than serve. The chart refuses to render when `ui.enabled` is set and either OIDC value is empty, naming whichever is missing, and the command itself refuses to bind a routable address unless the issuer, the audience, the header and both claim names are all set. An interface that cannot verify a caller never reaches the point of listening.
+
+The interface pod needs egress to the apiserver and to the identity provider. The chart templates no egress rule, because neither address is knowable at packaging time and a rule built on a guess would fail closed on a path the chart cannot verify. Under a default-deny egress policy that rule has to be written by hand, and the symptom of forgetting it is a pod that starts, fails discovery, and never serves.
+
+## Putting a verified token in front of it
+
+The interface verifies the token itself, so anything that delivers a valid token works and nothing about the delivery mechanism is trusted. Any OIDC provider publishing a discoverable key set is usable, and no product is required.
+
+`oauth2-proxy` is one supported arrangement and not a dependency. Deployed in front of the interface, it authenticates the browser against the provider, obtains a token, and forwards it in the header the interface reads. Whatever sits in front has to satisfy three things:
+
+- the forwarded credential is a JWT issued by the same issuer configured in `ui.oidc.issuer`, signed asymmetrically with a key that issuer publishes,
+- the token names the audience configured in `ui.oidc.audience`,
+- the token carries the username claim, and the group claim where group-based RBAC is intended.
+
+Provider-side, a proxy or forward-auth provider is often the wrong object to configure. Some publish no usable key set at all and sign their forwarded token symmetrically with the client secret, which the interface refuses by design, because a verifier holding the signing key can mint what it verifies. A standard OAuth2 or OIDC application object, of the kind that publishes a key set at its discovery document, is the one to create.
+
+The `Host` a browser reaches and the address the interface bound are different things behind a proxy, so `ui.externalOrigin` has to state the browser-facing origin exactly, scheme included. Without it the interface still serves every read, and refuses every create and release with `403`. Forwarded headers such as `X-Forwarded-Host` are read by nothing, because anything able to route to the pod can write them.
+
+## Granting the impersonated identity its rights
+
+The interface holds no permissions over horizon's own resources and never acts under its own name. Every call it makes to the apiserver impersonates the identity the token named, so an operator who has not been granted anything sees the apiserver's refusal. Access is granted in the cluster, with ordinary RBAC, and revoked the same way.
+
+`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. This role covers everything the interface can do: list and read leases, create one, release one by deleting it, and read the provider configurations the create form offers.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: horizon-lease-operator
+rules:
+  - apiGroups:
+      - horizon.dev
+    resources:
+      - capacityleases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+  - apiGroups:
+      - horizon.dev
+    resources:
+      - providerconfigs
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: horizon-lease-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: horizon-lease-operator
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: platform
+```
+
+Dropping `create` and `delete` from the first rule leaves a read-only operator: the interface serves every view and answers a create or a release with the apiserver's refusal. The two directions are worth separating, since a create is a machine that is billed and a delete is a lease released early.
+
+### Narrow the impersonation permission
+
+Left unrestricted, the interface's ClusterRole permits `impersonate` on every user and every group in the cluster, including a cluster administrator. That makes the interface pod the most valuable target in its namespace, since anything that compromises it inherits the ability to act as anybody. The defaults are empty because the set of names is rarely known at install time, not because empty is a good production value.
+
+`ui.rbac.impersonateUsers` and `ui.rbac.impersonateGroups` become the `resourceNames` of the `users` rule and the `groups` rule, so only the listed identities can be impersonated at all:
+
+```yaml
+ui:
+  rbac:
+    impersonateUsers:
+      - alice@example.com
+    impersonateGroups:
+      - platform
+```
+
+The two lists are independent, and a list left empty leaves that resource unrestricted. Narrowing both is strongly recommended in production. Where identities are managed by group, listing the groups and leaving the user list empty still permits impersonation of any username, so both lists matter.
+
+## The security properties this rests on
+
+Stated plainly, so that an adopter can decide whether the arrangement is acceptable and what has to hold for it to stay so.
+
+**The identity provider is the only thing that can vouch for an identity.** Tokens are verified against the key set the issuer publishes about itself, using asymmetric algorithms only. Nothing in front of the interface is trusted to assert who a caller is, and no header stating an identity is believed.
+
+**The cluster decides what a caller may do, not horizon.** Authorisation is impersonation and nothing else. There is no permission model inside the application to get wrong, no allowlist to keep in step with the cluster, and no path by which a caller reaches more than their own RBAC grants.
+
+**The interface has no privileges of its own.** Its ServiceAccount holds `impersonate` and nothing further. It cannot read a lease, create one, or touch a node under its own name. The controller's account never gains `impersonate`, the two accounts are separate, and the chart refuses to render if they collide.
+
+**The impersonation permission is the boundary to audit.** Everything above rests on the interface being able to impersonate only intended identities. Narrowing `resourceNames` is what turns a compromise of the pod into a bounded problem rather than a cluster takeover.
+
+**A mutation has to come from the configured origin.** The cross-origin guard is anchored to `ui.externalOrigin`, a process argument no request can move, and it also requires a header the interface sets on its own calls plus `Sec-Fetch-Site: same-origin`. No CORS header is served by anything, which is what makes a cross-origin preflight fail.
+
+**Authentication settings are process arguments, not cluster objects.** Whoever can write a custom resource cannot repoint the issuer, so authentication cannot be collapsed into write access on an object. Changing who is trusted means changing the deployment.
+
+**The network policy is a second line and not the first.** Restricting ingress to the proxy namespace reduces exposure, but the token verification does not depend on it. A request arriving from anywhere else is still refused for want of a valid token.
+
+## Reading a refusal
+
+| Response | What it means |
+| --- | --- |
+| `401` naming the header | No credential arrived. The proxy is not forwarding a token, or it is forwarding it in a different header from `ui.authHeader`. |
+| `401` reporting a token that could not be verified | A token arrived and failed verification: wrong issuer, wrong audience, expired, signed with an algorithm that is not accepted, or missing the username claim. |
+| `403` from the interface, on a create or a release only | The cross-origin guard refused. Usually `ui.externalOrigin` is unset or does not match the origin the browser used, scheme included. |
+| `403` from the apiserver, naming a resource | The impersonated identity is not permitted to do this, or the interface is not permitted to impersonate that identity. Both are RBAC. |
+| `501` on a create or a release | The process serves a read-only interface and holds no client that may write. `horizon serve` always supplies one, so this belongs to an embedder rather than to a chart install. |

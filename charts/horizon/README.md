@@ -101,6 +101,8 @@ The monitor is created in the release namespace and selects the chart's own Serv
 
 ### Web interface
 
+The end-to-end guide to this mode, covering what an identity provider has to publish, how to grant an impersonated operator rights over horizon's resources, and the security properties the arrangement rests on, is [docs/serving-the-interface.md](../../docs/serving-the-interface.md). The decision behind it is [ADR 0028](../../docs/adr/0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md).
+
 | Key | Default | Description |
 | --- | --- | --- |
 | `ui.enabled` | `false` | Template the in-cluster web interface. Off by default; the interface is reachable by anything that can route to it, so it is served only once an identity provider is configured to authenticate callers. |
