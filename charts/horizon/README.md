@@ -4,7 +4,7 @@ Installs the horizon controller, which leases on-demand cloud capacity for a Kub
 
 The chart templates a Deployment, a ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service carrying the metrics port, an optional ServiceMonitor for it, and the two `horizon.dev` custom resource definitions.
 
-The web interface is not served in the cluster by this release. It is served locally instead, by `horizon dashboard` on the loopback address of the machine that runs it. The chart templates nothing for the in-cluster mode, so no port, Service entry or Ingress advertises an endpoint the deployed binary does not answer. The values keys return alongside that mode and the authentication it requires. The mode is opt-in when it returns, rather than enabled by default.
+The web interface is a second workload, and it is off by default. With `ui.enabled` unset the chart templates nothing for it, so no port, Service entry or route advertises an in-cluster endpoint, and the interface is reached instead through `horizon dashboard` on the loopback address of the machine that runs it. Setting `ui.enabled` adds a separate Deployment, ServiceAccount, ClusterRole and binding, Service and NetworkPolicy, all described under Web interface below. It is opt-in rather than on by default because the in-cluster mode is reachable by anything that can route to it, and it needs an identity provider to authenticate callers before that is safe.
 
 ## Installing
 
@@ -99,6 +99,58 @@ helm template horizon ./charts/horizon \
 
 The monitor is created in the release namespace and selects the chart's own Service by `app.kubernetes.io/name` and `app.kubernetes.io/instance`, so a Prometheus whose `serviceMonitorNamespaceSelector` is empty picks it up wherever the release lives.
 
+### Web interface
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `ui.enabled` | `false` | Template the in-cluster web interface. Off by default; the interface is reachable by anything that can route to it, so it is served only once an identity provider is configured to authenticate callers. |
+| `ui.replicaCount` | `1` | Number of interface replicas. |
+| `ui.bindHost` | `0.0.0.0` | Address the interface binds inside the pod. |
+| `ui.port` | `8082` | Port the interface binds, and the port its Service publishes. |
+| `ui.authHeader` | `Authorization` | Request header carrying the token minted by the authenticating proxy. |
+| `ui.oidc.issuer` | `""` | Issuer URL of the identity provider. Required when `ui.enabled` is set. The key set used to verify a token is discovered from the issuer, so it is not configured separately. |
+| `ui.oidc.audience` | `""` | Audience a token has to name to be accepted. Required when `ui.enabled` is set. |
+| `ui.usernameClaim` | `preferred_username` | Token claim carrying the username to impersonate. |
+| `ui.groupsClaim` | `groups` | Token claim carrying the groups to impersonate. |
+| `ui.externalOrigin` | `""` | Origin a browser reaches the interface at, such as `https://horizon.example.com`. Behind a proxy that origin is not the address the interface bound, and the cross-origin guard compares a mutating request against it. |
+| `ui.serviceAccount.create` | `true` | Create the interface ServiceAccount. |
+| `ui.serviceAccount.name` | `""` | Interface ServiceAccount name; defaults to the release full name with `-interface` appended. |
+| `ui.serviceAccount.annotations` | `{}` | Interface ServiceAccount annotations. |
+| `ui.rbac.create` | `true` | Create the interface ClusterRole and its binding. |
+| `ui.rbac.impersonateUsers` | `[]` | Usernames the interface may impersonate. Empty leaves the rule unrestricted. |
+| `ui.rbac.impersonateGroups` | `[]` | Groups the interface may impersonate. Empty leaves the rule unrestricted. |
+| `ui.service.type` | `ClusterIP` | Interface Service type. |
+| `ui.service.annotations` | `{}` | Interface Service annotations. |
+| `ui.networkPolicy.enabled` | `true` | Template a NetworkPolicy restricting which namespaces may reach the interface port. |
+| `ui.networkPolicy.ingressNamespaces` | `[traefik]` | Namespaces allowed to reach the interface, matched on `kubernetes.io/metadata.name`. An empty list admits nothing, which is the direction that fails safe. |
+
+`ui.resources`, `ui.podSecurityContext` and `ui.securityContext` mirror the controller keys of the same name and carry the same defaults, so the interface pod satisfies the same admission policies without further configuration.
+
+The Service is named after the release with `-interface` appended, and it publishes `ui.port`. Both are part of wiring that lives outside the chart: an ingress route and a cluster NetworkPolicy select the Service by that name and that port.
+
+The chart refuses to render when `ui.enabled` is set and `ui.oidc.issuer` or `ui.oidc.audience` is empty, and the failure names whichever is missing. Without a verified issuer and audience the interface would trust whatever identity a request claimed, so rendering it is worse than not rendering it.
+
+The NetworkPolicy restricts ingress only. It selects the interface pods by `app.kubernetes.io/component: interface` and admits the listed namespaces on `ui.port`. Egress is left alone deliberately: the addresses the interface needs, the apiserver and the identity provider, differ from cluster to cluster, and a rule built on a guess would fail closed on a path the chart cannot verify.
+
+#### Identity separation
+
+The interface runs under its own ServiceAccount, and that account is the only subject of the only role in the chart that grants `impersonate`. That verb is the whole of the interface's own authorisation: it reads and writes nothing under its own name. Every request it serves is made as the identity the token named, and the apiserver applies that identity's permissions to it.
+
+The controller ClusterRole is untouched by `ui.enabled` and never gains `impersonate`. The two workloads hold separate accounts with separate bindings, so neither role widens the other. The chart also refuses to render when `ui.serviceAccount.name` resolves to the controller account, because one shared identity would hand the controller impersonation and hand the interface the permission to delete nodes.
+
+Unrestricted, `impersonate` on `users` and `groups` lets the interface act as any identity in the cluster, including a cluster administrator, which makes the interface pod the most valuable target in the namespace. Restricting it in production is strongly advised. `ui.rbac.impersonateUsers` and `ui.rbac.impersonateGroups` become the `resourceNames` of the `users` rule and the `groups` rule respectively, so only the listed names may be impersonated:
+
+```
+ui:
+  rbac:
+    impersonateUsers:
+      - alice@example.com
+    impersonateGroups:
+      - platform
+```
+
+Each list is independent, and a list left empty leaves that resource unrestricted. The default is both lists empty, because the set of names is rarely known before install, and a chart that refused to render without them could not be installed at all.
+
 ### Permissions
 
 | Key | Default | Description |
@@ -109,6 +161,8 @@ The monitor is created in the release namespace and selects the chart's own Serv
 | `serviceAccount.annotations` | `{}` | ServiceAccount annotations. |
 
 The ClusterRole grants full access to `capacityleases` and `providerconfigs` including their status and finalizer subresources; get, list, watch, patch, update, and delete on nodes; get, list, and watch on pods; create on pod evictions; create and patch on events in both the core and `events.k8s.io` API groups; and get, list, watch, and patch on Deployments and StatefulSets. The namespaced Role grants read access to Secrets and, when leader election is on, the Lease permissions it needs.
+
+These keys cover the controller only. The web interface carries its own account and its own role, described under Web interface above, and the two never share either.
 
 ### Scheduling and resources
 
