@@ -33,6 +33,8 @@ Before this the loopback binding was constructed inside the server, and the prop
 
 The ordering is the decision rather than the checks. A privileged endpoint that cannot identify its callers must never reach the point of binding, so a missing setting is a startup failure read in a crash loop and not a runtime discovery made from an audit log.
 
+Settings alone were not enough to hold that property. Discovery fetches the issuer's configuration document, but the key set behind it is fetched lazily on the first verification, so a process able to reach one and not the other bound cleanly and answered every request with `401`. Startup now fetches the key set as well and requires at least one asymmetric public key in it, naming both the issuer and the key set address when it cannot get one. An empty key set fails the same way an unreachable one does, because a set with nothing usable in it rejects every token that will ever arrive.
+
 ### The key set is discovered from the issuer and cannot be configured beside it
 
 A caller presents a signed JWT in a configurable header, `Authorization` by default. The `Bearer` scheme is stripped where it is present rather than demanded, because a proxy in front may forward the credential bare. The token is verified against the key set named by the issuer's own `/.well-known/openid-configuration` document.

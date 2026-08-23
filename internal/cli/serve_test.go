@@ -1,8 +1,19 @@
 package cli_test
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"io"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"k8s.io/client-go/rest"
@@ -13,12 +24,17 @@ import (
 	"github.com/lucawalz/horizon/internal/web"
 )
 
-const servedTestAPIServer = "https://127.0.0.1:6443"
+const (
+	servedTestAPIServer = "https://127.0.0.1:6443"
+	servedTestAudience  = "horizon"
+	servedTestBind      = "127.0.0.1:0"
+	servedTestKeySize   = 2048
+)
 
 func servedTestAuthentication() web.Authentication {
 	return web.Authentication{
 		Issuer:        "https://issuer.example",
-		Audience:      "horizon",
+		Audience:      servedTestAudience,
 		Header:        "Authorization",
 		UsernameClaim: "preferred_username",
 		GroupsClaim:   "groups",
@@ -192,5 +208,183 @@ func TestServeSuppliesImpersonatedClientsRatherThanItsOwn(t *testing.T) {
 	}
 	if _, err := web.New(opts); err != nil {
 		t.Errorf("the interface refused the options serve builds: %v", err)
+	}
+}
+
+type publishedIssuer struct {
+	url  string
+	keys *httptest.Server
+}
+
+func startPublishedIssuer(t *testing.T, keySet any) *publishedIssuer {
+	t.Helper()
+	published := &publishedIssuer{keys: httptest.NewServer(servedTestJSON(t, keySet))}
+	t.Cleanup(published.keys.Close)
+
+	discovery := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		servedTestJSON(t, map[string]any{
+			"issuer":                                published.url,
+			"jwks_uri":                              published.keys.URL,
+			"authorization_endpoint":                published.url + "/auth",
+			"token_endpoint":                        published.url + "/token",
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		})(w, nil)
+	}))
+	t.Cleanup(discovery.Close)
+	published.url = discovery.URL
+	return published
+}
+
+func servedTestJSON(t *testing.T, body any) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(body); err != nil {
+			t.Errorf("write a json response: %v", err)
+		}
+	}
+}
+
+func servedTestSigningKeySet(t *testing.T) map[string]any {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, servedTestKeySize)
+	if err != nil {
+		t.Fatalf("generate a signing key: %v", err)
+	}
+	return map[string]any{"keys": []any{map[string]any{
+		"kty": "RSA",
+		"alg": "RS256",
+		"use": "sig",
+		"kid": "horizon-serve",
+		"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+	}}}
+}
+
+func servedTestSymmetricKeySet() map[string]any {
+	return map[string]any{"keys": []any{map[string]any{
+		"kty": "oct",
+		"use": "sig",
+		"kid": "horizon-shared-secret",
+		"k":   base64.RawURLEncoding.EncodeToString([]byte("a-shared-secret-nobody-should-trust")),
+	}}}
+}
+
+// a startup that reaches its listener never returns on its own, so serving is observed through the banner rather than waited for
+func runServeAgainst(t *testing.T, issuer string) error {
+	t.Helper()
+	t.Setenv("KUBECONFIG", writeTestKubeconfig(t))
+	cmd, opts := cli.NewServeCmdForTest()
+	if err := cmd.ParseFlags([]string{
+		"--oidc-issuer=" + issuer,
+		"--oidc-audience=" + servedTestAudience,
+		"--bind-address=" + servedTestBind,
+	}); err != nil {
+		t.Fatalf("parse the flags: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	banner := &startupBanner{written: make(chan struct{})}
+	served := make(chan error, 1)
+	go func() { served <- cli.RunServeForTest(ctx, banner, *opts) }()
+
+	select {
+	case err := <-served:
+		return err
+	case <-banner.written:
+		cancel()
+		<-served
+		return nil
+	}
+}
+
+func refusalNaming(t *testing.T, err error, issuer, keySetURL string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("serve started, want a refusal")
+	}
+	if !strings.Contains(err.Error(), issuer) {
+		t.Errorf("error = %q, want it to name the issuer %s", err, issuer)
+	}
+	if !strings.Contains(err.Error(), keySetURL) {
+		t.Errorf("error = %q, want it to name the key set %s", err, keySetURL)
+	}
+}
+
+func TestServeRefusesAnIssuerWhoseKeySetIsUnreachable(t *testing.T) {
+	published := startPublishedIssuer(t, map[string]any{"keys": []any{}})
+	published.keys.Close()
+
+	refusalNaming(t, runServeAgainst(t, published.url), published.url, published.keys.URL)
+}
+
+func TestServeRefusesAnIssuerPublishingAnEmptyKeySet(t *testing.T) {
+	published := startPublishedIssuer(t, map[string]any{})
+
+	refusalNaming(t, runServeAgainst(t, published.url), published.url, published.keys.URL)
+}
+
+func TestServeRefusesAnIssuerPublishingOnlyASymmetricKey(t *testing.T) {
+	published := startPublishedIssuer(t, servedTestSymmetricKeySet())
+
+	refusalNaming(t, runServeAgainst(t, published.url), published.url, published.keys.URL)
+}
+
+type startupBanner struct {
+	text    strings.Builder
+	written chan struct{}
+	once    sync.Once
+}
+
+func (b *startupBanner) Write(p []byte) (int, error) {
+	n, err := b.text.Write(p)
+	b.once.Do(func() { close(b.written) })
+	return n, err
+}
+
+func writeTestKubeconfig(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "kubeconfig")
+	body := "apiVersion: v1\nkind: Config\ncurrent-context: test\nclusters:\n- name: test\n  cluster:\n    server: " +
+		servedTestAPIServer + "\n    insecure-skip-tls-verify: true\ncontexts:\n- name: test\n  context:\n" +
+		"    cluster: test\n    user: test\nusers:\n- name: test\n  user:\n    token: unused\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write a kubeconfig: %v", err)
+	}
+	return path
+}
+
+func TestServeStartsWhenTheIssuerPublishesASigningKey(t *testing.T) {
+	published := startPublishedIssuer(t, servedTestSigningKeySet(t))
+	t.Setenv("KUBECONFIG", writeTestKubeconfig(t))
+
+	cmd, opts := cli.NewServeCmdForTest()
+	if err := cmd.ParseFlags([]string{
+		"--oidc-issuer=" + published.url,
+		"--oidc-audience=" + servedTestAudience,
+		"--bind-address=" + servedTestBind,
+	}); err != nil {
+		t.Fatalf("parse the flags: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	banner := &startupBanner{written: make(chan struct{})}
+	served := make(chan error, 1)
+	go func() { served <- cli.RunServeForTest(ctx, banner, *opts) }()
+
+	select {
+	case <-banner.written:
+	case err := <-served:
+		cancel()
+		t.Fatalf("serve returned before it bound: %v", err)
+	}
+	cancel()
+
+	if err := <-served; err != nil {
+		t.Fatalf("serve: %v", err)
+	}
+	if !strings.Contains(banner.text.String(), servedTestBind) {
+		t.Errorf("output = %q, want it to name the bound address", banner.text.String())
 	}
 }

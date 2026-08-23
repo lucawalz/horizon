@@ -43,6 +43,8 @@ The full set, including the port, the service type, resources and security conte
 
 Two guards make a half-configured install fail early rather than serve. The chart refuses to render when `ui.enabled` is set and either OIDC value is empty, naming whichever is missing, and the command itself refuses to bind a routable address unless the issuer, the audience, the header and both claim names are all set. An interface that cannot verify a caller never reaches the point of listening.
 
+Startup also proves the key set is usable rather than assuming it. The command fetches the address the discovery document names and requires at least one asymmetric public key in it, so an unreachable key set and an empty one both stop the process with an error naming the issuer and the address it read. Without that fetch the key set is first read on the first request, which turns either fault into a healthy pod answering `401` to everything.
+
 The interface pod needs egress to the apiserver and to the identity provider. The chart templates no egress rule, because neither address is knowable at packaging time and a rule built on a guess would fail closed on a path the chart cannot verify. Under a default-deny egress policy that rule has to be written by hand, and the symptom of forgetting it is a pod that starts, fails discovery, and never serves.
 
 ## Putting a verified token in front of it

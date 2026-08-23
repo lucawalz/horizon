@@ -35,6 +35,9 @@ func NewVerifier(ctx context.Context, auth web.Authentication) (*Verifier, error
 	if err != nil {
 		return nil, fmt.Errorf("discover the oidc issuer %s: %w", auth.Issuer, err)
 	}
+	if err := assertKeySetCanVerify(ctx, provider, auth.Issuer); err != nil {
+		return nil, err
+	}
 	return &Verifier{
 		tokens: provider.Verifier(&gooidc.Config{
 			ClientID:             auth.Audience,
