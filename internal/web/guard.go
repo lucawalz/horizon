@@ -92,7 +92,7 @@ func (s *Server) mutating(next http.HandlerFunc) http.HandlerFunc {
 			writeAPIError(w, http.StatusForbidden, refusal)
 			return
 		}
-		if s.writer == nil {
+		if s.writers == nil {
 			writeAPIError(w, http.StatusNotImplemented, readOnlyInterface)
 			return
 		}

@@ -106,9 +106,12 @@ func workloadRefFor(namespace string) *v1alpha1.WorkloadRef {
 }
 
 // the apiserver names the rule a rejected lease broke, which is more accurate than anything this handler can restate
-func writeClusterRefusal(w http.ResponseWriter, err error, name, fallback string) {
+func writeClusterRefusal(w http.ResponseWriter, r *http.Request, err error, name, fallback string) {
 	if apierrors.IsNotFound(err) {
 		writeLeaseNotFound(w, name)
+		return
+	}
+	if refusedByAuthorisation(w, r, err) {
 		return
 	}
 
@@ -123,6 +126,11 @@ func writeClusterRefusal(w http.ResponseWriter, err error, name, fallback string
 }
 
 func (s *Server) leaseCreate(w http.ResponseWriter, r *http.Request) {
+	writer, held := requestClient(w, r, s.writers)
+	if !held {
+		return
+	}
+
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 
@@ -138,8 +146,8 @@ func (s *Server) leaseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.writer.Create(r.Context(), lease); err != nil {
-		writeClusterRefusal(w, err, lease.Name, leaseCreateFailed)
+	if err := writer.Create(r.Context(), lease); err != nil {
+		writeClusterRefusal(w, r, err, lease.Name, leaseCreateFailed)
 		return
 	}
 	writeJSON(w, http.StatusCreated, newLeaseDetailResponse(lease, time.Now()))
@@ -147,14 +155,19 @@ func (s *Server) leaseCreate(w http.ResponseWriter, r *http.Request) {
 
 // deleting the lease asks the controller for a teardown through its finalizer rather than destroying anything here
 func (s *Server) leaseRelease(w http.ResponseWriter, r *http.Request) {
+	writer, held := requestClient(w, r, s.writers)
+	if !held {
+		return
+	}
+
 	name := r.PathValue("name")
 	if refusedAsAnInvalidName(w, name) {
 		return
 	}
 
 	lease := &v1alpha1.CapacityLease{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	if err := s.writer.Delete(r.Context(), lease); err != nil {
-		writeClusterRefusal(w, err, name, leaseReleaseFailed)
+	if err := writer.Delete(r.Context(), lease); err != nil {
+		writeClusterRefusal(w, r, err, name, leaseReleaseFailed)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, leaseReleaseResponse{Name: name, Detail: releaseRequested})

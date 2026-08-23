@@ -244,8 +244,16 @@ func writeLeaseNotFound(w http.ResponseWriter, name string) {
 }
 
 func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
+	reader, held := requestClient(w, r, s.readers)
+	if !held {
+		return
+	}
+
 	var leases v1alpha1.CapacityLeaseList
-	if err := s.client.List(r.Context(), &leases); err != nil {
+	if err := reader.List(r.Context(), &leases); err != nil {
+		if refusedByAuthorisation(w, r, err) {
+			return
+		}
 		slog.Error("list the capacity leases", "error", err)
 		writeAPIError(w, http.StatusBadGateway, leaseReadFailed)
 		return
@@ -259,10 +267,18 @@ func (s *Server) leaseDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reader, held := requestClient(w, r, s.readers)
+	if !held {
+		return
+	}
+
 	var lease v1alpha1.CapacityLease
-	if err := s.client.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {
+	if err := reader.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {
 		if apierrors.IsNotFound(err) {
 			writeLeaseNotFound(w, name)
+			return
+		}
+		if refusedByAuthorisation(w, r, err) {
 			return
 		}
 		slog.Error("read the capacity lease", "lease", name, "error", err)

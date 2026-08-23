@@ -33,6 +33,9 @@ type Options struct {
 	// the read-only guarantee is the type of this field, so an embedder that supplies none cannot be made to write
 	Writer LeaseWriter
 
+	// clients built per request from the verified identity, in place of the pair above
+	Impersonation *Impersonation
+
 	Catalogue catalogue.Reader
 
 	// a binding wider than loopback is reachable by anyone who can route to it, so it only serves once this stands in front of it
@@ -40,8 +43,8 @@ type Options struct {
 }
 
 type Server struct {
-	client    client.Reader
-	writer    LeaseWriter
+	readers   source[client.Reader]
+	writers   source[LeaseWriter]
 	catalogue catalogue.Reader
 	auth      *Authentication
 	external  originAnchor
@@ -49,8 +52,9 @@ type Server struct {
 }
 
 func New(opts Options) (*Server, error) {
-	if opts.Client == nil {
-		return nil, errors.New("web: a cluster client is required")
+	readers, err := readerSource(opts)
+	if err != nil {
+		return nil, err
 	}
 	if opts.Catalogue == nil {
 		return nil, errors.New("web: a catalogue reader is required")
@@ -60,8 +64,8 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	return &Server{
-		client:    opts.Client,
-		writer:    opts.Writer,
+		readers:   readers,
+		writers:   writerSource(opts),
 		catalogue: opts.Catalogue,
 		auth:      opts.Authentication,
 		external:  external,

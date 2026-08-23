@@ -171,8 +171,16 @@ func (s *Server) newMachineCatalogueResponse(
 }
 
 func (s *Server) machines(w http.ResponseWriter, r *http.Request) {
+	reader, held := requestClient(w, r, s.readers)
+	if !held {
+		return
+	}
+
 	var configs v1alpha1.ProviderConfigList
-	if err := s.client.List(r.Context(), &configs); err != nil {
+	if err := reader.List(r.Context(), &configs); err != nil {
+		if refusedByAuthorisation(w, r, err) {
+			return
+		}
 		slog.Error("list the provider configs", "error", err)
 		writeAPIError(w, http.StatusBadGateway, configReadFailed)
 		return
