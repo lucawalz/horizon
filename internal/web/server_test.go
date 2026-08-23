@@ -13,8 +13,8 @@ import (
 
 const dialTimeout = 500 * time.Millisecond
 
-func TestListenLoopbackBindsALoopbackAddress(t *testing.T) {
-	listener, err := listenLoopback(0)
+func TestLoopbackAddressBindsALoopbackAddress(t *testing.T) {
+	listener, err := LoopbackAddress(freePort(t)).listen()
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -29,13 +29,43 @@ func TestListenLoopbackBindsALoopbackAddress(t *testing.T) {
 	}
 }
 
-func TestListenLoopbackRefusesRoutableAddresses(t *testing.T) {
+func TestBindAddressRejectsAnAddressItCannotName(t *testing.T) {
+	for name, bind := range map[string]BindAddress{
+		"an unset port":         LoopbackAddress(0),
+		"an empty address":      ExplicitAddress(""),
+		"an unconstructed bind": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			listener, err := bind.listen()
+			if err == nil {
+				_ = listener.Close()
+				t.Errorf("%s bound a listener, want a rejection", name)
+			}
+		})
+	}
+}
+
+func TestExplicitAddressBindsTheAddressItIsGiven(t *testing.T) {
+	wanted := net.JoinHostPort(loopbackHost, strconv.Itoa(int(freePort(t))))
+
+	listener, err := ExplicitAddress(wanted).listen()
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	if listener.Addr().String() != wanted {
+		t.Errorf("bound to %s, want %s", listener.Addr(), wanted)
+	}
+}
+
+func TestLoopbackAddressRefusesRoutableAddresses(t *testing.T) {
 	routable := routableAddresses(t)
 	if len(routable) == 0 {
 		t.Skip("the host carries no routable address to attempt the connection from")
 	}
 
-	listener, err := listenLoopback(0)
+	listener, err := LoopbackAddress(freePort(t)).listen()
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -74,11 +104,11 @@ func routableAddresses(t *testing.T) []string {
 	return routable
 }
 
-func TestListenAndServeRejectsAnUnsetPort(t *testing.T) {
+func TestListenAndServeRejectsAnUnusableBindAddress(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
 	server := newTestServer(t, testEnv.Client, AbsentCatalogue())
-	if err := server.ListenAndServe(t.Context(), 0); err == nil {
+	if err := server.ListenAndServe(t.Context(), LoopbackAddress(0)); err == nil {
 		t.Error("serving on port 0 succeeded, want a rejection")
 	}
 }
@@ -91,7 +121,7 @@ func TestListenAndServeAnswersOnLoopbackAndStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 
 	served := make(chan error, 1)
-	go func() { served <- server.ListenAndServe(ctx, port) }()
+	go func() { served <- server.ListenAndServe(ctx, LoopbackAddress(port)) }()
 
 	response := poll(t, fmt.Sprintf("http://127.0.0.1:%d/", port))
 	defer func() { _ = response.Body.Close() }()
@@ -123,7 +153,7 @@ func TestListenAndServeRefusesRoutableAddresses(t *testing.T) {
 	defer cancel()
 
 	served := make(chan error, 1)
-	go func() { served <- server.ListenAndServe(ctx, port) }()
+	go func() { served <- server.ListenAndServe(ctx, LoopbackAddress(port)) }()
 
 	response := poll(t, fmt.Sprintf("http://127.0.0.1:%d/", port))
 	if err := response.Body.Close(); err != nil {
@@ -152,7 +182,7 @@ func TestListenAndServeRefusesRoutableAddresses(t *testing.T) {
 
 func freePort(t *testing.T) uint16 {
 	t.Helper()
-	listener, err := listenLoopback(0)
+	listener, err := net.Listen("tcp", net.JoinHostPort(loopbackHost, "0"))
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}

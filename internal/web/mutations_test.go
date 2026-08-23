@@ -466,7 +466,7 @@ func TestTheServedInterfaceAnchorsTheGuardToTheAddressItBound(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	served := make(chan error, 1)
-	go func() { served <- server.ListenAndServe(ctx, port) }()
+	go func() { served <- server.ListenAndServe(ctx, LoopbackAddress(port)) }()
 
 	address := net.JoinHostPort(loopbackHost, strconv.Itoa(int(port)))
 	shell := poll(t, httpScheme+address+"/")

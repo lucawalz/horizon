@@ -63,21 +63,37 @@ func (s *Server) anchorTo(address string) error {
 	return nil
 }
 
-// the address is built here rather than taken from a caller, so no flag or option can widen the binding
-func listenLoopback(port uint16) (net.Listener, error) {
-	address := net.JoinHostPort(loopbackHost, strconv.Itoa(int(port)))
-	listener, err := net.Listen("tcp", address)
+// the address is unreachable except through a constructor that names its reach, so a caller cannot widen the binding without saying so
+type BindAddress struct {
+	address string
+}
+
+func LoopbackAddress(port uint16) BindAddress {
+	if port == 0 {
+		return BindAddress{}
+	}
+	return BindAddress{address: net.JoinHostPort(loopbackHost, strconv.Itoa(int(port)))}
+}
+
+func ExplicitAddress(address string) BindAddress {
+	return BindAddress{address: address}
+}
+
+func (b BindAddress) String() string { return b.address }
+
+func (b BindAddress) listen() (net.Listener, error) {
+	if b.address == "" {
+		return nil, errors.New("web: a bind address is required")
+	}
+	listener, err := net.Listen("tcp", b.address)
 	if err != nil {
-		return nil, fmt.Errorf("web: listen on %s: %w", address, err)
+		return nil, fmt.Errorf("web: listen on %s: %w", b.address, err)
 	}
 	return listener, nil
 }
 
-func (s *Server) ListenAndServe(ctx context.Context, port uint16) error {
-	if port == 0 {
-		return errors.New("web: a port is required")
-	}
-	listener, err := listenLoopback(port)
+func (s *Server) ListenAndServe(ctx context.Context, bind BindAddress) error {
+	listener, err := bind.listen()
 	if err != nil {
 		return err
 	}

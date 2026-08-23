@@ -60,5 +60,5 @@ func runDashboard(ctx context.Context, out io.Writer, port uint16) error {
 	if _, err := fmt.Fprintf(out, "serving the horizon dashboard on http://127.0.0.1:%d\n", port); err != nil {
 		return err
 	}
-	return server.ListenAndServe(ctx, port)
+	return server.ListenAndServe(ctx, web.LoopbackAddress(port))
 }
