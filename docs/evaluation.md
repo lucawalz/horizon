@@ -781,7 +781,9 @@ because shortening a lease saves nothing under ceil-to-hour billing.
 **Time to ready is quantised by the instrument.** Section 3.2. While the campaign ran, the
 30-second grid was the operator's own poll interval, so every reported value is an upper
 bound within 30 seconds of the truth, and the bimodality is the grid rather than a property
-of provisioning.
+of provisioning. The instrument has since been replaced, so this threat bounds the dataset
+reported here and not any measurement taken after it. See ADR 0026,
+`docs/adr/0026-observe-node-readiness-rather-than-poll-for-it.md`.
 
 **Teardown latency is quantised at 5 seconds.** The gap between the operator recording
 release and the provider reporting the machine gone is below the harness's poll interval in
