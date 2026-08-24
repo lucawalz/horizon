@@ -3,6 +3,7 @@ package catalogue
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -269,6 +270,85 @@ func TestStartFillsTheCacheImmediatelyAndAgainOnEveryTick(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Errorf("Start = %v, want no error on cancellation", err)
+	}
+}
+
+type publishedOutcome struct {
+	config string
+	types  []provider.InstanceType
+	err    error
+}
+
+type recordingPublisher struct {
+	outcomes []publishedOutcome
+	refuse   error
+}
+
+func (p *recordingPublisher) Publish(_ context.Context, cfg *v1alpha1.ProviderConfig, types []provider.InstanceType, fetchErr error) error {
+	p.outcomes = append(p.outcomes, publishedOutcome{config: cfg.Name, types: types, err: fetchErr})
+	return p.refuse
+}
+
+func TestRefreshHandsTheFetchedTypesToThePublisher(t *testing.T) {
+	publisher := &recordingPublisher{}
+	refresher := &Refresher{
+		Client:    apiClient(providerConfig(testConfig)),
+		Lister:    staticFactory(seededProvider(regionA)),
+		Cache:     NewCache(),
+		Publisher: publisher,
+	}
+
+	if err := refresher.refreshAll(t.Context()); err != nil {
+		t.Fatalf("refreshAll: %v", err)
+	}
+
+	if len(publisher.outcomes) != 1 {
+		t.Fatalf("the publisher saw %d outcomes, want 1", len(publisher.outcomes))
+	}
+	recorded := publisher.outcomes[0]
+	if recorded.config != testConfig || recorded.err != nil {
+		t.Errorf("outcome = %q/%v, want %q and no error", recorded.config, recorded.err, testConfig)
+	}
+	if got := names(recorded.types); !slices.Equal(got, []string{"small"}) {
+		t.Errorf("published types = %v, want the fetched ones", got)
+	}
+}
+
+func TestRefreshHandsTheFetchFailureToThePublisher(t *testing.T) {
+	failure := errors.New("hetzner is down")
+	prov := seededProvider(regionA)
+	prov.FailListInstanceTypes = func(string) error { return failure }
+	publisher := &recordingPublisher{}
+	refresher := &Refresher{
+		Client:    apiClient(providerConfig(testConfig)),
+		Lister:    staticFactory(prov),
+		Cache:     NewCache(),
+		Publisher: publisher,
+	}
+
+	if err := refresher.refreshAll(t.Context()); err == nil {
+		t.Fatal("refreshAll must report the provider failure")
+	}
+
+	if len(publisher.outcomes) != 1 {
+		t.Fatalf("the publisher saw %d outcomes, want 1", len(publisher.outcomes))
+	}
+	if recorded := publisher.outcomes[0]; !errors.Is(recorded.err, failure) {
+		t.Errorf("published error = %v, want %v", recorded.err, failure)
+	}
+}
+
+func TestRefreshReportsAPublisherThatRefuses(t *testing.T) {
+	refusal := errors.New("the apiserver refused the status write")
+	refresher := &Refresher{
+		Client:    apiClient(providerConfig(testConfig)),
+		Lister:    staticFactory(seededProvider(regionA)),
+		Cache:     NewCache(),
+		Publisher: &recordingPublisher{refuse: refusal},
+	}
+
+	if err := refresher.refreshAll(t.Context()); !errors.Is(err, refusal) {
+		t.Errorf("refreshAll = %v, want %v", err, refusal)
 	}
 }
 

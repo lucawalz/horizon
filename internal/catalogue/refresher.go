@@ -30,16 +30,22 @@ type Lister interface {
 
 type ListerFactory func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (Lister, error)
 
+// the refresher owns one fetch loop and nothing else, so what a fetch says about a provider config is recorded by whoever owns its health
+type Publisher interface {
+	Publish(ctx context.Context, cfg *v1alpha1.ProviderConfig, types []provider.InstanceType, fetchErr error) error
+}
+
 type RefreshCounts struct {
 	Success uint64
 	Failure uint64
 }
 
 type Refresher struct {
-	Client   client.Client
-	Lister   ListerFactory
-	Cache    *Cache
-	Interval time.Duration
+	Client    client.Client
+	Lister    ListerFactory
+	Cache     *Cache
+	Publisher Publisher
+	Interval  time.Duration
 
 	successes atomic.Uint64
 	failures  atomic.Uint64
@@ -103,15 +109,26 @@ func (r *Refresher) refreshAll(ctx context.Context) error {
 
 func (r *Refresher) refresh(ctx context.Context, cfg *v1alpha1.ProviderConfig) error {
 	types, err := r.fetch(ctx, cfg)
+	published := r.publish(ctx, cfg, types, err)
 	if err != nil {
 		r.failures.Add(1)
 		r.recordRefresh(cfg.Name, metrics.ResultFailure)
-		return fmt.Errorf("catalogue: refresh provider config %q: %w", cfg.Name, err)
+		return errors.Join(fmt.Errorf("catalogue: refresh provider config %q: %w", cfg.Name, err), published)
 	}
 	r.successes.Add(1)
 	r.Cache.store(cfg.Name, types)
-	publishInstanceTypes(cfg.Name, types)
+	recordInstanceTypes(cfg.Name, types)
 	r.recordRefresh(cfg.Name, metrics.ResultSuccess)
+	return published
+}
+
+func (r *Refresher) publish(ctx context.Context, cfg *v1alpha1.ProviderConfig, types []provider.InstanceType, fetchErr error) error {
+	if r.Publisher == nil {
+		return nil
+	}
+	if err := r.Publisher.Publish(ctx, cfg, types, fetchErr); err != nil {
+		return fmt.Errorf("catalogue: publish the status of provider config %q: %w", cfg.Name, err)
+	}
 	return nil
 }
 
@@ -123,7 +140,7 @@ func (r *Refresher) recordRefresh(config string, result metrics.Result) {
 	}
 }
 
-func publishInstanceTypes(config string, types []provider.InstanceType) {
+func recordInstanceTypes(config string, types []provider.InstanceType) {
 	for _, offered := range types {
 		metrics.SetInstanceTypePrice(config, offered.Region, offered.Name, offered.HourlyRate.Amount)
 		metrics.SetInstanceTypeCapacity(config, offered.Name, offered.CPUCores, offered.MemoryBytes)

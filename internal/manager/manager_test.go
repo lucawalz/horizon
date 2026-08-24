@@ -79,6 +79,18 @@ func TestTheLeaseControllerReadsTheCatalogueTheRefresherFills(t *testing.T) {
 	}
 }
 
+func TestTheRefresherReportsEveryFetchToTheStatusPublisher(t *testing.T) {
+	t.Setenv(namespaceVar, testNamespace)
+
+	parts, err := newReconcilers(nil, k8sfake.NewSimpleClientset(), nil, 0)
+	if err != nil {
+		t.Fatalf("wire the reconcilers: %v", err)
+	}
+	if parts.refresher.Publisher == nil {
+		t.Error("the catalogue refresher reports to no status publisher")
+	}
+}
+
 func TestTheManagerThreadsItsPollIntervalToTheLeaseController(t *testing.T) {
 	if _, err := wiredManager(); err != nil {
 		t.Fatalf("wire the manager: %v", err)

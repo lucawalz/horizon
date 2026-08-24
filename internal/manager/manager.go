@@ -134,6 +134,10 @@ func newReconcilers(api client.Client, kube kubernetes.Interface, recorder event
 	if err != nil {
 		return nil, err
 	}
+	publisher, err := controller.NewProviderConfigPublisher(api, kube)
+	if err != nil {
+		return nil, err
+	}
 
 	types := catalogue.NewCache()
 	return &reconcilers{
@@ -150,9 +154,10 @@ func newReconcilers(api client.Client, kube kubernetes.Interface, recorder event
 			Provider: providers,
 		},
 		refresher: &catalogue.Refresher{
-			Client: api,
-			Lister: listers,
-			Cache:  types,
+			Client:    api,
+			Lister:    listers,
+			Cache:     types,
+			Publisher: publisher,
 		},
 	}, nil
 }
