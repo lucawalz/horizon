@@ -240,7 +240,7 @@ runcmd:
 
 The two elided `runcmd` blocks download and checksum-verify the horizon binary at `${HORIZON_VERSION}`, then write and enable `horizon-watchdog.service`; the `${HORIZON_...}` placeholders are correct as printed, since they resolve when `ProviderConfig` builds the provider, not when the CLI renders the template.
 
-A control plane that is only reachable over a VPN needs one more flag, `--flavor-config flannel-iface=<interface>`, naming the tunnel interface on the leased server. Without it the agent registers over the tunnel and then builds its pod network on the public interface, where it reaches nothing in the cluster. Two more flags cover images that are not stock: `--install-kubernetes=false` for an image that already ships k3s, and `--transient-watchdog-unit` for an image whose `/etc/systemd/system` is read-only. See [Command line reference](#command-line-reference).
+A control plane that is only reachable over a VPN needs one more flag, `--flavor-config flannel-iface=<interface>`, naming the tunnel interface on the leased server. Without it the agent registers over the tunnel and then builds its pod network on the public interface, where it reaches nothing in the cluster. Two more flags cover images that are not stock: `--install-kubernetes=false` for an image that already ships k3s, and `--transient-watchdog-unit` for an image whose `/etc/systemd/system` is read-only. See [docs/cli-reference.md](docs/cli-reference.md).
 
 **6. Create the cloud-init Secret from that file:**
 
@@ -334,6 +334,8 @@ The chart templates the mode behind `ui.enabled` and the default is off. Enabled
 
 ### Command line reference
 
+Six commands, and `horizon` with no subcommand prints help:
+
 ```
 horizon controller   Run the in-cluster capacity lease controller
 horizon dashboard    Serve the web interface on loopback
@@ -343,54 +345,7 @@ horizon cloud-init   Render the cloud-init a burst node needs to join a cluster
 horizon version      Print the build version
 ```
 
-`horizon` with no subcommand prints help. `horizon controller` takes four flags:
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--leader-elect` | `true` | Hold a leader election lease so only one replica reconciles. |
-| `--metrics-bind-address` | `:8080` | Address the metrics endpoint binds to. |
-| `--health-probe-bind-address` | `:8081` | Address the liveness and readiness endpoints bind to. |
-| `--lease-poll-interval` | `30s` | Fallback interval between lease reconciles, used for whatever the node watch misses. |
-
-`horizon dashboard` takes one flag, and it is a port rather than an address:
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--port` | `8973` | Loopback port the interface listens on. The host is always `127.0.0.1`. |
-
-`horizon serve` takes an address rather than a port, and refuses to start unless it can verify who is calling:
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--bind-address` | `0.0.0.0:8082` | Address the interface binds to. |
-| `--oidc-issuer` | none, required | Issuer whose tokens are accepted, and whose discovery document names the key set they are verified against. |
-| `--oidc-audience` | none, required | Audience a token has to be issued for. |
-| `--auth-header` | `Authorization` | Request header the bearer token arrives in. |
-| `--username-claim` | `preferred_username` | Claim the impersonated username is read from. |
-| `--groups-claim` | `groups` | Claim the impersonated group memberships are read from. |
-| `--external-origin` | empty | Origin a browser reaches the interface at. Unset, every create and release is refused, since the cross-origin guard has no anchor behind a proxy. |
-
-`horizon watchdog` runs on the leased server rather than in the cluster, started by the cloud-init that boots it:
-
-| Flag | Default | Description |
-| --- | --- | --- |
-| `--max-lifetime` | none, required | Age at which the server deletes itself, between `5m` and `24h`. |
-| `--token-file` | `/etc/horizon/token` | File holding the provider token used to delete this server. |
-| `--kubeconfig` | `/var/lib/rancher/k3s/agent/kubelet.kubeconfig` | Kubelet credential used to read the renewed deadline. A missing file leaves the deadline seeded from the instance label standing. |
-| `--node-name` | empty | Server and node to act on; empty means the hostname from the metadata service. |
-| `--poll-interval` | `15s` | Interval between deadline checks and node annotation reads. |
-| `--metadata-url` | `http://169.254.169.254/hetzner/v1/metadata` | Base URL of the instance metadata service. |
-| `--state-dir` | `/run/horizon` | Directory holding the sentinel that records a teardown in progress. |
-
-`horizon cloud-init` renders the join document shown in the quick start. `--server` and `--kubernetes-version` are required unless `--passthrough`, the version only while the flavour installs Kubernetes. It names an exact flavour release, `v1.35.6+k3s1` for k3s, read off the server version line of `kubectl version`. Anything else is refused at render time, so a bare `v1.35.6` taken from the client version line one row above it fails before a node ever boots on it. `--flavor` (`k3s`, the only one implemented), `--label` and `--taint` (both repeatable), `--install-watchdog-unit` (default `true`), `--binary-base-url`, `--write-file` (`path:permissions:content`, repeatable), `--pre-command`/`--post-command` (repeatable), and `--passthrough` cover the rest; `horizon cloud-init --help` lists all of them with their defaults. Three further flags say what the image can and cannot do for itself:
-
-| Flag | Default | The image or cluster it is for |
-| --- | --- | --- |
-| `--install-kubernetes` | `true` | An image that already ships Kubernetes. `false` drops the flavour's install command and keeps everything else, so the join configuration, the node token, and the watchdog are still written. Nothing is left to install a version, so `--kubernetes-version` is rejected alongside it, and matching the control plane becomes the image's problem. |
-| `--transient-watchdog-unit` | `false` | An image whose `/etc/systemd/system` is read-only, such as a NixOS one, where a unit file cannot be written and `systemctl enable` cannot create its symlink. The unit is written to `/run/systemd/system` and started instead. Since `/run` is a tmpfs, the write happens from `/var/lib/cloud/scripts/per-boot/horizon-watchdog`, which cloud-init runs on every boot rather than once per instance. It cannot be combined with `--install-watchdog-unit=false`, which is rejected at render time. |
-| `--flavor-config key=value` | none | A control plane reached over a VPN, and anything else the flavour's own configuration file covers. Repeatable, merged into `/etc/rancher/k3s/config.yaml` in sorted order. The keys the flavour generates itself, `server`, `token`, `node-label`, and `node-taint`, are rejected, so a label or a taint has exactly one source. |
-
-The document names no CPU architecture: the install block reads `uname -m` on the booted server and downloads the matching release archive, so one blob serves both a `cx` and a `cax` server type.
+Every flag, with its default and what it is for, is in [docs/cli-reference.md](docs/cli-reference.md).
 
 ## Releases
 
