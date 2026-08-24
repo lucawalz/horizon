@@ -347,7 +347,6 @@ func TestLeaseExtendSurfacesTheRefusalOfADurationOutsideItsBounds(t *testing.T) 
 	}
 }
 
-// a deadline moved into the past leaves no teardown budget, so the leased nodes are deleted without being drained
 func TestLeaseExtendRefusesADurationNoLongerThanTheOneTheLeaseCarries(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 

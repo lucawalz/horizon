@@ -177,7 +177,6 @@ func latchedInstance(name string, phase v1alpha1.InstancePhase, backstop time.Ti
 	}
 }
 
-// the ceiling an extension may ask for is the earliest machine that destroys itself, and a released one destroys nothing
 func TestLeaseDetailCarriesTheEarliestBackstopStillHeld(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
@@ -202,7 +201,6 @@ func TestLeaseDetailCarriesTheEarliestBackstopStillHeld(t *testing.T) {
 	}
 }
 
-// a lease whose machines record no backstop has no ceiling to offer, and the clamp condition is what says so
 func TestLeaseDetailReportsNoBackstopWhereNoneIsLatched(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 

@@ -60,7 +60,6 @@ func TestTheLifetimeBackstopFollowsTheEarliestInstanceStillHeld(t *testing.T) {
 	}
 }
 
-// the caller holds the answer rather than a handle into the status, so nothing it does can move a latch
 func TestTheLifetimeBackstopIsACopyOfTheLatch(t *testing.T) {
 	latched := &metav1.Time{Time: latchInstant}
 	status := statusHolding(instanceLatching(InstancePhaseCreated, latched))
