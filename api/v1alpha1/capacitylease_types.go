@@ -6,14 +6,15 @@ import (
 )
 
 const (
-	ConditionAccepted         = "Accepted"
-	ConditionInstancesReady   = "InstancesReady"
-	ConditionWatchdogArmed    = "WatchdogArmed"
-	ConditionWorkloadMigrated = "WorkloadMigrated"
-	ConditionExpiryClamped    = "ExpiryClamped"
-	ConditionExpired          = "Expired"
-	ConditionReleased         = "Released"
-	ConditionDegraded         = "Degraded"
+	ConditionAccepted           = "Accepted"
+	ConditionInstancesReady     = "InstancesReady"
+	ConditionWatchdogArmed      = "WatchdogArmed"
+	ConditionWorkloadMigratable = "WorkloadMigratable"
+	ConditionWorkloadMigrated   = "WorkloadMigrated"
+	ConditionExpiryClamped      = "ExpiryClamped"
+	ConditionExpired            = "Expired"
+	ConditionReleased           = "Released"
+	ConditionDegraded           = "Degraded"
 )
 
 type LeasePhase string
@@ -158,6 +159,13 @@ type RejectedCandidates struct {
 	Count  int32  `json:"count"`
 }
 
+type MigrationWarning struct {
+	Workload string `json:"workload"`
+
+	// +listType=atomic
+	Reasons []string `json:"reasons"`
+}
+
 type SelectionStatus struct {
 	Strategy SizingStrategy `json:"strategy"`
 
@@ -225,6 +233,11 @@ type CapacityLeaseStatus struct {
 	// +optional
 	// +listType=atomic
 	MigratedWorkloads []string `json:"migratedWorkloads,omitempty"`
+
+	// +optional
+	// +listType=map
+	// +listMapKey=workload
+	MigrationWarnings []MigrationWarning `json:"migrationWarnings,omitempty"`
 
 	// +optional
 	// +listType=map

@@ -3,10 +3,12 @@ package controller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -708,5 +710,48 @@ func TestCreateInstanceRecordsTheProvidersCreationTimestamp(t *testing.T) {
 	}
 	if !created.Time.Equal(h.clock.Now()) {
 		t.Errorf("createdAt is %s, want the provider's create time %s", created.Time, h.clock.Now())
+	}
+}
+
+func TestASeamlessMigrationRecordsNoWarnings(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload()
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWorkloadMigratable, metav1.ConditionTrue)
+	if got := h.lease().Status.MigrationWarnings; len(got) != 0 {
+		t.Errorf("migration warnings are %+v, want none for a rolling deployment", got)
+	}
+}
+
+func TestADisruptiveWorkloadIsNamedBeforeItIsMoved(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload(func(deployment *appsv1.Deployment) {
+		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+		deployment.Spec.Template.Spec.NodeSelector = map[string]string{"disktype": "ssd"}
+	})
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue)
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigratable, reasonDisruptiveMigration, "1 of 1 workloads")
+
+	warnings := h.lease().Status.MigrationWarnings
+	if len(warnings) != 1 || warnings[0].Workload != "deployment/api" {
+		t.Fatalf("migration warnings are %+v, want one for deployment/api", warnings)
+	}
+	want := []string{k8s.ReasonRecreateStrategy, k8s.ReasonNodeSelectorPinned}
+	if !reflect.DeepEqual(warnings[0].Reasons, want) {
+		t.Errorf("warning reasons are %v, want %v", warnings[0].Reasons, want)
+	}
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "deployment/api" {
+		t.Errorf("migrated workloads are %v, want [deployment/api]: a warning must not block the move", got)
 	}
 }

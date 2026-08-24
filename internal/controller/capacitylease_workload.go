@@ -38,14 +38,15 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 }
 
 func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, namespace string) (ctrl.Result, error) {
+	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, namespace)
+	if classifyErr != nil {
+		return r.failedMigration(ctx, lease, fmt.Errorf("classify workload in %q: %w", namespace, classifyErr))
+	}
+	r.recordMigrationWarnings(lease, assessments)
+
 	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, provider.ReservedPoolValue)
 	if migrateErr != nil {
-		migrateErr = fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr)
-		r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())
-		if err := r.writeStatus(ctx, lease); err != nil {
-			return ctrl.Result{}, errors.Join(migrateErr, err)
-		}
-		return ctrl.Result{}, migrateErr
+		return r.failedMigration(ctx, lease, fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr))
 	}
 
 	lease.Status.MigratedWorkloads = migrated
@@ -55,6 +56,36 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+}
+
+func (r *CapacityLeaseReconciler) failedMigration(ctx context.Context, lease *v1alpha1.CapacityLease, cause error) (ctrl.Result, error) {
+	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, cause.Error())
+	if err := r.writeStatus(ctx, lease); err != nil {
+		return ctrl.Result{}, errors.Join(cause, err)
+	}
+	return ctrl.Result{}, cause
+}
+
+func (r *CapacityLeaseReconciler) recordMigrationWarnings(lease *v1alpha1.CapacityLease, assessments []k8s.WorkloadMigratability) {
+	var warnings []v1alpha1.MigrationWarning
+	for _, assessment := range assessments {
+		if assessment.Verdict == k8s.VerdictSeamless {
+			continue
+		}
+		warnings = append(warnings, v1alpha1.MigrationWarning{
+			Workload: assessment.Workload,
+			Reasons:  assessment.Reasons,
+		})
+	}
+
+	lease.Status.MigrationWarnings = warnings
+	if len(warnings) == 0 {
+		r.setCondition(lease, v1alpha1.ConditionWorkloadMigratable, metav1.ConditionTrue, reasonSeamlessMigration,
+			fmt.Sprintf("%d workloads move without dropping traffic", len(assessments)))
+		return
+	}
+	r.setCondition(lease, v1alpha1.ConditionWorkloadMigratable, metav1.ConditionFalse, reasonDisruptiveMigration,
+		fmt.Sprintf("%d of %d workloads lose availability while moving onto burst capacity", len(warnings), len(assessments)))
 }
 
 func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
@@ -73,6 +104,8 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 	}
 
 	lease.Status.MigratedWorkloads = nil
+	lease.Status.MigrationWarnings = nil
+	meta.RemoveStatusCondition(&lease.Status.Conditions, v1alpha1.ConditionWorkloadMigratable)
 	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonPlacementRestored,
 		"workload placement restored")
 	if err := r.writeStatus(ctx, lease); err != nil {

@@ -489,7 +489,7 @@ func (h *harness) hasFinalizer() bool {
 	return false
 }
 
-func (h *harness) seedWorkload() {
+func (h *harness) seedWorkload(mutators ...func(*appsv1.Deployment)) {
 	h.t.Helper()
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: testWorkloadNS},
@@ -500,6 +500,9 @@ func (h *harness) seedWorkload() {
 				},
 			},
 		},
+	}
+	for _, mutate := range mutators {
+		mutate(deployment)
 	}
 	if _, err := h.kube.AppsV1().Deployments(testWorkloadNS).Create(h.t.Context(), deployment, metav1.CreateOptions{}); err != nil {
 		h.t.Fatalf("create deployment: %v", err)

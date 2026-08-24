@@ -803,3 +803,29 @@ func TestRemainingTeardownBudgetNeverExceedsGraceOrGoesNegative(t *testing.T) {
 		})
 	}
 }
+
+func TestRestoringPlacementClearsTheMigrationWarnings(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload(func(deployment *appsv1.Deployment) {
+		deployment.Spec.Paused = true
+	})
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	if got := h.lease().Status.MigrationWarnings; len(got) != 1 {
+		t.Fatalf("migration warnings are %+v, want one for the paused deployment", got)
+	}
+
+	h.clock.Advance(testLeaseDuration + time.Minute)
+	h.settle()
+
+	if got := h.lease().Status.MigrationWarnings; len(got) != 0 {
+		t.Errorf("the lease still warns about %+v after the restore", got)
+	}
+	if got := h.condition(v1alpha1.ConditionWorkloadMigratable); got != nil {
+		t.Errorf("the lease still carries a %s condition after the restore", v1alpha1.ConditionWorkloadMigratable)
+	}
+}

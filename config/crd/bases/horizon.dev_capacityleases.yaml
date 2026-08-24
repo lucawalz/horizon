@@ -266,6 +266,24 @@ spec:
                   type: string
                 type: array
                 x-kubernetes-list-type: atomic
+              migrationWarnings:
+                items:
+                  properties:
+                    reasons:
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    workload:
+                      type: string
+                  required:
+                  - reasons
+                  - workload
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - workload
+                x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
                 type: integer

@@ -48,6 +48,8 @@ const (
 	reasonWaitingForNodes     = "WaitingForNodes"
 	reasonMigrated            = "Migrated"
 	reasonMigrateFailed       = "MigrateFailed"
+	reasonSeamlessMigration   = "SeamlessMigration"
+	reasonDisruptiveMigration = "DisruptiveMigration"
 	reasonPlacementRestored   = "PlacementRestored"
 	reasonRestoreFailed       = "RestoreFailed"
 	reasonRecovered           = "Recovered"
