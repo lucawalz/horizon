@@ -30,7 +30,6 @@ type Lister interface {
 
 type ListerFactory func(ctx context.Context, cfg *v1alpha1.ProviderConfig) (Lister, error)
 
-// the refresher owns one fetch loop and nothing else, so what a fetch says about a provider config is recorded by whoever owns its health
 type Publisher interface {
 	Publish(ctx context.Context, cfg *v1alpha1.ProviderConfig, types []provider.InstanceType, fetchErr error) error
 }

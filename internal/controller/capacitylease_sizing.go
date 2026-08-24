@@ -14,9 +14,9 @@ import (
 
 const rateRoundTripPrecision = -1
 
-// an unquoted rate stays absent rather than being published as a price of zero
 func formatHourlyRate(rate provider.Rate) string {
 	if rate.Currency == "" {
+		// an unquoted rate is not the same fact as a price of zero
 		return ""
 	}
 	return strconv.FormatFloat(rate.Amount, 'f', rateRoundTripPrecision, 64)

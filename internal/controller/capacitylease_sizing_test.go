@@ -360,3 +360,23 @@ func TestALoneCandidateBeatsNothingSoItsMarginIsZero(t *testing.T) {
 		t.Errorf("the margin over no runner-up is %v, want 0", got)
 	}
 }
+
+func TestAnUnquotedRateIsRecordedAsAbsentRatherThanZero(t *testing.T) {
+	tests := []struct {
+		name string
+		rate provider.Rate
+		want string
+	}{
+		{name: "quoted", rate: provider.Rate{Amount: 0.0074, Currency: "EUR"}, want: "0.0074"},
+		{name: "unquoted", rate: provider.Rate{}, want: ""},
+		{name: "amount without a currency", rate: provider.Rate{Amount: 0.0074}, want: ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatHourlyRate(tc.rate); got != tc.want {
+				t.Errorf("the recorded rate is %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

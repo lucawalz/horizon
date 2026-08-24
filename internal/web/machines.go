@@ -120,7 +120,6 @@ func rate(hourly provider.Rate) *money {
 	return &money{Amount: hourly.Amount, Currency: hourly.Currency}
 }
 
-// the controller publishes what it fetched onto the provider config, so the interface reads it from the cluster rather than from a cache of its own
 func (s *Server) machineTypes(configs []v1alpha1.ProviderConfig, config, region string) catalogueResult {
 	if config == "" || region == "" {
 		return catalogueResult{state: stateNoSelection}
@@ -168,10 +167,10 @@ func offeredInstanceType(published v1alpha1.InstanceType) provider.InstanceType 
 	}
 }
 
-// a rate that does not parse is reported as unquoted rather than as a price of zero
 func publishedRate(published v1alpha1.InstanceType) provider.Rate {
 	amount, err := strconv.ParseFloat(published.HourlyRate, 64)
 	if err != nil {
+		// an unparseable rate is unquoted, which is not the same fact as a price of zero
 		return provider.Rate{}
 	}
 	return provider.Rate{Amount: amount, Currency: published.Currency}

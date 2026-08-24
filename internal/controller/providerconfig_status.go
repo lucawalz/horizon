@@ -71,8 +71,8 @@ type providerConfigStatus struct {
 	fetched   bool
 }
 
-// two replicas racing on the same probe result write the same content, so the second observes no change and skips
 func (s providerConfigStatus) applyTo(live *v1alpha1.ProviderConfig) bool {
+	// two replicas racing on the same probe result write the same content, so the second observes no change and skips
 	s.ready.ObservedGeneration = live.Generation
 	s.published.ObservedGeneration = live.Generation
 
