@@ -50,7 +50,11 @@ func (c *Clients) ReaderFor(identity web.Identity) (client.Reader, error) {
 }
 
 func (c *Clients) WriterFor(identity web.Identity) (web.LeaseWriter, error) {
-	return c.clientFor(identity)
+	api, err := c.clientFor(identity)
+	if err != nil {
+		return nil, err
+	}
+	return web.LeaseWriterFor(api), nil
 }
 
 // an unnamed identity sends no impersonation header at all, so the request would reach the cluster as this process

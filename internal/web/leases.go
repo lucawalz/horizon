@@ -278,29 +278,37 @@ func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newLeaseListResponse(leases.Items, time.Now()))
 }
 
-func (s *Server) leaseDetail(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if refusedAsAnInvalidName(w, name) {
-		return
-	}
-
+func (s *Server) leaseNamed(w http.ResponseWriter, r *http.Request, name string) (*v1alpha1.CapacityLease, bool) {
 	reader, held := requestClient(w, r, s.readers)
 	if !held {
-		return
+		return nil, false
 	}
 
 	var lease v1alpha1.CapacityLease
 	if err := reader.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {
 		if apierrors.IsNotFound(err) {
 			writeLeaseNotFound(w, name)
-			return
+			return nil, false
 		}
 		if refusedByAuthorisation(w, r, err) {
-			return
+			return nil, false
 		}
 		slog.Error("read the capacity lease", "lease", name, "error", err)
 		writeAPIError(w, http.StatusBadGateway, leaseReadFailed)
+		return nil, false
+	}
+	return &lease, true
+}
+
+func (s *Server) leaseDetail(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if refusedAsAnInvalidName(w, name) {
 		return
 	}
-	writeJSON(w, http.StatusOK, newLeaseDetailResponse(&lease, time.Now()))
+
+	lease, read := s.leaseNamed(w, r, name)
+	if !read {
+		return
+	}
+	writeJSON(w, http.StatusOK, newLeaseDetailResponse(lease, time.Now()))
 }

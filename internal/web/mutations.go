@@ -16,11 +16,18 @@ import (
 )
 
 const (
-	unreadableRequest  = "the request body is not a lease this interface can submit"
-	leaseCreateFailed  = "the capacity lease could not be created in the cluster"
-	leaseReleaseFailed = "the capacity lease could not be released"
-	releaseRequested   = "the controller was asked to release this lease. it drains the leased nodes and " +
+	unreadableRequest   = "the request body is not a lease this interface can submit"
+	unreadableExtension = "the request body is not an extension this interface can submit"
+	leaseCreateFailed   = "the capacity lease could not be created in the cluster"
+	leaseReleaseFailed  = "the capacity lease could not be released"
+	leaseExtendFailed   = "the capacity lease could not be extended"
+	releaseRequested    = "the controller was asked to release this lease. it drains the leased nodes and " +
 		"deletes their machines, and the watchdog on each node powers it off on a clock of its own regardless"
+	extensionRequested = "the controller re-derives the deadline of this lease on its next pass, and each leased " +
+		"node follows it once its watchdog renews. a deadline past the lifetime backstop of a machine is held at that backstop"
+	extensionOnly = "this interface lengthens a lease rather than shortening one. a duration shorter than the one a " +
+		"lease already carries can put its deadline in the past, which leaves no teardown budget and deletes the leased " +
+		"nodes without draining them. releasing the lease gives the capacity back with a drain"
 )
 
 type leaseRequirementsRequest struct {
@@ -43,9 +50,19 @@ type leaseCreateRequest struct {
 	WorkloadNamespace    string                    `json:"workloadNamespace"`
 }
 
+type leaseExtendRequest struct {
+	DurationSeconds int64 `json:"durationSeconds"`
+}
+
 type leaseReleaseResponse struct {
 	Name   string `json:"name"`
 	Detail string `json:"detail"`
+}
+
+type leaseExtendResponse struct {
+	Name            string `json:"name"`
+	DurationSeconds int64  `json:"durationSeconds"`
+	Detail          string `json:"detail"`
 }
 
 func (r *leaseRequirementsRequest) sizeRequirements() (*v1alpha1.SizeRequirements, error) {
@@ -171,4 +188,48 @@ func (s *Server) leaseRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, leaseReleaseResponse{Name: name, Detail: releaseRequested})
+}
+
+func (s *Server) leaseExtend(w http.ResponseWriter, r *http.Request) {
+	writer, held := requestClient(w, r, s.writers)
+	if !held {
+		return
+	}
+
+	name := r.PathValue("name")
+	if refusedAsAnInvalidName(w, name) {
+		return
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	var submitted leaseExtendRequest
+	if err := decoder.Decode(&submitted); err != nil {
+		writeAPIError(w, http.StatusBadRequest, unreadableExtension+": "+err.Error())
+		return
+	}
+
+	// only a lengthening is accepted, so two of these racing can still only lengthen and the read needs no lock
+	lease, read := s.leaseNamed(w, r, name)
+	if !read {
+		return
+	}
+
+	requested := span(submitted.DurationSeconds)
+	if requested <= lease.Spec.Duration.Duration {
+		writeAPIError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("%q already runs for %s. %s", name, lease.Spec.Duration.Duration, extensionOnly))
+		return
+	}
+
+	if err := writer.Extend(r.Context(), name, requested); err != nil {
+		writeClusterRefusal(w, r, err, name, leaseExtendFailed)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, leaseExtendResponse{
+		Name:            name,
+		DurationSeconds: seconds(requested),
+		Detail:          extensionRequested,
+	})
 }

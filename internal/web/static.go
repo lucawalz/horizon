@@ -93,6 +93,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/leases", s.leaseList)
 	mux.HandleFunc("POST /api/leases", s.mutating(s.leaseCreate))
 	mux.HandleFunc("GET /api/leases/{name}", s.leaseDetail)
+	mux.HandleFunc("PATCH /api/leases/{name}", s.mutating(s.leaseExtend))
 	mux.HandleFunc("DELETE /api/leases/{name}", s.mutating(s.leaseRelease))
 	mux.HandleFunc("GET /api/machines", s.machines)
 	mux.HandleFunc("GET /api/namespaces", s.namespaces)

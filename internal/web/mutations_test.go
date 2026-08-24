@@ -31,7 +31,7 @@ const (
 func leaseEndpoint(name string) string { return leasesEndpoint + "/" + name }
 
 func writingOptions() Options {
-	return Options{Client: testEnv.Client, Writer: testEnv.Client, Catalogue: AbsentCatalogue()}
+	return Options{Client: testEnv.Client, Writer: LeaseWriterFor(testEnv.Client), Catalogue: AbsentCatalogue()}
 }
 
 func newWritingServer(t *testing.T) *Server {
@@ -294,6 +294,109 @@ func TestLeaseReleaseAnswersNotFoundForAnAbsentLease(t *testing.T) {
 	}
 }
 
+func extendRequestFixture(duration time.Duration) leaseExtendRequest {
+	return leaseExtendRequest{DurationSeconds: seconds(duration)}
+}
+
+func extend(t *testing.T, name string, duration time.Duration) *httptest.ResponseRecorder {
+	t.Helper()
+	return mutate(t, newWritingServer(t), http.MethodPatch, leaseEndpoint(name), extendRequestFixture(duration))
+}
+
+func TestLeaseExtendMovesTheDurationTheLeaseCarries(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	createLease(t, leaseFixture("extended-run"), activeStatus(time.Now()))
+
+	response := extend(t, "extended-run", 3*time.Hour)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusAccepted, response.Body)
+	}
+
+	answered := decodeBody[leaseExtendResponse](t, response)
+	if answered.Name != "extended-run" {
+		t.Errorf("the response names %q, want %q", answered.Name, "extended-run")
+	}
+	if answered.DurationSeconds != seconds(3*time.Hour) {
+		t.Errorf("the response reads %d seconds, want %d", answered.DurationSeconds, seconds(3*time.Hour))
+	}
+
+	stored := readLease(t, "extended-run").Spec
+	if stored.Duration.Duration != 3*time.Hour {
+		t.Errorf("duration = %s, want 3h", stored.Duration.Duration)
+	}
+	if stored.Replicas != 2 || stored.Size != "cx22" {
+		t.Errorf("the patch moved %d replicas and size %q, want only the duration touched", stored.Replicas, stored.Size)
+	}
+}
+
+func TestLeaseExtendSurfacesTheRefusalOfADurationOutsideItsBounds(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	createLease(t, leaseFixture("overlong-run"), activeStatus(time.Now()))
+
+	response := extend(t, "overlong-run", 9*time.Hour)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusUnprocessableEntity, response.Body)
+	}
+	if detail := decodeBody[apiError](t, response).Detail; !strings.Contains(detail, "duration must be between 5m and 8h") {
+		t.Errorf("detail = %q, want the message the apiserver rejected it with", detail)
+	}
+	if duration := readLease(t, "overlong-run").Spec.Duration.Duration; duration != 2*time.Hour {
+		t.Errorf("duration = %s, want it left at 2h", duration)
+	}
+}
+
+// a deadline moved into the past leaves no teardown budget, so the leased nodes are deleted without being drained
+func TestLeaseExtendRefusesADurationNoLongerThanTheOneTheLeaseCarries(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	for name, requested := range map[string]time.Duration{
+		"shorter": 30 * time.Minute,
+		"equal":   2 * time.Hour,
+	} {
+		t.Run(name, func(t *testing.T) {
+			lease := "unshortened-" + name
+			createLease(t, leaseFixture(lease), activeStatus(time.Now()))
+
+			response := extend(t, lease, requested)
+			if response.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusUnprocessableEntity, response.Body)
+			}
+			if detail := decodeBody[apiError](t, response).Detail; !strings.Contains(detail, "drain") {
+				t.Errorf("detail = %q, want it to name what a shortened lease costs", detail)
+			}
+			if duration := readLease(t, lease).Spec.Duration.Duration; duration != 2*time.Hour {
+				t.Errorf("duration = %s, want it left at 2h", duration)
+			}
+		})
+	}
+}
+
+func TestLeaseExtendAnswersNotFoundForAnAbsentLease(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	response := extend(t, "never-extended", 3*time.Hour)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusNotFound, response.Body)
+	}
+}
+
+func TestLeaseExtendRefusesABodyCarryingAnythingElse(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	createLease(t, leaseFixture("unknown-field-run"), activeStatus(time.Now()))
+
+	body := map[string]any{"durationSeconds": seconds(3 * time.Hour), "replicas": 8}
+	response := mutate(t, newWritingServer(t), http.MethodPatch, leaseEndpoint("unknown-field-run"), body)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusBadRequest, response.Body)
+	}
+	if duration := readLease(t, "unknown-field-run").Spec.Duration.Duration; duration != 2*time.Hour {
+		t.Errorf("duration = %s, want it left at 2h", duration)
+	}
+}
+
 func TestLeaseDetailAndReleaseDoNotShadowEachOther(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
@@ -340,6 +443,7 @@ func TestMutationsRefuseEachCrossOriginFailureOnItsOwn(t *testing.T) {
 
 			for method, target := range map[string]string{
 				http.MethodPost:   leasesEndpoint,
+				http.MethodPatch:  leaseEndpoint(refused),
 				http.MethodDelete: leaseEndpoint(refused),
 			} {
 				request := newMutation(t, method, target, createRequestFixture(refused))
@@ -444,6 +548,7 @@ func TestMutationsBehindAProxyRefuseEachCrossOriginFailureOnItsOwn(t *testing.T)
 
 			for method, target := range map[string]string{
 				http.MethodPost:   leasesEndpoint,
+				http.MethodPatch:  leaseEndpoint(refused),
 				http.MethodDelete: leaseEndpoint(refused),
 			} {
 				request := newExternalMutation(t, method, target, createRequestFixture(refused))
@@ -525,6 +630,7 @@ func TestAServerWithoutAWriterServesReadsAndRefusesMutations(t *testing.T) {
 
 	for method, target := range map[string]string{
 		http.MethodPost:   leasesEndpoint,
+		http.MethodPatch:  leaseEndpoint("read-only-run"),
 		http.MethodDelete: leaseEndpoint("read-only-run"),
 	} {
 		response := mutate(t, server, method, target, createRequestFixture("read-only-run"))
@@ -636,6 +742,7 @@ func TestAServerThatNeverBoundAnAddressRefusesEveryMutation(t *testing.T) {
 
 	for method, target := range map[string]string{
 		http.MethodPost:   leasesEndpoint,
+		http.MethodPatch:  leaseEndpoint("unanchored-run"),
 		http.MethodDelete: leaseEndpoint("unanchored-run"),
 	} {
 		response := send(server, newMutation(t, method, target, createRequestFixture("unanchored-run")))
@@ -654,6 +761,11 @@ func TestLeaseRoutesRefuseANameNoLeaseCouldCarry(t *testing.T) {
 	released := mutate(t, server, http.MethodDelete, traversal, nil)
 	if released.Code != http.StatusBadRequest {
 		t.Errorf("releasing answered %d, want %d, body %s", released.Code, http.StatusBadRequest, released.Body)
+	}
+
+	extended := mutate(t, server, http.MethodPatch, traversal, extendRequestFixture(3*time.Hour))
+	if extended.Code != http.StatusBadRequest {
+		t.Errorf("extending answered %d, want %d, body %s", extended.Code, http.StatusBadRequest, extended.Body)
 	}
 
 	read := get(t, server, traversal)

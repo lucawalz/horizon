@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -42,6 +43,10 @@ func (f failingWriter) Create(context.Context, client.Object, ...client.CreateOp
 }
 
 func (f failingWriter) Delete(context.Context, client.Object, ...client.DeleteOption) error {
+	return f.err
+}
+
+func (f failingWriter) Extend(context.Context, string, time.Duration) error {
 	return f.err
 }
 
@@ -145,6 +150,7 @@ func TestTheServedInterfaceRefusesAMutationCarryingNoVerifiedIdentity(t *testing
 
 	for name, request := range map[string]*http.Request{
 		"create":  newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("unreachable")),
+		"extend":  newMutation(t, http.MethodPatch, leaseEndpoint("unreachable"), extendRequestFixture(3*time.Hour)),
 		"release": newMutation(t, http.MethodDelete, leaseEndpoint("unreachable"), nil),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -257,6 +263,8 @@ func TestAClusterRefusalAnswersAsAnAuthorisationFailureNamingTheUser(t *testing.
 		"namespace": getAs(server, servedIdentity(), namespacesEndpoint),
 		"create": send(server, asIdentity(
 			newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")), servedIdentity())),
+		"extend": send(server, asIdentity(
+			newMutation(t, http.MethodPatch, leaseEndpoint("named"), extendRequestFixture(3*time.Hour)), servedIdentity())),
 		"release": send(server, asIdentity(
 			newMutation(t, http.MethodDelete, leaseEndpoint("named"), nil), servedIdentity())),
 	} {
