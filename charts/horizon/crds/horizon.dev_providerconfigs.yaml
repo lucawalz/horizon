@@ -289,6 +289,47 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              instanceTypes:
+                items:
+                  properties:
+                    architecture:
+                      type: string
+                    available:
+                      type: boolean
+                    cpuCores:
+                      format: int32
+                      type: integer
+                    cpuType:
+                      type: string
+                    currency:
+                      type: string
+                    deprecated:
+                      type: boolean
+                    diskBytes:
+                      format: int64
+                      type: integer
+                    hourlyRate:
+                      type: string
+                    memoryBytes:
+                      format: int64
+                      type: integer
+                    name:
+                      minLength: 1
+                      type: string
+                    region:
+                      minLength: 1
+                      type: string
+                  required:
+                  - available
+                  - cpuCores
+                  - diskBytes
+                  - memoryBytes
+                  - name
+                  - region
+                  type: object
+                maxItems: 512
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         required:
         - spec

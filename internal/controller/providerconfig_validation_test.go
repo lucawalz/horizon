@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -162,6 +163,53 @@ func TestProviderConfigImageValidation(t *testing.T) {
 			assertCreate(t, c, config, tc.wantRejected)
 		})
 	}
+}
+
+func TestProviderConfigStatusCapsThePublishedCatalogue(t *testing.T) {
+	tests := []struct {
+		name         string
+		count        int
+		wantRejected bool
+	}{
+		{"at the cap", v1alpha1.MaxPublishedInstanceTypes, false},
+		{"one over the cap", v1alpha1.MaxPublishedInstanceTypes + 1, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := apiServerClient(t)
+			config := validProviderConfig(objectName(t))
+			assertCreate(t, c, config, false)
+
+			config.Status.InstanceTypes = publishedCatalogue(tc.count)
+			err := c.Status().Update(t.Context(), config)
+			switch {
+			case tc.wantRejected && err == nil:
+				t.Fatalf("apiserver accepted %d published instance types, want rejection", tc.count)
+			case !tc.wantRejected && err != nil:
+				t.Fatalf("apiserver rejected %d published instance types: %v", tc.count, err)
+			}
+		})
+	}
+}
+
+func publishedCatalogue(count int) []v1alpha1.InstanceType {
+	types := make([]v1alpha1.InstanceType, 0, count)
+	for i := range count {
+		types = append(types, v1alpha1.InstanceType{
+			Name:         fmt.Sprintf("cx%d", i),
+			Region:       "nbg1",
+			Architecture: "x86",
+			CPUType:      "shared",
+			CPUCores:     2,
+			MemoryBytes:  4 << 30,
+			DiskBytes:    40 << 30,
+			HourlyRate:   "0.0074",
+			Currency:     "EUR",
+			Available:    true,
+		})
+	}
+	return types
 }
 
 func rawWatchdogProviderConfig(t *testing.T, field, value string) *unstructured.Unstructured {

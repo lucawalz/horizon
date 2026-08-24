@@ -5,9 +5,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const ConditionReady = "Ready"
+const (
+	ConditionReady              = "Ready"
+	ConditionCataloguePublished = "CataloguePublished"
+)
 
 const ProviderTypeHetzner = "hetzner"
+
+// the live catalogue holds 114 entries across six locations, so this leaves fourfold headroom while capping status near a tenth of the etcd object limit
+const MaxPublishedInstanceTypes = 512
 
 // +kubebuilder:validation:XValidation:rule="[has(self.name), has(self.id), has(self.selector)].filter(x, x).size() == 1",message="set exactly one of name, id or selector"
 type ImageSpec struct {
@@ -78,6 +84,37 @@ type ProviderConfigSpec struct {
 	Watchdog WatchdogPolicy `json:"watchdog"`
 }
 
+type InstanceType struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// +kubebuilder:validation:MinLength=1
+	Region string `json:"region"`
+
+	// +optional
+	Architecture string `json:"architecture,omitempty"`
+
+	// +optional
+	CPUType string `json:"cpuType,omitempty"`
+
+	CPUCores int32 `json:"cpuCores"`
+
+	MemoryBytes int64 `json:"memoryBytes"`
+
+	DiskBytes int64 `json:"diskBytes"`
+
+	// +optional
+	HourlyRate string `json:"hourlyRate,omitempty"`
+
+	// +optional
+	Currency string `json:"currency,omitempty"`
+
+	Available bool `json:"available"`
+
+	// +optional
+	Deprecated bool `json:"deprecated,omitempty"`
+}
+
 type ProviderConfigStatus struct {
 	// +optional
 	// +listType=map
@@ -85,6 +122,11 @@ type ProviderConfigStatus struct {
 	// +patchStrategy=merge
 	// +patchMergeKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
+
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=512
+	InstanceTypes []InstanceType `json:"instanceTypes,omitempty"`
 }
 
 // +kubebuilder:object:root=true
