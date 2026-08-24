@@ -27,7 +27,7 @@ const (
 )
 
 const (
-	defaultDeploymentReplicas = 1
+	defaultReplicas           = 1
 	defaultDeploymentMaxSurge = "25%"
 )
 
@@ -49,13 +49,27 @@ func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespa
 			return nil, fmt.Errorf("classify: list %s in %q: %w", wc.plural(), wc.namespace, err)
 		}
 		for _, t := range targets {
-			assessments = append(assessments, t.migratability(wc.kind))
+			assessment, err := t.migratability(wc.kind)
+			if err != nil {
+				return nil, err
+			}
+			assessments = append(assessments, assessment)
 		}
 	}
 	return assessments, nil
 }
 
-func (t workloadTarget) migratability(kind string) WorkloadMigratability {
+func (t workloadTarget) migratability(kind string) (WorkloadMigratability, error) {
+	ref := workloadRef(kind, t.name)
+	if t.replicas == 0 {
+		return WorkloadMigratability{Workload: ref, Verdict: VerdictSeamless}, nil
+	}
+
+	pinned, err := t.preBurstNodeSelector(kind)
+	if err != nil {
+		return WorkloadMigratability{}, err
+	}
+
 	var reasons []string
 	if t.rolloutReason != "" {
 		reasons = append(reasons, t.rolloutReason)
@@ -63,7 +77,7 @@ func (t workloadTarget) migratability(kind string) WorkloadMigratability {
 	if t.strategyReason != "" {
 		reasons = append(reasons, t.strategyReason)
 	}
-	if len(t.preBurstNodeSelector()) > 0 {
+	if len(pinned) > 0 {
 		reasons = append(reasons, ReasonNodeSelectorPinned)
 	}
 
@@ -71,7 +85,7 @@ func (t workloadTarget) migratability(kind string) WorkloadMigratability {
 	if len(reasons) > 0 {
 		verdict = VerdictDisruptive
 	}
-	return WorkloadMigratability{Workload: workloadRef(kind, t.name), Verdict: verdict, Reasons: reasons}
+	return WorkloadMigratability{Workload: ref, Verdict: verdict, Reasons: reasons}, nil
 }
 
 func deploymentRolloutReason(spec appsv1.DeploymentSpec) string {
@@ -92,34 +106,34 @@ func statefulSetRolloutReason(strategy appsv1.StatefulSetUpdateStrategy) string 
 	return ""
 }
 
-func (t workloadTarget) preBurstNodeSelector() map[string]string {
-	// migration clears the node selector, so a repeated pass has to read the pin back out of the saved placement
+func (t workloadTarget) preBurstNodeSelector(kind string) (map[string]string, error) {
 	placement, ok := t.annotations[PrePlacementAnnotationKey]
 	if !ok {
-		return t.podSpec.NodeSelector
+		return t.podSpec.NodeSelector, nil
 	}
+	// migration empties the live node selector, so a workload already on burst shows its pin only in the saved placement
 	var saved savedPlacement
 	if err := json.Unmarshal([]byte(placement), &saved); err != nil {
-		return t.podSpec.NodeSelector
+		return nil, fmt.Errorf("classify: unmarshal placement for %s %q: %w", kind, t.name, err)
 	}
-	return saved.NodeSelector
+	return saved.NodeSelector, nil
 }
 
 func deploymentStrategyReason(spec appsv1.DeploymentSpec) string {
 	if spec.Strategy.Type == appsv1.RecreateDeploymentStrategyType {
 		return ReasonRecreateStrategy
 	}
-	if deploymentReplicas(spec) > 0 && deploymentSurgeCapacity(spec) == 0 {
+	if deploymentSurgeCapacity(spec) == 0 {
 		return ReasonNoSurgeCapacity
 	}
 	return ""
 }
 
-func deploymentReplicas(spec appsv1.DeploymentSpec) int {
-	if spec.Replicas == nil {
-		return defaultDeploymentReplicas
+func desiredReplicas(replicas *int32) int {
+	if replicas == nil {
+		return defaultReplicas
 	}
-	return int(*spec.Replicas)
+	return int(*replicas)
 }
 
 func deploymentSurgeCapacity(spec appsv1.DeploymentSpec) int {
@@ -127,7 +141,7 @@ func deploymentSurgeCapacity(spec appsv1.DeploymentSpec) int {
 	if rollingUpdate := spec.Strategy.RollingUpdate; rollingUpdate != nil && rollingUpdate.MaxSurge != nil {
 		maxSurge = *rollingUpdate.MaxSurge
 	}
-	surge, err := intstr.GetScaledValueFromIntOrPercent(&maxSurge, deploymentReplicas(spec), true)
+	surge, err := intstr.GetScaledValueFromIntOrPercent(&maxSurge, desiredReplicas(spec.Replicas), true)
 	if err != nil {
 		return 0
 	}

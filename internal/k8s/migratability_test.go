@@ -39,8 +39,11 @@ func deploymentWith(name string, replicas int32, mutate func(spec *appsv1.Deploy
 	return dep
 }
 
-func statefulSetWith(name string, mutate func(spec *appsv1.StatefulSetSpec)) *appsv1.StatefulSet {
-	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
+func statefulSetWith(name string, replicas int32, mutate func(spec *appsv1.StatefulSetSpec)) *appsv1.StatefulSet {
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec:       appsv1.StatefulSetSpec{Replicas: &replicas},
+	}
 	mutate(&sts.Spec)
 	return sts
 }
@@ -128,7 +131,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 		},
 		{
 			name: "a rolling statefulset",
-			object: statefulSetWith("sts1", func(spec *appsv1.StatefulSetSpec) {
+			object: statefulSetWith("sts1", 3, func(spec *appsv1.StatefulSetSpec) {
 				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType}
 			}),
 			ref:     "statefulset/sts1",
@@ -136,7 +139,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 		},
 		{
 			name: "an ondelete statefulset",
-			object: statefulSetWith("sts1", func(spec *appsv1.StatefulSetSpec) {
+			object: statefulSetWith("sts1", 3, func(spec *appsv1.StatefulSetSpec) {
 				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.OnDeleteStatefulSetStrategyType}
 			}),
 			ref:     "statefulset/sts1",
@@ -144,7 +147,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 		},
 		{
 			name: "a partitioned statefulset",
-			object: statefulSetWith("sts1", func(spec *appsv1.StatefulSetSpec) {
+			object: statefulSetWith("sts1", 3, func(spec *appsv1.StatefulSetSpec) {
 				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{
 					Type:          appsv1.RollingUpdateStatefulSetStrategyType,
 					RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition},
@@ -154,8 +157,51 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			reasons: []string{k8s.ReasonPartitionedRollout},
 		},
 		{
+			name: "a recreate deployment scaled to zero",
+			object: deploymentWith("dep1", 0, func(spec *appsv1.DeploymentSpec) {
+				spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
+			}),
+			ref:     "deployment/dep1",
+			reasons: nil,
+		},
+		{
+			name: "a paused deployment scaled to zero",
+			object: deploymentWith("dep1", 0, func(spec *appsv1.DeploymentSpec) {
+				spec.Paused = true
+			}),
+			ref:     "deployment/dep1",
+			reasons: nil,
+		},
+		{
+			name: "a pinned deployment scaled to zero",
+			object: deploymentWith("dep1", 0, func(spec *appsv1.DeploymentSpec) {
+				spec.Template.Spec.NodeSelector = map[string]string{"disktype": "ssd"}
+			}),
+			ref:     "deployment/dep1",
+			reasons: nil,
+		},
+		{
+			name: "an ondelete statefulset scaled to zero",
+			object: statefulSetWith("sts1", 0, func(spec *appsv1.StatefulSetSpec) {
+				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.OnDeleteStatefulSetStrategyType}
+			}),
+			ref:     "statefulset/sts1",
+			reasons: nil,
+		},
+		{
+			name: "a partitioned statefulset scaled to zero",
+			object: statefulSetWith("sts1", 0, func(spec *appsv1.StatefulSetSpec) {
+				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{
+					Type:          appsv1.RollingUpdateStatefulSetStrategyType,
+					RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition},
+				}
+			}),
+			ref:     "statefulset/sts1",
+			reasons: nil,
+		},
+		{
 			name: "a statefulset pinned by node selector",
-			object: statefulSetWith("sts1", func(spec *appsv1.StatefulSetSpec) {
+			object: statefulSetWith("sts1", 3, func(spec *appsv1.StatefulSetSpec) {
 				spec.Template.Spec.NodeSelector = map[string]string{"disktype": "ssd"}
 			}),
 			ref:     "statefulset/sts1",
@@ -185,7 +231,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 
 func TestClassifyMigratabilityCoversBothWorkloadKinds(t *testing.T) {
 	dep := deploymentWith("dep1", 1, func(*appsv1.DeploymentSpec) {})
-	sts := statefulSetWith("sts1", func(spec *appsv1.StatefulSetSpec) {
+	sts := statefulSetWith("sts1", 1, func(spec *appsv1.StatefulSetSpec) {
 		spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.OnDeleteStatefulSetStrategyType}
 	})
 	elsewhere := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"}}
@@ -261,5 +307,21 @@ func TestClassifyMigratabilityStillFlagsAWorkloadAlreadyMovedOntoBurst(t *testin
 	want := []string{k8s.ReasonNodeSelectorPinned}
 	if !reflect.DeepEqual(got.Reasons, want) {
 		t.Errorf("reasons = %v, want %v: a retried pass reads the pin from the saved placement", got.Reasons, want)
+	}
+}
+
+func TestClassifyMigratabilityRefusesACorruptPlacementAnnotation(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "dep1",
+			Namespace:   testNS,
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: "{not json"},
+		},
+	}
+
+	kc := fake.NewSimpleClientset(dep)
+	_, err := k8s.ClassifyMigratability(context.Background(), kc, testNS)
+	if err == nil || !strings.Contains(err.Error(), "dep1") {
+		t.Fatalf("err = %v, want the corrupt placement annotation named rather than a quiet seamless verdict", err)
 	}
 }

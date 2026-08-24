@@ -147,6 +147,7 @@ type workloadTarget struct {
 	selector       labels.Selector
 	rolloutReason  string
 	strategyReason string
+	replicas       int
 }
 
 func (t workloadTarget) selfRolls() bool {
@@ -203,6 +204,7 @@ func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient 
 					selector:       selector,
 					rolloutReason:  deploymentRolloutReason(item.Spec),
 					strategyReason: deploymentStrategyReason(item.Spec),
+					replicas:       desiredReplicas(item.Spec.Replicas),
 				})
 			}
 			return targets, nil
@@ -237,6 +239,7 @@ func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient
 					podSpec:       &item.Spec.Template.Spec,
 					selector:      selector,
 					rolloutReason: statefulSetRolloutReason(item.Spec.UpdateStrategy),
+					replicas:      desiredReplicas(item.Spec.Replicas),
 				})
 			}
 			return targets, nil
