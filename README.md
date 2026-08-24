@@ -130,7 +130,9 @@ kubectl apply -f capacitylease.yaml
 kubectl get capacityleases
 ```
 
-Printer columns carry replicas, region, phase, expiry, readiness, whether the node-side watchdog is armed, age and the resolved instance type, and `kubectl get -o wide` adds the instants the lease became ready and was released. `kubectl get`, k9s, Rancher and Headlamp are therefore all useful without a horizon-specific client, and the short name is `cl`:
+Printer columns carry replicas, region, phase, expiry, readiness, whether the node-side watchdog is armed, age and the resolved instance type, and `kubectl get -o wide` adds the instants the lease became ready and was released. `kubectl get`, k9s, Rancher and Headlamp are therefore all useful without a horizon-specific client, and the short name is `cl`.
+
+That prints the lease once its node has registered and its watchdog has armed:
 
 ```
 NAME        REPLICAS   REGION   PHASE    EXPIRES                READY   ARMED   AGE   TYPE
