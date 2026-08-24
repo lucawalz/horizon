@@ -247,6 +247,21 @@ type CapacityLeaseStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
+func (s *CapacityLeaseStatus) LifetimeBackstop() *metav1.Time {
+	// a released machine enforces nothing any more, so the deadline it once capped is no longer a bound on this lease
+	var earliest *metav1.Time
+	for i := range s.Instances {
+		entry := &s.Instances[i]
+		if entry.Phase == InstancePhaseReleased || entry.BackstopAt.IsZero() {
+			continue
+		}
+		if earliest == nil || entry.BackstopAt.Time.Before(earliest.Time) {
+			earliest = entry.BackstopAt
+		}
+	}
+	return earliest.DeepCopy()
+}
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,path=capacityleases,shortName=cl

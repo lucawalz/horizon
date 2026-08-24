@@ -27,28 +27,15 @@ func latchBackstop(entry *v1alpha1.InstanceStatus, policy v1alpha1.WatchdogPolic
 
 func deriveDeadline(lease *v1alpha1.CapacityLease) leaseDeadline {
 	requested := wholeSeconds(lease.Status.AcceptedAt.Time.Add(lease.Spec.Duration.Duration))
-	backstop, bounded := nodeLifetimeBackstop(lease)
+	backstop := lease.Status.LifetimeBackstop()
 	switch {
-	case bounded && backstop.Before(requested):
-		return leaseDeadline{at: backstop, requested: requested, clamped: true}
-	case bounded:
+	case backstop != nil && backstop.Time.Before(requested):
+		return leaseDeadline{at: backstop.Time, requested: requested, clamped: true}
+	case backstop != nil:
 		return leaseDeadline{at: requested, requested: requested}
 	default:
 		return leaseDeadline{at: requested, requested: requested, unbounded: holdsInstances(lease)}
 	}
-}
-
-func nodeLifetimeBackstop(lease *v1alpha1.CapacityLease) (time.Time, bool) {
-	var earliest time.Time
-	for _, entry := range lease.Status.Instances {
-		if entry.Phase == v1alpha1.InstancePhaseReleased || entry.BackstopAt.IsZero() {
-			continue
-		}
-		if earliest.IsZero() || entry.BackstopAt.Time.Before(earliest) {
-			earliest = entry.BackstopAt.Time
-		}
-	}
-	return earliest, !earliest.IsZero()
 }
 
 func holdsInstances(lease *v1alpha1.CapacityLease) bool {
