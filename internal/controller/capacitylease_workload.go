@@ -60,9 +60,9 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
 }
 
-// a classification the controller cannot make is reported rather than treated as a reason to leave the workload where it is
 func (r *CapacityLeaseReconciler) recordMigratability(lease *v1alpha1.CapacityLease, assessments []k8s.WorkloadMigratability, classifyErr error) {
 	if classifyErr != nil {
+		// unknown is not the same fact as nothing to warn about, and neither is a reason to leave the workload where it is
 		lease.Status.MigrationWarnings = nil
 		r.setCondition(lease, v1alpha1.ConditionWorkloadMigratable, metav1.ConditionUnknown, reasonClassificationFailed, classifyErr.Error())
 		return
