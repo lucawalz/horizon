@@ -22,6 +22,13 @@ import (
 
 const podNamespaceEnvVar = "POD_NAMESPACE"
 
+const (
+	credentialsField    = "credentialsSecretRef"
+	cloudInitField      = "cloudInitSecretRef"
+	nodeCredentialField = "nodeCredentialSecretRef"
+	joinTokenField      = "joinTokenSecretRef"
+)
+
 var serviceAccountNSPath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 func NewProviderFactory(kc kubernetes.Interface) (ProviderFactory, error) {
@@ -69,28 +76,40 @@ func unsupportedProviderType(cfg *v1alpha1.ProviderConfig) error {
 type providerProfile struct {
 	capabilities provider.Capabilities
 	secretRefs   []namedSecretRef
+
+	// the same build the first lease performs, so readiness cannot promise more than a lease will accept
+	usable func(resolved map[string]string) error
 }
 
 func profileOf(cfg *v1alpha1.ProviderConfig) (providerProfile, error) {
 	switch cfg.Spec.Type {
 	case v1alpha1.ProviderTypeHetzner:
-		if cfg.Spec.Hetzner == nil {
-			return providerProfile{}, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
+		spec, watchdog := cfg.Spec.Hetzner, cfg.Spec.Watchdog
+		if spec == nil {
+			return providerProfile{}, missingHetznerBlock()
 		}
 		return providerProfile{
 			capabilities: hetzner.Capabilities(),
-			secretRefs:   hetznerSecretRefs(cfg.Spec.Hetzner),
+			secretRefs:   hetznerSecretRefs(spec),
+			usable: func(resolved map[string]string) error {
+				_, err := buildHetznerProvider(spec, watchdog, resolved)
+				return err
+			},
 		}, nil
 	default:
 		return providerProfile{}, unsupportedProviderType(cfg)
 	}
 }
 
+func missingHetznerBlock() error {
+	return fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
+}
+
 func hetznerCatalogue(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec) (provider.Provider, error) {
 	if spec == nil {
-		return nil, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
+		return nil, missingHetznerBlock()
 	}
-	token, err := secretValue(ctx, kc, namespace, "credentialsSecretRef", spec.CredentialsSecretRef)
+	token, err := secretValue(ctx, kc, namespace, credentialsField, spec.CredentialsSecretRef)
 	if err != nil {
 		return nil, err
 	}
@@ -129,17 +148,17 @@ func operatorNamespace() (string, error) {
 
 func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy) (provider.Provider, error) {
 	if spec == nil {
-		return nil, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
+		return nil, missingHetznerBlock()
 	}
-	token, err := secretValue(ctx, kc, namespace, "credentialsSecretRef", spec.CredentialsSecretRef)
+	resolved, err := resolveSecretRefs(ctx, kc, namespace, hetznerSecretRefs(spec))
 	if err != nil {
 		return nil, err
 	}
-	template, err := secretValue(ctx, kc, namespace, "cloudInitSecretRef", spec.CloudInitSecretRef)
-	if err != nil {
-		return nil, err
-	}
-	userData, err := renderCloudInit(ctx, kc, namespace, spec, watchdog, template)
+	return buildHetznerProvider(spec, watchdog, resolved)
+}
+
+func buildHetznerProvider(spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy, resolved map[string]string) (provider.Provider, error) {
+	userData, err := renderCloudInit(spec, watchdog, resolved)
 	if err != nil {
 		return nil, err
 	}
@@ -147,12 +166,24 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	if err != nil {
 		return nil, err
 	}
-	return hetzner.NewClient(token, hetzner.ServerSpec{
+	return hetzner.NewClient(resolved[credentialsField], hetzner.ServerSpec{
 		Image:     ref,
 		SSHKeys:   slices.Clone(spec.SSHKeys),
 		Firewalls: slices.Clone(spec.Firewalls),
 		UserData:  userData,
 	})
+}
+
+func resolveSecretRefs(ctx context.Context, kc kubernetes.Interface, namespace string, refs []namedSecretRef) (map[string]string, error) {
+	resolved := make(map[string]string, len(refs))
+	for _, named := range refs {
+		value, err := secretValue(ctx, kc, namespace, named.field, *named.ref)
+		if err != nil {
+			return nil, err
+		}
+		resolved[named.field] = value
+	}
+	return resolved, nil
 }
 
 type namedSecretRef struct {
@@ -167,15 +198,15 @@ type sentinelSource struct {
 
 func secretBackedSentinels(spec *v1alpha1.HetznerProviderSpec) []sentinelSource {
 	return []sentinelSource{
-		{hetzner.NodeTokenSentinel, namedSecretRef{"nodeCredentialSecretRef", spec.NodeCredentialSecretRef}},
-		{hetzner.JoinTokenSentinel, namedSecretRef{"joinTokenSecretRef", spec.JoinTokenSecretRef}},
+		{hetzner.NodeTokenSentinel, namedSecretRef{nodeCredentialField, spec.NodeCredentialSecretRef}},
+		{hetzner.JoinTokenSentinel, namedSecretRef{joinTokenField, spec.JoinTokenSecretRef}},
 	}
 }
 
 func hetznerSecretRefs(spec *v1alpha1.HetznerProviderSpec) []namedSecretRef {
 	refs := []namedSecretRef{
-		{"credentialsSecretRef", &spec.CredentialsSecretRef},
-		{"cloudInitSecretRef", &spec.CloudInitSecretRef},
+		{credentialsField, &spec.CredentialsSecretRef},
+		{cloudInitField, &spec.CloudInitSecretRef},
 	}
 	for _, source := range secretBackedSentinels(spec) {
 		if source.ref != nil {
@@ -185,7 +216,8 @@ func hetznerSecretRefs(spec *v1alpha1.HetznerProviderSpec) []namedSecretRef {
 	return refs
 }
 
-func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy, template string) (string, error) {
+func renderCloudInit(spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy, resolved map[string]string) (string, error) {
+	template := resolved[cloudInitField]
 	values := map[string]string{
 		hetzner.VersionSentinel:     version.Version(),
 		hetzner.MaxLifetimeSentinel: watchdog.MaxLifetime.Duration.String(),
@@ -197,11 +229,7 @@ func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace str
 			}
 			continue
 		}
-		value, err := secretValue(ctx, kc, namespace, source.field, *source.ref)
-		if err != nil {
-			return "", err
-		}
-		values[source.sentinel] = value
+		values[source.sentinel] = resolved[source.field]
 	}
 	return hetzner.RenderUserData(template, values)
 }

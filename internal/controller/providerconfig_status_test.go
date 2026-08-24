@@ -14,16 +14,19 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/provider"
+	"github.com/lucawalz/horizon/internal/provider/hetzner"
 )
 
 const publisherNamespace = "horizon"
+
+const usableCloudInit = "#cloud-config\nruncmd:\n  - k3s agent --node-label " + provider.PoolLabelAssignment + "\n"
 
 var errCatalogueFetch = errors.New("the provider rejected the token")
 
 func publisherSecrets() []runtime.Object {
 	return []runtime.Object{
 		secretWith("hcloud", "token", "a-token"),
-		secretWith("cloud-init", "user-data", "#cloud-config"),
+		secretWith("cloud-init", "user-data", usableCloudInit),
 		secretWith("node-credential", "kubeconfig", "a-kubeconfig"),
 	}
 }
@@ -138,7 +141,7 @@ func TestReadinessNamesTheCheckThatFailed(t *testing.T) {
 		},
 		{
 			name: "credentials secret is missing", mutate: func(*v1alpha1.ProviderConfig) {},
-			secrets: []runtime.Object{secretWith("cloud-init", "user-data", "#cloud-config")},
+			secrets: []runtime.Object{secretWith("cloud-init", "user-data", usableCloudInit)},
 			status:  metav1.ConditionFalse, reason: reasonSecretUnresolved,
 		},
 		{
@@ -152,6 +155,51 @@ func TestReadinessNamesTheCheckThatFailed(t *testing.T) {
 				c.Spec.Hetzner.NodeCredentialSecretRef = nil
 			},
 			secrets: publisherSecrets(), status: metav1.ConditionFalse, reason: reasonTeardownNotGuaranteed,
+		},
+		{
+			name: "cloud-init assigns no pool label", mutate: func(*v1alpha1.ProviderConfig) {},
+			secrets: []runtime.Object{
+				secretWith("hcloud", "token", "a-token"),
+				secretWith("cloud-init", "user-data", "#cloud-config\nruncmd:\n  - k3s agent\n"),
+				secretWith("node-credential", "kubeconfig", "a-kubeconfig"),
+			},
+			status: metav1.ConditionFalse, reason: reasonProviderUnusable,
+		},
+		{
+			name: "cloud-init is blank", mutate: func(*v1alpha1.ProviderConfig) {},
+			secrets: []runtime.Object{
+				secretWith("hcloud", "token", "a-token"),
+				secretWith("cloud-init", "user-data", "   "),
+				secretWith("node-credential", "kubeconfig", "a-kubeconfig"),
+			},
+			status: metav1.ConditionFalse, reason: reasonProviderUnusable,
+		},
+		{
+			name: "cloud-init leaves a sentinel unresolved", mutate: func(*v1alpha1.ProviderConfig) {},
+			secrets: []runtime.Object{
+				secretWith("hcloud", "token", "a-token"),
+				secretWith("cloud-init", "user-data", usableCloudInit+"# ${HORIZON_UNKNOWN}\n"),
+				secretWith("node-credential", "kubeconfig", "a-kubeconfig"),
+			},
+			status: metav1.ConditionFalse, reason: reasonProviderUnusable,
+		},
+		{
+			name: "cloud-init needs a token the spec does not configure", mutate: func(*v1alpha1.ProviderConfig) {},
+			secrets: []runtime.Object{
+				secretWith("hcloud", "token", "a-token"),
+				secretWith("cloud-init", "user-data", usableCloudInit+"# "+hetzner.JoinTokenSentinel+"\n"),
+				secretWith("node-credential", "kubeconfig", "a-kubeconfig"),
+			},
+			status: metav1.ConditionFalse, reason: reasonProviderUnusable,
+		},
+		{
+			name: "the api token resolves to an empty value", mutate: func(*v1alpha1.ProviderConfig) {},
+			secrets: []runtime.Object{
+				secretWith("hcloud", "token", ""),
+				secretWith("cloud-init", "user-data", usableCloudInit),
+				secretWith("node-credential", "kubeconfig", "a-kubeconfig"),
+			},
+			status: metav1.ConditionFalse, reason: reasonProviderUnusable,
 		},
 		{
 			name: "the catalogue fetch failed", mutate: func(*v1alpha1.ProviderConfig) {}, secrets: publisherSecrets(),

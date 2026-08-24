@@ -23,12 +23,13 @@ const (
 	reasonTeardownNotGuaranteed = "TeardownNotGuaranteed"
 	reasonCatalogueUnavailable  = "CatalogueUnavailable"
 	reasonProviderUnsupported   = "ProviderUnsupported"
+	reasonProviderUnusable      = "ProviderUnusable"
 	reasonCataloguePublished    = "Published"
 	reasonCatalogueTruncated    = "Truncated"
 	reasonCatalogueEmpty        = "Empty"
 )
 
-const readyMessage = "every referenced secret resolves, teardown is guaranteed and the provider answered the instance type query"
+const readyMessage = "the resolved configuration builds a provider, teardown is guaranteed and the provider answered the instance type query"
 
 type ProviderConfigPublisher struct {
 	client    client.Client
@@ -105,8 +106,12 @@ func (p *ProviderConfigPublisher) readiness(ctx context.Context, cfg *v1alpha1.P
 	if err != nil {
 		return unreadyCondition(reasonProviderUnsupported, err)
 	}
-	if err := p.resolveSecretRefs(ctx, profile.secretRefs); err != nil {
+	resolved, err := resolveSecretRefs(ctx, p.kube, p.namespace, profile.secretRefs)
+	if err != nil {
 		return unreadyCondition(reasonSecretUnresolved, err)
+	}
+	if err := profile.usable(resolved); err != nil {
+		return unreadyCondition(reasonProviderUnusable, err)
 	}
 	if err := requireTeardownGuarantee(cfg, profile.capabilities); err != nil {
 		return unreadyCondition(reasonTeardownNotGuaranteed, err)
@@ -120,15 +125,6 @@ func (p *ProviderConfigPublisher) readiness(ctx context.Context, cfg *v1alpha1.P
 		Reason:  reasonProviderConfigReady,
 		Message: readyMessage,
 	}
-}
-
-func (p *ProviderConfigPublisher) resolveSecretRefs(ctx context.Context, refs []namedSecretRef) error {
-	for _, named := range refs {
-		if _, err := secretValue(ctx, p.kube, p.namespace, named.field, *named.ref); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func unreadyCondition(reason string, cause error) metav1.Condition {

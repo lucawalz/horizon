@@ -92,6 +92,16 @@ func credentialSecrets() []runtime.Object {
 	}
 }
 
+func renderTemplate(t *testing.T, spec *v1alpha1.HetznerProviderSpec, template string) (string, error) {
+	t.Helper()
+	resolved, err := resolveSecretRefs(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, hetznerSecretRefs(spec))
+	if err != nil {
+		return "", err
+	}
+	resolved[cloudInitField] = template
+	return renderCloudInit(spec, testWatchdog, resolved)
+}
+
 func secretRefPtr(name, key string) *corev1.SecretKeySelector {
 	ref := secretKeyRef(name, key)
 	return &ref
@@ -397,7 +407,7 @@ func TestRenderCloudInitResolvesTheSentinelsACloudInitMayUse(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := renderCloudInit(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, tc.spec, testWatchdog, tc.template)
+			got, err := renderTemplate(t, tc.spec, tc.template)
 			assertErrorMessage(t, err, tc.wantErr)
 			if got != tc.want {
 				t.Errorf("rendered cloud-init is %q, want %q", got, tc.want)
@@ -417,7 +427,7 @@ func TestRenderCloudInitSuppliesEverySentinelInTheVocabulary(t *testing.T) {
 		template += "field-" + strconv.Itoa(i) + ": " + sentinel + "\n"
 	}
 
-	if _, err := renderCloudInit(t.Context(), newKubeClient(credentialSecrets()...), testOperatorNS, spec, testWatchdog, template); err != nil {
+	if _, err := renderTemplate(t, spec, template); err != nil {
 		t.Fatalf("a fully configured specification left a sentinel without a supplier: %v", err)
 	}
 }
