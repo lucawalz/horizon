@@ -61,6 +61,9 @@ const (
 	reasonUnknownRegion       = "UnknownRegion"
 	reasonUnknownInstanceType = "UnknownInstanceType"
 
+	reasonRequestedDuration    = "RequestedDuration"
+	reasonNodeLifetimeBackstop = "NodeLifetimeBackstop"
+
 	reasonUnsatisfiedRequirements = "UnsatisfiedRequirements"
 	reasonInstanceTypeSelected    = "InstanceTypeSelected"
 
@@ -125,6 +128,10 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if lease.Status.AcceptedAt == nil {
 		return r.admit(ctx, lease, cfg, prov)
+	}
+
+	if err := r.refreshDeadline(ctx, lease, policy); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	if !r.now().Before(lease.Status.ExpiresAt.Time) {
@@ -214,10 +221,10 @@ func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alph
 	return ctrl.Result{}, cause
 }
 
-func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease, attributed leaseAttribution, alsoRecord ...func()) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy, attributed leaseAttribution, alsoRecord ...func()) (ctrl.Result, error) {
 	accepted := r.now()
 	lease.Status.AcceptedAt = &metav1.Time{Time: accepted}
-	lease.Status.ExpiresAt = &metav1.Time{Time: accepted.Add(lease.Spec.Duration.Duration)}
+	r.applyDeadline(lease, policy)
 	unsized := lease.Status.InstanceType == ""
 	latchAttribution(lease, attributed)
 	r.setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionTrue, reasonAccepted, "lease accepted and deadline recorded")

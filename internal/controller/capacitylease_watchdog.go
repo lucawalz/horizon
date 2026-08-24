@@ -39,7 +39,7 @@ func watchdogDeadline(lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPol
 	if lease.Status.ExpiresAt != nil && lease.Status.ExpiresAt.Time.Before(deadline) {
 		deadline = lease.Status.ExpiresAt.Time
 	}
-	return deadline.UTC().Truncate(time.Second)
+	return wholeSeconds(deadline)
 }
 
 func shouldRenew(annotated string, deadline time.Time, policy v1alpha1.WatchdogPolicy, now time.Time) bool {

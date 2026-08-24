@@ -49,7 +49,7 @@ func (r *CapacityLeaseReconciler) admit(ctx context.Context, lease *v1alpha1.Cap
 		return r.rejectLease(ctx, lease, attributed, reasonProviderUnavailable, err)
 	}
 	announce := r.latchSelection(ctx, lease, sized.decision)
-	return r.acceptLease(ctx, lease, attributed, announce)
+	return r.acceptLease(ctx, lease, cfg.Spec.Watchdog, attributed, announce)
 }
 
 func requireOfferedRegion(prov provider.Provider, region string) error {

@@ -10,6 +10,7 @@ const (
 	ConditionInstancesReady   = "InstancesReady"
 	ConditionWatchdogArmed    = "WatchdogArmed"
 	ConditionWorkloadMigrated = "WorkloadMigrated"
+	ConditionExpiryClamped    = "ExpiryClamped"
 	ConditionExpired          = "Expired"
 	ConditionReleased         = "Released"
 	ConditionDegraded         = "Degraded"
