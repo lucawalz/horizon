@@ -46,6 +46,10 @@ The interface verifies the token itself, so anything that delivers a valid token
 
 Provider-side, a proxy or forward-auth provider is often the wrong object to configure. Some publish no usable key set at all and sign their forwarded token symmetrically with the client secret, which the interface refuses by design, because a verifier holding the signing key can mint what it verifies. A standard OAuth2 or OIDC application object, of the kind that publishes a key set at its discovery document, is the one to create.
 
+A provider that mints a valid token is still only half the arrangement, because the session behind that token expires and something has to renew it. Authentik issues a refresh token only when the client requests the `offline_access` scope and the provider carries the `offline_access` scope mapping. Adding `refresh_token` to the provider's `grant_types` is necessary but not sufficient. Without both, oauth2-proxy holds no refresh token, `--cookie-refresh` is inert, and the session dies when the access token expires, one hour by default.
+
+Nothing reports the fault while it is latent. Sign-in succeeds, every request is served, and the arrangement looks correct until the first access token reaches its expiry. The refusal that follows is the expired case of the second row under [Reading a refusal](#reading-a-refusal), so an expiry caused by a missing scope mapping reads exactly like an ordinary token failure. An interface that works for an hour after each sign-in and then stops is this and not a clock skew.
+
 The `Host` a browser reaches and the address the interface bound are different things behind a proxy, so `ui.externalOrigin` has to state the browser-facing origin exactly, scheme included. Without it the interface still serves every read, and refuses every create and release with `403`. Forwarded headers such as `X-Forwarded-Host` are read by nothing, because anything able to route to the pod can write them.
 
 ## Granting the impersonated identity its rights
