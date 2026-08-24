@@ -279,6 +279,10 @@ func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) leaseNamed(w http.ResponseWriter, r *http.Request, name string) (*v1alpha1.CapacityLease, bool) {
+	if refusedAsAnInvalidName(w, name) {
+		return nil, false
+	}
+
 	reader, held := requestClient(w, r, s.readers)
 	if !held {
 		return nil, false
@@ -301,12 +305,7 @@ func (s *Server) leaseNamed(w http.ResponseWriter, r *http.Request, name string)
 }
 
 func (s *Server) leaseDetail(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if refusedAsAnInvalidName(w, name) {
-		return
-	}
-
-	lease, read := s.leaseNamed(w, r, name)
+	lease, read := s.leaseNamed(w, r, r.PathValue("name"))
 	if !read {
 		return
 	}
