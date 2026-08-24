@@ -1209,3 +1209,146 @@ func TestWorkloadOffBurstNodes_ListErrorSurfaces(t *testing.T) {
 		t.Fatal("expected the pod list failure to surface instead of a false negative")
 	}
 }
+
+func TestMigrateClearsTheNodeSelectorAndSavesIt(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{NodeSelector: map[string]string{"disktype": "ssd", "zone": "a"}},
+			},
+		},
+	}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	stored := getDeployment(t, kc, "dep1")
+	if got := stored.Spec.Template.Spec.NodeSelector; len(got) != 0 {
+		t.Errorf("node selector = %v, want none: a pinned workload cannot reach a burst node", got)
+	}
+
+	var saved struct {
+		NodeSelector map[string]string `json:"nodeSelector"`
+	}
+	if err := json.Unmarshal([]byte(stored.Annotations[k8s.PrePlacementAnnotationKey]), &saved); err != nil {
+		t.Fatalf("unmarshal placement annotation: %v", err)
+	}
+	want := map[string]string{"disktype": "ssd", "zone": "a"}
+	if !reflect.DeepEqual(saved.NodeSelector, want) {
+		t.Errorf("saved node selector = %v, want %v", saved.NodeSelector, want)
+	}
+}
+
+func TestRestorePlacementReturnsTheNodeSelector(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	original := map[string]string{"disktype": "ssd"}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: original}},
+		},
+	}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+
+	if got := getDeployment(t, kc, "dep1").Spec.Template.Spec.NodeSelector; !reflect.DeepEqual(got, original) {
+		t.Errorf("node selector = %v, want %v", got, original)
+	}
+}
+
+func TestRestorePlacementDropsNodeSelectorKeysAddedWhileOnBurst(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{NodeSelector: map[string]string{"disktype": "ssd"}},
+			},
+		},
+	}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	onBurst := getDeployment(t, kc, "dep1")
+	onBurst.Spec.Template.Spec.NodeSelector = map[string]string{"stray": "yes"}
+	if _, err := kc.AppsV1().Deployments(testNS).Update(context.Background(), onBurst, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("update deployment: %v", err)
+	}
+
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+
+	want := map[string]string{"disktype": "ssd"}
+	if got := getDeployment(t, kc, "dep1").Spec.Template.Spec.NodeSelector; !reflect.DeepEqual(got, want) {
+		t.Errorf("node selector = %v, want %v: restore must replace the map rather than merge into it", got, want)
+	}
+}
+
+func TestRestorePlacementLeavesTheNodeSelectorOfAnOlderAnnotation(t *testing.T) {
+	pinned := map[string]string{"disktype": "ssd"}
+	legacy := `{"affinity":null,"tolerations":[{"key":"workload","operator":"Exists"}]}`
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "dep1",
+			Namespace:   testNS,
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: legacy},
+			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: pinned}},
+		},
+	}
+	kc := fake.NewSimpleClientset(dep)
+	evictAndDelete(kc)
+
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+	if len(restored) != 1 || restored[0] != "deployment/dep1" {
+		t.Fatalf("restored = %v, want [deployment/dep1]", restored)
+	}
+
+	stored := getDeployment(t, kc, "dep1")
+	if got := stored.Spec.Template.Spec.NodeSelector; !reflect.DeepEqual(got, pinned) {
+		t.Errorf("node selector = %v, want %v: an annotation written before node selectors were saved must not erase one", got, pinned)
+	}
+	if len(stored.Spec.Template.Spec.Tolerations) != 1 {
+		t.Errorf("tolerations = %v, want the one the older annotation saved", stored.Spec.Template.Spec.Tolerations)
+	}
+}
+
+func TestRestorePlacementClearsANodeSelectorTheWorkloadNeverHad(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+
+	if got := getDeployment(t, kc, "dep1").Spec.Template.Spec.NodeSelector; len(got) != 0 {
+		t.Errorf("node selector = %v, want none", got)
+	}
+}

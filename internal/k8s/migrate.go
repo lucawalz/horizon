@@ -41,8 +41,9 @@ func ValidateNamespace(ns string) error {
 }
 
 type savedPlacement struct {
-	Affinity    *corev1.Affinity    `json:"affinity,omitempty"`
-	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	Affinity     *corev1.Affinity    `json:"affinity,omitempty"`
+	Tolerations  []corev1.Toleration `json:"tolerations,omitempty"`
+	NodeSelector map[string]string   `json:"nodeSelector,omitempty"`
 }
 
 type metadataPatch struct {
@@ -50,23 +51,38 @@ type metadataPatch struct {
 	Labels      map[string]*string `json:"labels"`
 }
 
+type podPlacementPatch struct {
+	Affinity    any                 `json:"affinity"`
+	Tolerations []corev1.Toleration `json:"tolerations"`
+	// an omitted node selector leaves the workload's own alone, which is what an annotation predating this field needs on restore
+	NodeSelector map[string]*string `json:"nodeSelector,omitempty"`
+}
+
 type placementPatch struct {
 	Metadata metadataPatch `json:"metadata"`
 	Spec     struct {
 		Template struct {
-			Spec struct {
-				Affinity    any                 `json:"affinity"`
-				Tolerations []corev1.Toleration `json:"tolerations"`
-			} `json:"spec"`
+			Spec podPlacementPatch `json:"spec"`
 		} `json:"template"`
 	} `json:"spec"`
 }
 
-func buildPlacementPatch(meta metadataPatch, affinity any, tolerations []corev1.Toleration) ([]byte, error) {
+func buildPlacementPatch(meta metadataPatch, placement podPlacementPatch) ([]byte, error) {
 	p := placementPatch{Metadata: meta}
-	p.Spec.Template.Spec.Affinity = affinity
-	p.Spec.Template.Spec.Tolerations = tolerations
+	p.Spec.Template.Spec = placement
 	return json.Marshal(p)
+}
+
+// strategic merge ignores the replace directive on a field the object no longer carries, so every key the workload holds today is dropped by name instead
+func nodeSelectorPatch(wanted, current map[string]string) map[string]*string {
+	fields := make(map[string]*string, len(current)+len(wanted))
+	for key := range current {
+		fields[key] = nil
+	}
+	for key, value := range wanted {
+		fields[key] = &value
+	}
+	return fields
 }
 
 func replacingAffinity(a *corev1.Affinity, kind, name string) (map[string]any, error) {
@@ -305,7 +321,11 @@ func buildMigratePatch(t workloadTarget, affinity *corev1.Affinity) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	patchData, err := buildPlacementPatch(savedPlacementMarkers(placement), affinity, withBurstToleration(t.podSpec.Tolerations))
+	moved := podPlacementPatch{Affinity: affinity, Tolerations: withBurstToleration(t.podSpec.Tolerations)}
+	if len(t.podSpec.NodeSelector) > 0 {
+		moved.NodeSelector = nodeSelectorPatch(nil, t.podSpec.NodeSelector)
+	}
+	patchData, err := buildPlacementPatch(savedPlacementMarkers(placement), moved)
 	if err != nil {
 		return nil, fmt.Errorf("migrate: marshal patch for %q: %w", t.name, err)
 	}
@@ -322,7 +342,11 @@ func withBurstToleration(existing []corev1.Toleration) []corev1.Toleration {
 }
 
 func marshalPlacement(podSpec *corev1.PodSpec, name string) (string, error) {
-	data, err := json.Marshal(savedPlacement{Affinity: podSpec.Affinity, Tolerations: podSpec.Tolerations})
+	data, err := json.Marshal(savedPlacement{
+		Affinity:     podSpec.Affinity,
+		Tolerations:  podSpec.Tolerations,
+		NodeSelector: podSpec.NodeSelector,
+	})
 	if err != nil {
 		return "", fmt.Errorf("migrate: marshal placement for %q: %w", name, err)
 	}
@@ -368,7 +392,7 @@ func evictNonDaemonSetPods(ctx context.Context, kc kubernetes.Interface, namespa
 	return nil
 }
 
-func buildRestorePatch(kind, name, placement string) ([]byte, error) {
+func buildRestorePatch(kind, name, placement string, current map[string]string) ([]byte, error) {
 	var saved savedPlacement
 	if err := json.Unmarshal([]byte(placement), &saved); err != nil {
 		return nil, fmt.Errorf("restore-placement: unmarshal placement for %s %q: %w", kind, name, err)
@@ -377,7 +401,11 @@ func buildRestorePatch(kind, name, placement string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	patchData, err := buildPlacementPatch(clearedPlacementMarkers(), affinity, saved.Tolerations)
+	original := podPlacementPatch{Affinity: affinity, Tolerations: saved.Tolerations}
+	if len(saved.NodeSelector) > 0 {
+		original.NodeSelector = nodeSelectorPatch(saved.NodeSelector, current)
+	}
+	patchData, err := buildPlacementPatch(clearedPlacementMarkers(), original)
 	if err != nil {
 		return nil, fmt.Errorf("restore-placement: marshal patch for %s %q: %w", kind, name, err)
 	}
@@ -424,7 +452,7 @@ func restoreWorkloads(ctx context.Context, wc workloadClient) ([]string, []label
 		if !ok {
 			continue
 		}
-		patchData, err := buildRestorePatch(wc.kind, t.name, placement)
+		patchData, err := buildRestorePatch(wc.kind, t.name, placement, t.podSpec.NodeSelector)
 		if err != nil {
 			recordFirst(&firstErr, err)
 			continue
