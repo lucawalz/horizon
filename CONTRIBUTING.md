@@ -76,7 +76,7 @@ npm ci
 npm run build
 ```
 
-The `site` job in CI rebuilds the bundle and fails when it differs from what is committed. It is not a required check yet, as [Required status checks](#required-status-checks) records, so a stale `dist` is reported rather than blocked and rebuilding stays the author's job.
+The `site` job in CI rebuilds the bundle and fails when it differs from what is committed. It is not a required check, so a stale `dist` is reported rather than blocked and rebuilding stays the author's job.
 
 That check is a byte comparison against a bundler, and it only holds while its inputs are pinned. `package-lock.json` pins the dependency graph and `.nvmrc` pins the Node version, which the local build and the CI job read from the same file. Building on another version can produce a difference that has nothing to do with the change.
 
@@ -127,32 +127,9 @@ Significant design choices are documented as ADRs in [`docs/adr/`](docs/adr/). A
 
 ## Pull requests
 
-1. Ensure all tests and linting pass locally
+1. Tests and linting pass locally
 2. Open a PR against `main`
 3. Fill in the PR template completely
 4. CI must pass before merging
 
-### Required status checks
-
-Branch protection on `main` currently requires only the `test` and `chart` checks. `lint`, `release-config`, `image` and `site` report their result but cannot block a merge.
-
-That gap matters most for the frontend. `.github/workflows/dependabot-automerge.yaml` merges any minor or patch Dependabot update as soon as the required checks pass, so an npm bump can land without `site` ever having built `internal/web/site` or compared the committed `dist/` against a fresh build. Until `site` is required, the freshness check cannot stop a stale bundle from reaching `main`.
-
-A repository admin closes the gap by adding `site` to the required checks:
-
-```bash
-gh api --method PATCH \
-  repos/lucawalz/horizon/branches/main/protection/required_status_checks \
-  --input - <<'JSON'
-{
-  "strict": false,
-  "checks": [
-    { "context": "test" },
-    { "context": "chart" },
-    { "context": "site" }
-  ]
-}
-JSON
-```
-
-The endpoint replaces the whole set, so the command restates `test` and `chart` alongside `site`.
+Branch protection on `main` requires only `test` and `chart`. `lint`, `release-config`, `image` and `site` report their result and cannot block a merge, and `.github/workflows/dependabot-automerge.yaml` merges any minor or patch Dependabot update once the required checks pass, so an npm bump can land without `site` having compared the committed `dist` against a fresh build.
