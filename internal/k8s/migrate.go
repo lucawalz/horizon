@@ -480,14 +480,15 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 }
 
 func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string) (bool, error) {
-	return workloadNodeMembership(ctx, kc, namespace, true, "workload-on-burst-nodes")
+	return workloadNodeMembership(ctx, kc, namespace, true, false, "workload-on-burst-nodes")
 }
 
 func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string) (bool, error) {
-	return workloadNodeMembership(ctx, kc, namespace, false, "workload-off-burst-nodes")
+	// an empty namespace has nothing left on a burst node to drain, and restore already patched placement back so nothing new can land there
+	return workloadNodeMembership(ctx, kc, namespace, false, true, "workload-off-burst-nodes")
 }
 
-func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namespace string, wantBurst bool, opName string) (bool, error) {
+func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namespace string, wantBurst, emptyIsReady bool, opName string) (bool, error) {
 	if namespace == "" {
 		return false, fmt.Errorf("%s: namespace must not be empty", opName)
 	}
@@ -495,7 +496,7 @@ func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namesp
 	if err != nil {
 		return false, fmt.Errorf("%s: list nodes: %w", opName, err)
 	}
-	spread, err := workloadSpreadReady(ctx, kc, namespace, burstNodes, wantBurst)
+	spread, err := workloadSpreadReady(ctx, kc, namespace, burstNodes, wantBurst, emptyIsReady)
 	if err != nil {
 		return false, fmt.Errorf("%s: list pods in %q: %w", opName, namespace, err)
 	}
@@ -503,20 +504,22 @@ func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namesp
 }
 
 func poolNodes(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
-	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: PoolLabelKey})
 	if err != nil {
 		return nil, err
 	}
 	burst := map[string]bool{}
 	for i := range nodes.Items {
-		if _, ok := nodes.Items[i].Labels[PoolLabelKey]; ok {
-			burst[nodes.Items[i].Name] = true
-		}
+		burst[nodes.Items[i].Name] = true
 	}
 	return burst, nil
 }
 
-func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace string, burstNodes map[string]bool, wantBurst bool) (bool, error) {
+func isTerminalPod(pod *corev1.Pod) bool {
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+}
+
+func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace string, burstNodes map[string]bool, wantBurst, emptyIsReady bool) (bool, error) {
 	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return false, err
@@ -524,7 +527,7 @@ func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace
 	counted := 0
 	for i := range pods.Items {
 		p := pods.Items[i]
-		if isDaemonSetPod(&p) {
+		if isDaemonSetPod(&p) || isTerminalPod(&p) {
 			continue
 		}
 		counted++
@@ -532,6 +535,8 @@ func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace
 			return false, nil
 		}
 	}
-	// an empty namespace has nothing left on burst nodes, so the off-burst check is vacuously true
-	return counted > 0 || !wantBurst, nil
+	if counted == 0 {
+		return emptyIsReady, nil
+	}
+	return true, nil
 }

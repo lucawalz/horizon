@@ -77,7 +77,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 
 	want := int(lease.Spec.Replicas)
 	if joined >= want {
-		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady,
+		changed = r.setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady,
 			fmt.Sprintf("%d of %d nodes ready", joined, want)) || changed
 		if lease.Status.ReadyAt == nil {
 			ready := r.readyInstant(lease, lastTransition)
@@ -87,7 +87,7 @@ func (r *CapacityLeaseReconciler) reconcileNodes(ctx context.Context, lease *v1a
 		}
 	} else {
 		reason, message := waitingCondition(lease, joined, want, r.now())
-		changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reason, message) || changed
+		changed = r.setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reason, message) || changed
 	}
 
 	if changed {
@@ -188,7 +188,7 @@ func (r *CapacityLeaseReconciler) reportWaitingForInstances(ctx context.Context,
 
 	// a ready count here would have to come from the phases, and Joined only means a node was ready once
 	reason, detail := waitingReport(lease, r.now())
-	if !setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reason, detail) {
+	if !r.setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reason, detail) {
 		return nil
 	}
 	return r.writeStatus(ctx, lease)

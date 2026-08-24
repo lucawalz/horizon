@@ -5,7 +5,10 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
@@ -519,12 +522,50 @@ func TestAZeroTeardownGraceSkipsTheRestoreGate(t *testing.T) {
 	}
 	h.seedPod("stuck", testWorkloadNS, name)
 
+	podListsAfterRestore := 0
+	h.kube.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		podListsAfterRestore++
+		return false, nil, nil
+	})
+
 	h.settle()
 
 	h.assertProviderEmpty()
 	if !h.leaseGone() {
 		t.Error("a zero teardown grace still waited on the workload")
 	}
+	if podListsAfterRestore != 0 {
+		t.Errorf("a zero teardown grace still queried workload placement %d times, want the gate skipped entirely", podListsAfterRestore)
+	}
+}
+
+func TestTeardownDoesNotWaitOnAWorkloadThatNeverMigrated(t *testing.T) {
+	const shortLease = 5 * time.Minute
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Duration = metav1.Duration{Duration: shortLease}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: 10 * time.Minute}
+	})
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testWorkloadNS},
+		Spec:       appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{}},
+	}
+	if _, err := h.kube.AppsV1().Deployments(testWorkloadNS).Create(h.t.Context(), deployment, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create deployment: %v", err)
+	}
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settleIgnoringErrors(5)
+	h.seedPod("stranded", testWorkloadNS, name)
+
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrateFailed, "empty selector")
+
+	h.clock.Advance(shortLease + time.Second)
+	h.settle()
+
+	h.assertProviderEmpty()
+	h.assertCondition(v1alpha1.ConditionReleased, metav1.ConditionTrue)
 }
 
 func leaseFallingDue(deletion, expiry *metav1.Time) *v1alpha1.CapacityLease {

@@ -27,9 +27,9 @@ func (r *CapacityLeaseReconciler) resolveDegraded(ctx context.Context, lease *v1
 	var changed bool
 	switch {
 	case degraded.reason != "":
-		changed = setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, degraded.reason, degraded.message)
+		changed = r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, degraded.reason, degraded.message)
 	case healthy && meta.FindStatusCondition(lease.Status.Conditions, v1alpha1.ConditionDegraded) != nil:
-		changed = setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionFalse, reasonRecovered,
+		changed = r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionFalse, reasonRecovered,
 			"the lease completed a pass with no degradation observed")
 	}
 	if !changed {

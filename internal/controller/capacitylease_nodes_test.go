@@ -728,7 +728,7 @@ func TestTheWaitingReportSpeaksOnlyForTheStageItCanRecompute(t *testing.T) {
 
 	ready := h.lease()
 	ready.Status.Instances[0].Phase = v1alpha1.InstancePhaseIntended
-	setCondition(ready, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady, "1 of 1 nodes ready")
+	h.reconciler().setCondition(ready, v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, reasonNodesReady, "1 of 1 nodes ready")
 	if err := h.reconciler().reportWaitingForInstances(h.t.Context(), ready); err != nil {
 		t.Fatalf("report against a ready lease: %v", err)
 	}

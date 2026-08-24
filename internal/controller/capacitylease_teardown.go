@@ -23,11 +23,11 @@ func (r *CapacityLeaseReconciler) teardown(ctx context.Context, lease *v1alpha1.
 	if res, err := r.restoreWorkload(ctx, lease); err != nil || !res.IsZero() {
 		return res, err
 	}
-	if res, err := r.awaitWorkloadRestored(ctx, lease); err != nil || !res.IsZero() {
-		return res, err
-	}
 
 	if hasUnreleasedInstances(lease) {
+		if res, err := r.awaitWorkloadRestored(ctx, lease); err != nil || !res.IsZero() {
+			return res, err
+		}
 		_, prov, err := r.providerFor(ctx, lease)
 		if err != nil {
 			return r.degrade(ctx, lease, reasonProviderUnavailable, err)
@@ -54,11 +54,11 @@ func (r *CapacityLeaseReconciler) releaseInstances(ctx context.Context, lease *v
 		switch {
 		case err == nil:
 		case errors.Is(err, errReleaseDegraded):
-			setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonReleaseFailed, err.Error())
+			r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonReleaseFailed, err.Error())
 		default:
 			blocking = errors.Join(blocking, err)
-			setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonReleaseFailed, err.Error())
-			setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionFalse, reasonReleasePending,
+			r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonReleaseFailed, err.Error())
+			r.setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionFalse, reasonReleasePending,
 				"instances remain until every deletion is confirmed absent")
 		}
 	}
@@ -126,12 +126,12 @@ func (r *CapacityLeaseReconciler) drainNode(ctx context.Context, nodeName string
 
 func (r *CapacityLeaseReconciler) finishTeardown(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
 	var records metricWrites
-	changed := setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionTrue, reasonReleased, "every instance is confirmed absent")
+	changed := r.setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionTrue, reasonReleased, "every instance is confirmed absent")
 	if changed && lease.Status.AcceptedAt != nil {
 		records.add(terminalRecord(attributionOf(lease), releaseOutcome(lease)))
 	}
-	changed = setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonReleased, "capacity released") || changed
-	changed = setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse, reasonReleased,
+	changed = r.setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, reasonReleased, "capacity released") || changed
+	changed = r.setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse, reasonReleased,
 		"no joined node remains to report an armed watchdog") || changed
 	if lease.Status.ReleasedAt == nil {
 		released := r.now()
@@ -157,8 +157,8 @@ func (r *CapacityLeaseReconciler) finishTeardown(ctx context.Context, lease *v1a
 }
 
 func (r *CapacityLeaseReconciler) degrade(ctx context.Context, lease *v1alpha1.CapacityLease, reason string, cause error) (ctrl.Result, error) {
-	setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, cause.Error())
-	setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionFalse, reason, "capacity is still held")
+	r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, cause.Error())
+	r.setCondition(lease, v1alpha1.ConditionReleased, metav1.ConditionFalse, reason, "capacity is still held")
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, errors.Join(cause, err)
 	}

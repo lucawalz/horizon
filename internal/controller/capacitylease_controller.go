@@ -35,6 +35,7 @@ const (
 
 	DefaultPollInterval = 30 * time.Second
 	stepRequeue         = 250 * time.Millisecond
+	restoreGatePoll     = time.Second
 
 	defaultTeardownGrace = 2 * time.Minute
 )
@@ -201,7 +202,7 @@ func (r *CapacityLeaseReconciler) providerFor(ctx context.Context, lease *v1alph
 
 func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alpha1.CapacityLease, attributed leaseAttribution, reason string, cause error, alsoRecord ...func()) (ctrl.Result, error) {
 	var records metricWrites
-	if setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionFalse, reason, cause.Error()) {
+	if r.setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionFalse, reason, cause.Error()) {
 		records.add(terminalRecord(attributed, metrics.OutcomeRejected))
 		for _, record := range alsoRecord {
 			records.add(record)
@@ -219,10 +220,10 @@ func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alph
 	lease.Status.ExpiresAt = &metav1.Time{Time: accepted.Add(lease.Spec.Duration.Duration)}
 	unsized := lease.Status.InstanceType == ""
 	latchAttribution(lease, attributed)
-	setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionTrue, reasonAccepted, "lease accepted and deadline recorded")
+	r.setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionTrue, reasonAccepted, "lease accepted and deadline recorded")
 
 	waiting, message := waitingCondition(lease, 0, int(lease.Spec.Replicas), accepted)
-	setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, waiting, message)
+	r.setCondition(lease, v1alpha1.ConditionInstancesReady, metav1.ConditionFalse, waiting, message)
 
 	var records metricWrites
 	if unsized && lease.Status.InstanceType != "" {
@@ -238,7 +239,7 @@ func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alph
 }
 
 func (r *CapacityLeaseReconciler) expire(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
-	if setCondition(lease, v1alpha1.ConditionExpired, metav1.ConditionTrue, reasonDeadlineReached, "lease deadline reached") {
+	if r.setCondition(lease, v1alpha1.ConditionExpired, metav1.ConditionTrue, reasonDeadlineReached, "lease deadline reached") {
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -284,18 +285,14 @@ func (r *CapacityLeaseReconciler) writeStatus(ctx context.Context, lease *v1alph
 	return nil
 }
 
-func setCondition(lease *v1alpha1.CapacityLease, condition string, status metav1.ConditionStatus, reason, message string) bool {
-	return setConditionAt(lease, condition, status, reason, message, time.Time{})
-}
-
-func setConditionAt(lease *v1alpha1.CapacityLease, condition string, status metav1.ConditionStatus, reason, message string, at time.Time) bool {
+func (r *CapacityLeaseReconciler) setCondition(lease *v1alpha1.CapacityLease, condition string, status metav1.ConditionStatus, reason, message string) bool {
 	return meta.SetStatusCondition(&lease.Status.Conditions, metav1.Condition{
 		Type:               condition,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: lease.Generation,
-		LastTransitionTime: metav1.NewTime(at),
+		LastTransitionTime: metav1.NewTime(r.now()),
 	})
 }
 

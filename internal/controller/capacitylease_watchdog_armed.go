@@ -63,13 +63,13 @@ func (r *CapacityLeaseReconciler) reconcileWatchdogArmed(lease *v1alpha1.Capacit
 	}
 
 	if len(unarmed) == 0 {
-		return setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue, reasonWatchdogArmed,
+		return r.setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue, reasonWatchdogArmed,
 			"every joined node reports an armed watchdog")
 	}
 
 	wasFalse := meta.IsStatusConditionFalse(lease.Status.Conditions, v1alpha1.ConditionWatchdogArmed)
 	message := fmt.Sprintf("watchdog not confirmed armed on: %s", strings.Join(unarmed, ", "))
-	changed := setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse, reasonWatchdogUnarmed, message)
+	changed := r.setCondition(lease, v1alpha1.ConditionWatchdogArmed, metav1.ConditionFalse, reasonWatchdogUnarmed, message)
 	if changed && !wasFalse {
 		r.Recorder.Eventf(lease, nil, corev1.EventTypeWarning, reasonWatchdogUnarmed, actionMarkedWatchdogUnarmed, message)
 	}

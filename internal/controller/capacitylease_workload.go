@@ -41,7 +41,7 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, provider.ReservedPoolValue)
 	if migrateErr != nil {
 		migrateErr = fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr)
-		setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())
+		r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, errors.Join(migrateErr, err)
 		}
@@ -49,7 +49,7 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	}
 
 	lease.Status.MigratedWorkloads = migrated
-	setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue, reasonMigrated,
+	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue, reasonMigrated,
 		fmt.Sprintf("%d workloads moved onto burst capacity", len(migrated)))
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
@@ -65,7 +65,7 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 	namespace := lease.Spec.Workload.Namespace
 	if _, restoreErr := k8s.RestorePlacement(ctx, r.Kube, namespace); restoreErr != nil {
 		restoreErr = fmt.Errorf("restore placement in %q: %w", namespace, restoreErr)
-		setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonRestoreFailed, restoreErr.Error())
+		r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonRestoreFailed, restoreErr.Error())
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, errors.Join(restoreErr, err)
 		}
@@ -73,8 +73,8 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 	}
 
 	lease.Status.MigratedWorkloads = nil
-	setConditionAt(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonPlacementRestored,
-		"workload placement restored", r.now())
+	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonPlacementRestored,
+		"workload placement restored")
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -93,7 +93,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	if cond == nil || cond.Reason != reasonPlacementRestored {
 		return ctrl.Result{}, nil
 	}
-	if r.now().Sub(cond.LastTransitionTime.Time) >= grace {
+	if r.now().Sub(cond.LastTransitionTime.Time) > grace {
 		return ctrl.Result{}, nil
 	}
 
@@ -105,5 +105,5 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	if restored {
 		return ctrl.Result{}, nil
 	}
-	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+	return ctrl.Result{RequeueAfter: restoreGatePoll}, nil
 }

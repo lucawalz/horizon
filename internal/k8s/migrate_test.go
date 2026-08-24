@@ -1074,6 +1074,21 @@ func TestWorkloadOnBurstNodes_DaemonSetIgnored(t *testing.T) {
 	}
 }
 
+func TestWorkloadOnBurstNodes_SucceededPodIgnored(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testNS),
+		makePod("app", testNS, "burst-1", corev1.PodRunning),
+		makePod("job-done", testNS, "home-1", corev1.PodSucceeded),
+	)
+	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("a succeeded pod off the burst nodes must not hold the check back")
+	}
+}
+
 func TestWorkloadOnBurstNodes_EmptyNamespace(t *testing.T) {
 	kc := fake.NewSimpleClientset()
 	if _, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, ""); err == nil {
@@ -1160,6 +1175,21 @@ func TestWorkloadOffBurstNodes_DaemonSetIgnored(t *testing.T) {
 	}
 	if !ready {
 		t.Error("a daemonset pod on a burst node must not hold the check back")
+	}
+}
+
+func TestWorkloadOffBurstNodes_SucceededPodIgnored(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testNS),
+		makePod("app", testNS, "home-1", corev1.PodRunning),
+		makePod("job-done", testNS, "burst-1", corev1.PodSucceeded),
+	)
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("a succeeded pod stranded on a burst node must not hold the check back")
 	}
 }
 
