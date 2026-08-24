@@ -14,6 +14,34 @@
 go build ./...
 ```
 
+## Repository layout
+
+The controller is built on controller-runtime, and the provider is a seam rather than a dependency, so no reconciler reaches a cloud SDK directly. [ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md) records why.
+
+```
+api/v1alpha1/       CapacityLease and ProviderConfig types
+cmd/horizon/        main entry point
+internal/cli/       cobra root, version, controller, dashboard, serve, watchdog, and cloud-init commands
+internal/agent/     node-side dead man's switch
+internal/manager/   controller-runtime wiring
+internal/web/       web interface, json endpoints and the embedded bundle
+                    site/ vite, react and typescript project, dist/ committed
+internal/oidc/      bearer token verification against the issuer's published key set
+internal/controller/  lease reconciler, orphan collector, provider factory
+internal/k8s/       workload migration, placement restore, node drain
+internal/cloudinit/ cloud-init join document generator, one file per flavour
+internal/provider/  instance lifecycle interface, capabilities, label constants
+                    hetzner/ Hetzner Cloud implementation
+                    conformance/ contract suite every implementation must pass
+                    fake/ in-memory implementation with a create and delete ledger
+internal/version/   build stamp
+config/crd/bases/   generated custom resource definitions
+charts/horizon/     Helm chart for the in-cluster controller and the optional interface
+docs/               usage guide, command line reference, and the guide to
+                    serving the interface in a cluster
+docs/adr/           architecture decision records
+```
+
 ## Testing
 
 Run the full test suite before opening a PR:
