@@ -144,11 +144,11 @@ func workloadSelector(kind, name string, sel *metav1.LabelSelector) (labels.Sele
 	return selector, nil
 }
 
-func statefulSetRollsOnItsOwn(spec appsv1.StatefulSetSpec) bool {
-	if spec.UpdateStrategy.Type == appsv1.OnDeleteStatefulSetStrategyType {
+func statefulSetRollsOnItsOwn(strategy appsv1.StatefulSetUpdateStrategy) bool {
+	if strategy.Type == appsv1.OnDeleteStatefulSetStrategyType {
 		return false
 	}
-	rollingUpdate := spec.UpdateStrategy.RollingUpdate
+	rollingUpdate := strategy.RollingUpdate
 	if rollingUpdate != nil && rollingUpdate.Partition != nil && *rollingUpdate.Partition != 0 {
 		return false
 	}
@@ -222,7 +222,7 @@ func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient
 					annotations: item.Annotations,
 					podSpec:     &item.Spec.Template.Spec,
 					selector:    selector,
-					selfRolls:   statefulSetRollsOnItsOwn(item.Spec),
+					selfRolls:   statefulSetRollsOnItsOwn(item.Spec.UpdateStrategy),
 				})
 			}
 			return targets, nil
