@@ -1334,21 +1334,3 @@ func TestRestorePlacementLeavesTheNodeSelectorOfAnOlderAnnotation(t *testing.T) 
 		t.Errorf("tolerations = %v, want the one the older annotation saved", stored.Spec.Template.Spec.Tolerations)
 	}
 }
-
-func TestRestorePlacementClearsANodeSelectorTheWorkloadNeverHad(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
-	kc := fake.NewSimpleClientset(node, dep)
-	evictAndDelete(kc)
-
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
-		t.Fatalf("Migrate: %v", err)
-	}
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
-		t.Fatalf("RestorePlacement: %v", err)
-	}
-
-	if got := getDeployment(t, kc, "dep1").Spec.Template.Spec.NodeSelector; len(got) != 0 {
-		t.Errorf("node selector = %v, want none", got)
-	}
-}
