@@ -73,9 +73,9 @@ func buildPlacementPatch(meta metadataPatch, placement podPlacementPatch) ([]byt
 	return json.Marshal(p)
 }
 
-// strategic merge ignores the replace directive on a field the object no longer carries, so every key the workload holds today is dropped by name instead
 func nodeSelectorPatch(wanted, current map[string]string) map[string]*string {
 	fields := make(map[string]*string, len(current)+len(wanted))
+	// strategic merge ignores the replace directive on a field the object no longer carries, so every key is dropped by name instead
 	for key := range current {
 		fields[key] = nil
 	}

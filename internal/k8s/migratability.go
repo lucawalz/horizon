@@ -92,8 +92,8 @@ func statefulSetRolloutReason(strategy appsv1.StatefulSetUpdateStrategy) string 
 	return ""
 }
 
-// migration clears the node selector, so a repeated pass has to read the pin back out of the saved placement
 func (t workloadTarget) preBurstNodeSelector() map[string]string {
+	// migration clears the node selector, so a repeated pass has to read the pin back out of the saved placement
 	placement, ok := t.annotations[PrePlacementAnnotationKey]
 	if !ok {
 		return t.podSpec.NodeSelector
