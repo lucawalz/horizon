@@ -1,7 +1,16 @@
 import type { FormEvent } from 'react'
+import { useRef } from 'react'
 
 import { Button, controlClass } from '@/components/controls'
-import { Cell, HeadCell, Row, Table, TableBody, TableHead } from '@/components/data-table'
+import {
+  Cell,
+  HeadCell,
+  Row,
+  Table,
+  TableBody,
+  TableEmpty,
+  TableHead,
+} from '@/components/data-table'
 import { StatusPill } from '@/components/status-pill'
 import type {
   MachineCatalogueResponse,
@@ -11,7 +20,7 @@ import type {
 import { fetchMachines, machinesPath } from '@/lib/api'
 import { fieldValue } from '@/lib/form'
 import { ConditionChip, Since } from '@/routes/chips'
-import { EmptyState, Loading, Notice, PageHeader, Panel } from '@/routes/page'
+import { EmptyState, Loading, Notice, PageHeader } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
 import { machinesHrefFor, navigate } from '@/routes/router'
@@ -20,6 +29,7 @@ import { absent, formatBytes, formatRate } from '@/routes/units'
 const configField = 'config'
 const regionField = 'region'
 const readyCondition = 'Ready'
+const configColumns = 4
 
 function Picker({
   configs,
@@ -125,39 +135,37 @@ function TypesTable({ types }: { types: MachineType[] }) {
 
 function ConfigsPanel({ configs }: { configs: ProviderConfigSummary[] }) {
   return (
-    <Panel title="Provider configs">
-      {configs.length === 0 ? (
-        <p className="px-gutter py-section text-center text-copy-13 text-subtle">
-          The cluster holds no ProviderConfig. Apply one with provider credentials before a lease
-          can reserve anything.
-        </p>
-      ) : (
-        <Table>
-          <TableHead>
-            <Row>
-              <HeadCell>Config</HeadCell>
-              <HeadCell>Provider</HeadCell>
-              <HeadCell>Ready</HeadCell>
-              <HeadCell numeric>Created</HeadCell>
+    <Table>
+      <TableHead>
+        <Row>
+          <HeadCell>Config</HeadCell>
+          <HeadCell>Provider</HeadCell>
+          <HeadCell>Ready</HeadCell>
+          <HeadCell numeric>Created</HeadCell>
+        </Row>
+      </TableHead>
+      <TableBody>
+        {configs.length === 0 ? (
+          <TableEmpty span={configColumns}>
+            The cluster holds no ProviderConfig. Apply one with provider credentials before a lease
+            can reserve anything.
+          </TableEmpty>
+        ) : (
+          configs.map((one) => (
+            <Row key={one.name}>
+              <Cell className="font-emphasis text-ink-strong">{one.name}</Cell>
+              <Cell muted>{one.type}</Cell>
+              <Cell>
+                <ConditionChip type={readyCondition} status={one.ready} />
+              </Cell>
+              <Cell numeric muted>
+                <Since at={one.createdAt} />
+              </Cell>
             </Row>
-          </TableHead>
-          <TableBody>
-            {configs.map((one) => (
-              <Row key={one.name}>
-                <Cell className="font-emphasis text-ink-strong">{one.name}</Cell>
-                <Cell muted>{one.type}</Cell>
-                <Cell>
-                  <ConditionChip type={readyCondition} status={one.ready} />
-                </Cell>
-                <Cell numeric muted>
-                  <Since at={one.createdAt} />
-                </Cell>
-              </Row>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </Panel>
+          ))
+        )}
+      </TableBody>
+    </Table>
   )
 }
 
@@ -165,20 +173,7 @@ function ConfigsPanel({ configs }: { configs: ProviderConfigSummary[] }) {
 function Catalogue({ answer }: { answer: MachineCatalogueResponse }) {
   switch (answer.state) {
     case 'Listed':
-      return (
-        <Panel
-          title="Instance types"
-          note={
-            answer.refreshedAt === null ? undefined : (
-              <span>
-                Refreshed <Since at={answer.refreshedAt} />
-              </span>
-            )
-          }
-        >
-          <TypesTable types={answer.types} />
-        </Panel>
-      )
+      return <TypesTable types={answer.types} />
     case 'NoSelection':
       return (
         <EmptyState title="Choose a provider config and a region">
@@ -231,12 +226,6 @@ function MachinesBody({ view }: { view: Polled<MachineCatalogueResponse> }) {
   }
   return (
     <>
-      <Picker
-        key={`${view.data.config}/${view.data.region}`}
-        configs={view.data.configs}
-        config={view.data.config}
-        region={view.data.region}
-      />
       <Catalogue answer={view.data} />
       <ConfigsPanel configs={view.data.configs} />
     </>
@@ -245,12 +234,22 @@ function MachinesBody({ view }: { view: Polled<MachineCatalogueResponse> }) {
 
 export function MachinesRoute({ config, region }: { config: string; region: string }) {
   const view = usePolled(() => fetchMachines(config, region), machinesPath(config, region))
+  // a reload clears view.data, so the ref keeps the picker's options from emptying while the next answer is in flight
+  const knownConfigs = useRef<ProviderConfigSummary[]>([])
+  if (view.data !== null) knownConfigs.current = view.data.configs
 
   return (
     <>
       <PageHeader
         title="Machines"
         lede="The instance types each provider config offers in a region, as the controller last fetched them."
+        aside={
+          view.data !== null && view.data.state === 'Listed' && view.data.refreshedAt !== null ? (
+            <span className="text-label-12 text-subtle">
+              Refreshed <Since at={view.data.refreshedAt} />
+            </span>
+          ) : undefined
+        }
       />
       <div className="space-y-gutter">
         {view.error ? (
@@ -258,6 +257,12 @@ export function MachinesRoute({ config, region }: { config: string; region: stri
             {view.error.message}
           </Notice>
         ) : null}
+        <Picker
+          key={`${config}/${region}`}
+          configs={knownConfigs.current}
+          config={config}
+          region={region}
+        />
         <MachinesBody view={view} />
       </div>
     </>
