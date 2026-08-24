@@ -108,6 +108,15 @@ func (s stubCatalogue) Age(string) (time.Duration, bool) {
 	return 0, s.err == nil
 }
 
+const stubClockRealtimeTolerance = 5 * time.Minute
+
+func assertStubClockTracksRealTime(t *testing.T, clock *stubClock) {
+	t.Helper()
+	if drift := time.Since(clock.Now()); drift < 0 || drift > stubClockRealtimeTolerance {
+		t.Fatalf("stub clock reads %s, %s from real time: deletion-anchored teardown tests need it seeded in envtest's era, not a fixed historical constant", clock.Now(), drift)
+	}
+}
+
 func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harness {
 	t.Helper()
 	h := &harness{
@@ -119,6 +128,7 @@ func newHarness(t *testing.T, mutators ...func(*v1alpha1.CapacityLease)) *harnes
 		kube:     newKubeClient(),
 		recorder: events.NewFakeRecorder(testEventBufferLen),
 	}
+	assertStubClockTracksRealTime(t, h.clock)
 	h.prov = fake.NewWithClock(h.clock.Now)
 	h.catalogue = stubCatalogue{types: []provider.InstanceType{
 		offeredType(testSize, testRegion, true),

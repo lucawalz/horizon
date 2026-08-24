@@ -410,6 +410,7 @@ func TestADrainedNodeLosesItsPodsWithinTheGrace(t *testing.T) {
 	h.seedPod("straggler", testWorkloadNS, name)
 
 	h.deleteLease()
+	h.clock.Advance(10 * time.Second)
 	h.settle()
 
 	h.assertProviderEmpty()
@@ -648,7 +649,13 @@ func blockEviction(kc *k8sfake.Clientset) {
 }
 
 func TestTeardownBoundIsSharedAcrossReplicasNotMultipliedPerInstance(t *testing.T) {
-	const grace = 2 * time.Second
+	const (
+		grace = 2 * time.Second
+		// below one blocked eviction's real retry cost, so the test would prove nothing
+		minElapsedToProveADrainActuallyBlocked = 4 * time.Second
+		// short of three blocked drains each paying their own retry cost, so a shared budget is required to stay under it
+		maxElapsedIfTheBudgetIsSharedNotMultiplied = 10 * time.Second
+	)
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Replicas = 3
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
@@ -675,10 +682,10 @@ func TestTeardownBoundIsSharedAcrossReplicasNotMultipliedPerInstance(t *testing.
 	}
 	elapsed := time.Since(started)
 
-	if elapsed < 4*time.Second {
+	if elapsed < minElapsedToProveADrainActuallyBlocked {
 		t.Fatalf("teardown finished in %s without any drain actually blocking, the test proves nothing", elapsed)
 	}
-	if elapsed >= 10*time.Second {
+	if elapsed >= maxElapsedIfTheBudgetIsSharedNotMultiplied {
 		t.Errorf("teardown of 3 blocked drains took %s, want it bounded near one teardownGrace's real cost regardless of replica count", elapsed)
 	}
 	h.assertProviderEmpty()
@@ -768,20 +775,25 @@ func TestRemainingTeardownBudgetNeverExceedsGraceOrGoesNegative(t *testing.T) {
 	anchor := testInstant
 
 	cases := []struct {
-		name string
-		now  time.Time
-		want time.Duration
+		name     string
+		now      time.Time
+		want     time.Duration
+		noAnchor bool
 	}{
-		{"just became due", anchor, grace},
-		{"partway through the grace", anchor.Add(20 * time.Second), 40 * time.Second},
-		{"the grace has fully elapsed", anchor.Add(grace), 0},
-		{"far past the grace", anchor.Add(time.Hour), 0},
-		{"a stamp from another replica's clock reads ahead of now", anchor.Add(-time.Hour), grace},
+		{name: "just became due", now: anchor, want: grace},
+		{name: "partway through the grace", now: anchor.Add(20 * time.Second), want: 40 * time.Second},
+		{name: "the grace has fully elapsed", now: anchor.Add(grace), want: 0},
+		{name: "far past the grace", now: anchor.Add(time.Hour), want: 0},
+		{name: "a stamp from another replica's clock reads ahead of now", now: anchor.Add(-time.Hour), want: grace},
+		{name: "neither deletion nor expiry is due", now: anchor, want: 0, noAnchor: true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			lease := leaseFallingDue(nil, &metav1.Time{Time: anchor})
+			if tc.noAnchor {
+				lease = leaseFallingDue(nil, nil)
+			}
 			lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
 			r := &CapacityLeaseReconciler{Clock: func() time.Time { return tc.now }}
 
