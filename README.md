@@ -41,61 +41,6 @@ flowchart LR
   orphan[Orphan collector] -->|sweep| hcloud
 ```
 
-## Custom resources
-
-Both definitions are cluster-scoped and live in the `horizon.dev/v1alpha1` group. `kubectl explain capacitylease.spec` and `kubectl explain providerconfig.spec.hetzner`, or the generated definitions in `config/crd/bases/`, carry the exhaustive field list; the two examples below carry only the fields an adopter sets in practice.
-
-### CapacityLease
-
-`spec.providerRef`, `spec.region`, `spec.replicas`, and `spec.duration` are required, together with exactly one of `spec.size` or `spec.requirements`. `spec.size` pins an instance type by name. `spec.requirements` states a minimum core count, an optional memory floor, an architecture, an optional CPU type and a selection strategy, and horizon resolves the cheapest offered type that satisfies them. `spec.providerRef`, `spec.region` and whichever of the two sizing fields is set are immutable, so a lease cannot be repointed once it holds capacity. `spec.workload.namespace` names the namespace to migrate onto the leased nodes and omitting it adds bare capacity. Status carries `phase` (`Pending`, `Provisioning`, `Active`, `Expiring`, `Released`, or `Degraded`), the resolved `instanceType`, the per-instance provider id, node name and join stage, and conditions. A lease sized from `spec.requirements` also carries `status.selection`. It records the strategy that ran, the chosen type with its hourly rate and currency, and the runner-up, together with how many types the catalogue `offered`, how many of them `qualified`, and a tally of the rejected candidates by the filter that rejected them. The stanza is written once, alongside `status.instanceType`, and is not rewritten as the catalogue moves. A lease that pins `spec.size` makes no policy decision and carries no stanza. Printer columns expose replicas, region, phase, expiry, readiness, whether the node-side watchdog is armed, age, and the resolved instance type, in that order, and `kubectl get -o wide` adds the instants the lease became ready and was released. `kubectl get`, k9s, Rancher and Headlamp are therefore all useful without a horizon-specific client; the short name is `cl`.
-
-```yaml
-apiVersion: horizon.dev/v1alpha1
-kind: CapacityLease
-metadata:
-  name: batch-run
-spec:
-  providerRef: hetzner
-  region: nbg1
-  size: cx22
-  replicas: 2
-  duration: 2h
-  workload:
-    namespace: batch
-```
-
-### ProviderConfig
-
-`spec.type` is `hetzner`, the only accepted value. `spec.hetzner.credentialsSecretRef` and `spec.hetzner.cloudInitSecretRef` are required, along with exactly one of `spec.hetzner.image` (by `name`, `id`, or `selector`) or the deprecated `spec.hetzner.imageSelector`. `spec.hetzner.nodeCredentialSecretRef` is optional in the schema but required in practice: Hetzner cannot stop billing by self-terminating, so a lease is refused while it is unset. `spec.hetzner.joinTokenSecretRef` is likewise optional in the schema but required whenever the cloud-init behind `cloudInitSecretRef` uses `${HORIZON_JOIN_TOKEN}`, and every document the `k3s` flavour of `horizon cloud-init` renders does; the provider build fails, naming the field, if the sentinel is present and the reference is unset. `spec.watchdog` is required and cross-validates `renewInterval`, `slack`, and `maxLifetime` against each other.
-
-```yaml
-apiVersion: horizon.dev/v1alpha1
-kind: ProviderConfig
-metadata:
-  name: hetzner
-spec:
-  type: hetzner
-  hetzner:
-    credentialsSecretRef:
-      name: horizon-hetzner
-      key: token
-    cloudInitSecretRef:
-      name: horizon-cloud-init
-      key: cloud-init
-    nodeCredentialSecretRef:
-      name: horizon-hetzner-node
-      key: token
-    joinTokenSecretRef:
-      name: horizon-join-token
-      key: token
-    image:
-      name: ubuntu-24.04
-  watchdog:
-    renewInterval: 1m
-    slack: 2m
-    maxLifetime: 8h
-```
-
 ## Node join contract
 
 A burst node satisfies four requirements. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
@@ -106,16 +51,6 @@ A burst node satisfies four requirements. horizon generates the first three; the
 4. **Reach the control plane.** horizon has no VPN, no firewall management, and no opinion about how a leased server reaches the cluster beyond the `--server` URL it is given; getting a packet from Hetzner's network to the control plane is the adopter's problem, the same way it is bedrock's Tailscale for the nodes it runs permanently. Where that path is a VPN, the agent also has to be told to run its pod network over the tunnel, which is `--flavor-config flannel-iface=<interface>` for k3s.
 
 Four sentinels are substituted when the provider builds the cloud-init: `${HORIZON_NODE_TOKEN}` and `${HORIZON_JOIN_TOKEN}` from their Secret references, `${HORIZON_VERSION}` from the controller's build stamp, `${HORIZON_MAX_LIFETIME}` from `spec.watchdog.maxLifetime`. Substitution is literal text replacement; anything else starting `${HORIZON_` left standing afterward fails the provider build rather than boot with a placeholder where a credential belongs.
-
-## Configuration
-
-Configuration is the `ProviderConfig` resource plus the Secrets it points at. There is no configuration file, and the binary reads none.
-
-Secret references are resolved in the namespace the controller runs in, taken from the `POD_NAMESPACE` environment variable and falling back to the service account namespace file projected into the pod. A `ProviderConfig` is cluster-scoped, so the reference carries a name and a key but no namespace.
-
-## Architecture
-
-The controller is built on controller-runtime. The provider is a seam rather than a dependency, so the reconcilers never reach a cloud SDK directly; see [ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md). [Repository layout](#repository-layout) below maps each package to what it owns.
 
 ## Installation
 
@@ -175,12 +110,14 @@ spec:
   duration: 30m
 ```
 
+`spec.providerRef`, `spec.region`, `spec.replicas` and `spec.duration` are required, together with exactly one of `spec.size` or `spec.requirements`. `spec.size` pins an instance type by name; `spec.requirements` states a minimum core count, an optional memory floor, an architecture, an optional CPU type and a selection strategy, and horizon resolves the cheapest offered type that satisfies them. The provider reference, the region and whichever sizing field is set are immutable, so a lease cannot be repointed once it holds capacity. Adding `spec.workload.namespace` migrates that namespace onto the leased nodes; omitting it adds bare capacity. `kubectl explain capacitylease.spec` and the generated definitions in `config/crd/bases/` carry the exhaustive field list.
+
 ```
 kubectl apply -f capacitylease.yaml
 kubectl get capacityleases
 ```
 
-which prints the lease once its node has registered and its watchdog has armed:
+Printer columns carry replicas, region, phase, expiry, readiness, whether the node-side watchdog is armed, age and the resolved instance type, and `kubectl get -o wide` adds the instants the lease became ready and was released. `kubectl get`, k9s, Rancher and Headlamp are therefore all useful without a horizon-specific client, and the short name is `cl`:
 
 ```
 NAME        REPLICAS   REGION   PHASE    EXPIRES                READY   ARMED   AGE   TYPE

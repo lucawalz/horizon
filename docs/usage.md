@@ -109,6 +109,8 @@ spec:
   watchdog: {renewInterval: 1m, slack: 2m, maxLifetime: 8h}
 ```
 
+That resource plus the Secrets it points at is the whole of horizon's configuration. There is no configuration file and the binary reads none. `spec.type` is `hetzner`, the only accepted value; `credentialsSecretRef`, `cloudInitSecretRef` and exactly one of `image` or the deprecated `imageSelector` are required by the schema; and `spec.watchdog` cross-validates `renewInterval`, `slack` and `maxLifetime` against each other. `nodeCredentialSecretRef` and `joinTokenSecretRef` are optional in the schema and required in practice: a lease is refused while the node credential is unset, and the provider build fails, naming the field, while the join token is unset and a rendered document still carries `${HORIZON_JOIN_TOKEN}`. A `ProviderConfig` is cluster-scoped, so each reference carries a name and a key but no namespace, and the controller resolves it in its own namespace, read from `POD_NAMESPACE` and falling back to the service account namespace file projected into the pod.
+
 **8. Apply a `CapacityLease` and watch the node register:**
 
 ```yaml
