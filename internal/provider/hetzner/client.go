@@ -81,10 +81,14 @@ func NewClientWithAPIs(servers ServerAPI, images ImageAPI, sshKeys SSHKeyAPI, fi
 	return &Client{servers: servers, images: images, sshKeys: sshKeys, firewalls: firewalls, serverTypes: serverTypes, spec: spec}
 }
 
-func (c *Client) Capabilities() provider.Capabilities {
+func Capabilities() provider.Capabilities {
 	return provider.Capabilities{
 		SelfTerminationStopsBilling: false,
 		SupportsResourceLabels:      true,
 		Regions:                     slices.Clone(locations),
 	}
+}
+
+func (c *Client) Capabilities() provider.Capabilities {
+	return Capabilities()
 }

@@ -14,6 +14,14 @@ import (
 
 const rateRoundTripPrecision = -1
 
+// an unquoted rate stays absent rather than being published as a price of zero
+func formatHourlyRate(rate provider.Rate) string {
+	if rate.Currency == "" {
+		return ""
+	}
+	return strconv.FormatFloat(rate.Amount, 'f', rateRoundTripPrecision, 64)
+}
+
 type rejectionReason string
 
 const (
@@ -133,7 +141,7 @@ func selectionStatus(decision selectionDecision, decided time.Time) *v1alpha1.Se
 	return &v1alpha1.SelectionStatus{
 		Strategy:   decision.Strategy,
 		Chosen:     decision.Chosen.Name,
-		HourlyRate: strconv.FormatFloat(decision.Chosen.HourlyRate.Amount, 'f', rateRoundTripPrecision, 64),
+		HourlyRate: formatHourlyRate(decision.Chosen.HourlyRate),
 		Currency:   decision.Chosen.HourlyRate.Currency,
 		RunnerUp:   decision.runnerUpName(),
 		Offered:    int32(decision.Offered),

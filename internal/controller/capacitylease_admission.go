@@ -45,7 +45,7 @@ func (r *CapacityLeaseReconciler) admit(ctx context.Context, lease *v1alpha1.Cap
 	}
 	attributed.instanceType = sized.instanceType
 
-	if err := requireTeardownGuarantee(cfg, prov); err != nil {
+	if err := requireTeardownGuarantee(cfg, prov.Capabilities()); err != nil {
 		return r.rejectLease(ctx, lease, attributed, reasonProviderUnavailable, err)
 	}
 	announce := r.latchSelection(ctx, lease, sized.decision)

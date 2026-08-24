@@ -469,7 +469,7 @@ func TestRequireTeardownGuaranteeRefusesOnlyWhatCannotBeTornDown(t *testing.T) {
 					}),
 				},
 			}
-			assertErrorMessage(t, requireTeardownGuarantee(cfg, prov), tc.wantErr)
+			assertErrorMessage(t, requireTeardownGuarantee(cfg, prov.Capabilities()), tc.wantErr)
 		})
 	}
 }

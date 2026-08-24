@@ -66,6 +66,26 @@ func unsupportedProviderType(cfg *v1alpha1.ProviderConfig) error {
 	return fmt.Errorf("unsupported provider type %q", cfg.Spec.Type)
 }
 
+type providerProfile struct {
+	capabilities provider.Capabilities
+	secretRefs   []namedSecretRef
+}
+
+func profileOf(cfg *v1alpha1.ProviderConfig) (providerProfile, error) {
+	switch cfg.Spec.Type {
+	case v1alpha1.ProviderTypeHetzner:
+		if cfg.Spec.Hetzner == nil {
+			return providerProfile{}, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
+		}
+		return providerProfile{
+			capabilities: hetzner.Capabilities(),
+			secretRefs:   hetznerSecretRefs(cfg.Spec.Hetzner),
+		}, nil
+	default:
+		return providerProfile{}, unsupportedProviderType(cfg)
+	}
+}
+
 func hetznerCatalogue(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec) (provider.Provider, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("provider type %q carries no hetzner block", v1alpha1.ProviderTypeHetzner)
@@ -85,8 +105,8 @@ func nodeCredentialConfigured(spec v1alpha1.ProviderConfigSpec) bool {
 	return spec.Hetzner != nil && spec.Hetzner.NodeCredentialSecretRef != nil
 }
 
-func requireTeardownGuarantee(cfg *v1alpha1.ProviderConfig, prov provider.Provider) error {
-	if prov.Capabilities().SelfTerminationStopsBilling || nodeCredentialConfigured(cfg.Spec) {
+func requireTeardownGuarantee(cfg *v1alpha1.ProviderConfig, offered provider.Capabilities) error {
+	if offered.SelfTerminationStopsBilling || nodeCredentialConfigured(cfg.Spec) {
 		return nil
 	}
 	return fmt.Errorf("providerconfig %q cannot stop billing by self-terminating and configures no nodeCredentialSecretRef, so teardown of new capacity is not guaranteed", cfg.Name)
@@ -135,17 +155,34 @@ func hetznerProvider(ctx context.Context, kc kubernetes.Interface, namespace str
 	})
 }
 
+type namedSecretRef struct {
+	field string
+	ref   *corev1.SecretKeySelector
+}
+
 type sentinelSource struct {
 	sentinel string
-	field    string
-	ref      *corev1.SecretKeySelector
+	namedSecretRef
 }
 
 func secretBackedSentinels(spec *v1alpha1.HetznerProviderSpec) []sentinelSource {
 	return []sentinelSource{
-		{hetzner.NodeTokenSentinel, "nodeCredentialSecretRef", spec.NodeCredentialSecretRef},
-		{hetzner.JoinTokenSentinel, "joinTokenSecretRef", spec.JoinTokenSecretRef},
+		{hetzner.NodeTokenSentinel, namedSecretRef{"nodeCredentialSecretRef", spec.NodeCredentialSecretRef}},
+		{hetzner.JoinTokenSentinel, namedSecretRef{"joinTokenSecretRef", spec.JoinTokenSecretRef}},
 	}
+}
+
+func hetznerSecretRefs(spec *v1alpha1.HetznerProviderSpec) []namedSecretRef {
+	refs := []namedSecretRef{
+		{"credentialsSecretRef", &spec.CredentialsSecretRef},
+		{"cloudInitSecretRef", &spec.CloudInitSecretRef},
+	}
+	for _, source := range secretBackedSentinels(spec) {
+		if source.ref != nil {
+			refs = append(refs, source.namedSecretRef)
+		}
+	}
+	return refs
 }
 
 func renderCloudInit(ctx context.Context, kc kubernetes.Interface, namespace string, spec *v1alpha1.HetznerProviderSpec, watchdog v1alpha1.WatchdogPolicy, template string) (string, error) {
