@@ -278,6 +278,98 @@ func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
 	}
 }
 
+func TestMigrateRejectsEmptyDeploymentSelector(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
+		Spec:       appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{}},
+	}
+	pod := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
+
+	kc := fake.NewSimpleClientset(node, dep, pod)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err == nil {
+		t.Fatal("expected an error for a deployment with an empty selector")
+	}
+	if evicted := evictionNames(kc); len(evicted) != 0 {
+		t.Errorf("evicted = %v, want none: an empty selector must not silently suppress eviction", evicted)
+	}
+}
+
+func TestMigrateRejectsEmptyStatefulSetSelector(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
+		Spec:       appsv1.StatefulSetSpec{Selector: &metav1.LabelSelector{}},
+	}
+	pod := makePod("sts1-0", testNS, "homelab-1", corev1.PodRunning)
+
+	kc := fake.NewSimpleClientset(node, sts, pod)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err == nil {
+		t.Fatal("expected an error for a statefulset with an empty selector")
+	}
+	if evicted := evictionNames(kc); len(evicted) != 0 {
+		t.Errorf("evicted = %v, want none: an empty selector must not silently suppress eviction", evicted)
+	}
+}
+
+func TestMigrateEvictsOnDeleteStatefulSetPods(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
+		Spec: appsv1.StatefulSetSpec{
+			Selector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db"}},
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{Type: appsv1.OnDeleteStatefulSetStrategyType},
+		},
+	}
+	matched := makePod("sts1-0", testNS, "homelab-1", corev1.PodRunning)
+	matched.Labels = map[string]string{"app": "db"}
+
+	kc := fake.NewSimpleClientset(node, sts, matched)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	evicted := evictionNames(kc)
+	if len(evicted) != 1 || evicted[0] != "sts1-0" {
+		t.Errorf("evicted = %v, want [sts1-0]: an OnDelete statefulset never rolls its pods on its own", evicted)
+	}
+}
+
+func TestMigrateEvictsStatefulSetPodsBelowPartition(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	partition := int32(2)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
+		Spec: appsv1.StatefulSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db"}},
+			UpdateStrategy: appsv1.StatefulSetUpdateStrategy{
+				Type:          appsv1.RollingUpdateStatefulSetStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition},
+			},
+		},
+	}
+	matched := makePod("sts1-0", testNS, "homelab-1", corev1.PodRunning)
+	matched.Labels = map[string]string{"app": "db"}
+
+	kc := fake.NewSimpleClientset(node, sts, matched)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	evicted := evictionNames(kc)
+	if len(evicted) != 1 || evicted[0] != "sts1-0" {
+		t.Errorf("evicted = %v, want [sts1-0]: a non-zero partition leaves pods below it unrolled", evicted)
+	}
+}
+
 func TestMigrateDoesNotRelabelNode(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 	kc := fake.NewSimpleClientset(node)
