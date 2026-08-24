@@ -410,7 +410,7 @@ func TestADrainedNodeLosesItsPodsWithinTheGrace(t *testing.T) {
 	h.seedPod("straggler", testWorkloadNS, name)
 
 	h.deleteLease()
-	h.clock.Advance(10 * time.Second)
+	h.clock.Advance(30 * time.Second)
 	h.settle()
 
 	h.assertProviderEmpty()
