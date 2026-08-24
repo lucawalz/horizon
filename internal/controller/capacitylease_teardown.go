@@ -199,7 +199,7 @@ func (r *CapacityLeaseReconciler) remainingTeardownBudget(lease *v1alpha1.Capaci
 	grace := teardownGrace(lease)
 	start, due := teardownStart(lease)
 	if !due {
-		return grace
+		return 0
 	}
 	// clamp elapsed before subtracting so a stamp that reads ahead of now never inflates the remainder past grace
 	elapsed := max(r.now().Sub(start), 0)
