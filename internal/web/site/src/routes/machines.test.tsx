@@ -80,12 +80,13 @@ describe('the machines route', () => {
     await view.unmount()
   })
 
-  it('keeps the picker mounted while new route props reload the catalogue', async () => {
+  it('keeps the picker mounted, with every known config still offered, while new route props reload the catalogue', async () => {
+    const aws = providerConfigSummary('aws')
     const resolvers: ((value: Response) => void)[] = []
     let calls = 0
     stubFetchWith(() => {
       calls += 1
-      if (calls === 1) return Promise.resolve(jsonResponse(catalogueWith({})))
+      if (calls === 1) return Promise.resolve(jsonResponse(catalogueWith({ configs: [hetzner, aws] })))
       return new Promise<Response>((resolve) => {
         resolvers.push(resolve)
       })
@@ -96,12 +97,21 @@ describe('the machines route', () => {
 
     await view.render(<MachinesRoute config="hetzner" region="nbg1" />)
 
-    expect(control<HTMLSelectElement>(view.container, 'select[name="config"]').value).toBe('hetzner')
+    const select = control<HTMLSelectElement>(view.container, 'select[name="config"]')
+    expect([...select.options].map((option) => option.value)).toEqual(['', 'hetzner', 'aws'])
+    expect(select.value).toBe('hetzner')
     expect(view.container.textContent).toContain('Reading the provider configs from the cluster.')
     expect(calls).toBe(2)
 
     resolvers[0](
-      jsonResponse(catalogueWith({ config: 'hetzner', region: 'nbg1', state: 'CatalogueUnfilled' })),
+      jsonResponse(
+        catalogueWith({
+          config: 'hetzner',
+          region: 'nbg1',
+          state: 'CatalogueUnfilled',
+          configs: [hetzner, aws],
+        }),
+      ),
     )
     await settle()
 
