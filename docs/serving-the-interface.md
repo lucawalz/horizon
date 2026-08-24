@@ -52,13 +52,13 @@ A provider that mints a valid token is still only half the arrangement, because 
 
 Nothing reports the fault while it is latent. Sign-in succeeds, every request is served, and the arrangement looks correct until the first access token reaches its expiry. The refusal that follows is the expired case of the second row under [Reading a refusal](#reading-a-refusal), so an expiry caused by a missing scope mapping reads exactly like an ordinary token failure. An interface that works for an hour after each sign-in and then stops is this and not a clock skew.
 
-The `Host` a browser reaches and the address the interface bound are different things behind a proxy, so `ui.externalOrigin` has to state the browser-facing origin exactly, scheme included. Without it the interface still serves every read, and refuses every create and release with `403`. Forwarded headers such as `X-Forwarded-Host` are read by nothing, because anything able to route to the pod can write them.
+The `Host` a browser reaches and the address the interface bound are different things behind a proxy, so `ui.externalOrigin` has to state the browser-facing origin exactly, scheme included. Without it the interface still serves every read, and refuses every create, extension and release with `403`. Forwarded headers such as `X-Forwarded-Host` are read by nothing, because anything able to route to the pod can write them.
 
 ## Granting the impersonated identity its rights
 
 The interface holds no permissions over horizon's own resources and never acts under its own name. Every call it makes to the apiserver impersonates the identity the token named, so an operator who has not been granted anything sees the apiserver's refusal. Access is granted in the cluster, with ordinary RBAC, and revoked the same way.
 
-`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. This role covers everything the interface can do: list and read leases, create one, release one by deleting it, delete the leftover record of one already released, and read the provider configurations the create form offers.
+`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. This role covers everything the interface can do: list and read leases, create one, extend a running one by patching its duration, release one by deleting it, delete the leftover record of one already released, and read the provider configurations the create form offers.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -75,6 +75,7 @@ rules:
       - list
       - watch
       - create
+      - patch
       - delete
   - apiGroups:
       - horizon.dev

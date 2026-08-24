@@ -44,7 +44,7 @@ Serves the same interface on a routable address, for a team rather than for one 
 | `--auth-header` | `Authorization` | Request header the bearer token arrives in. |
 | `--username-claim` | `preferred_username` | Claim the impersonated username is read from. |
 | `--groups-claim` | `groups` | Claim the impersonated group memberships are read from. |
-| `--external-origin` | empty | Origin a browser reaches the interface at. Unset, every create and release is refused, since the cross-origin guard has no anchor behind a proxy. |
+| `--external-origin` | empty | Origin a browser reaches the interface at. Unset, every create, extension and release is refused, since the cross-origin guard has no anchor behind a proxy. |
 
 The chart sets these from its `ui.*` values rather than from a command line. See [Serving the web interface in a cluster](serving-the-interface.md).
 
