@@ -6,15 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
@@ -294,8 +297,22 @@ func TestLeaseReleaseAnswersNotFoundForAnAbsentLease(t *testing.T) {
 	}
 }
 
+type mutationAttempt struct {
+	method string
+	target string
+	body   any
+}
+
+func mutationsOn(name string) []mutationAttempt {
+	return []mutationAttempt{
+		{method: http.MethodPost, target: leasesEndpoint, body: createRequestFixture(name)},
+		{method: http.MethodPatch, target: leaseEndpoint(name), body: extendRequestFixture(3 * time.Hour)},
+		{method: http.MethodDelete, target: leaseEndpoint(name), body: nil},
+	}
+}
+
 func extendRequestFixture(duration time.Duration) leaseExtendRequest {
-	return leaseExtendRequest{DurationSeconds: seconds(duration)}
+	return leaseExtendRequest{DurationSeconds: ptr(seconds(duration))}
 }
 
 func extend(t *testing.T, name string, duration time.Duration) *httptest.ResponseRecorder {
@@ -372,6 +389,134 @@ func TestLeaseExtendRefusesADurationNoLongerThanTheOneTheLeaseCarries(t *testing
 	}
 }
 
+type racingCluster struct {
+	client.Client
+	competitor func()
+	once       sync.Once
+}
+
+func (c *racingCluster) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	err := c.Client.Get(ctx, key, obj, opts...)
+	c.once.Do(c.competitor)
+	return err
+}
+
+func newRacingServer(t *testing.T, competitor func()) *Server {
+	t.Helper()
+	options := writingOptions()
+	options.Writer = LeaseWriterFor(&racingCluster{Client: testEnv.Client, competitor: competitor})
+	server, err := New(options)
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	anchor(t, server)
+	return server
+}
+
+func TestLeaseExtendRefusesADurationMeasuredAgainstALeaseThatMoved(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "raced-run"
+	createLease(t, leaseFixture(name), activeStatus(time.Now()))
+
+	server := newRacingServer(t, func() {
+		competitor := readLease(t, name)
+		competitor.Spec.Duration = metav1.Duration{Duration: 8 * time.Hour}
+		if err := testEnv.Client.Update(t.Context(), competitor); err != nil {
+			t.Errorf("the competing extension failed: %v", err)
+		}
+	})
+
+	response := mutate(t, server, http.MethodPatch, leaseEndpoint(name), extendRequestFixture(3*time.Hour))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusConflict, response.Body)
+	}
+	if duration := readLease(t, name).Spec.Duration.Duration; duration != 8*time.Hour {
+		t.Errorf("duration = %s, want the competing 8h left standing", duration)
+	}
+}
+
+func TestLeaseExtendRefusesALeaseTheControllerWillNotReDerive(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	now := time.Now()
+	expired := activeStatus(now)
+	expired.Conditions = append(expired.Conditions, condition(v1alpha1.ConditionExpired, metav1.ConditionTrue, now))
+	createLease(t, leaseFixture("expired-run"), expired)
+
+	response := extend(t, "expired-run", 3*time.Hour)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusUnprocessableEntity, response.Body)
+	}
+	if detail := decodeBody[apiError](t, response).Detail; !strings.Contains(detail, "expired") {
+		t.Errorf("detail = %q, want it to name the state the lease is in", detail)
+	}
+	if duration := readLease(t, "expired-run").Spec.Duration.Duration; duration != 2*time.Hour {
+		t.Errorf("duration = %s, want it left at 2h", duration)
+	}
+}
+
+func TestLeaseExtendRefusesALeaseThatIsBeingReleased(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "releasing-run"
+	lease := leaseFixture(name)
+	lease.Finalizers = []string{"horizon.dev/test-hold"}
+	createLease(t, lease, activeStatus(time.Now()))
+	t.Cleanup(func() {
+		ctx := context.Background()
+		var held v1alpha1.CapacityLease
+		if err := testEnv.Client.Get(ctx, client.ObjectKey{Name: name}, &held); err != nil {
+			t.Errorf("read %s back: %v", name, err)
+			return
+		}
+		held.Finalizers = nil
+		if err := testEnv.Client.Update(ctx, &held); err != nil {
+			t.Errorf("drop the test finalizer from %s: %v", name, err)
+		}
+	})
+
+	if err := testEnv.Client.Delete(t.Context(), readLease(t, name)); err != nil {
+		t.Fatalf("delete %s: %v", name, err)
+	}
+
+	response := extend(t, name, 3*time.Hour)
+	if response.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusUnprocessableEntity, response.Body)
+	}
+	if duration := readLease(t, name).Spec.Duration.Duration; duration != 2*time.Hour {
+		t.Errorf("duration = %s, want it left at 2h", duration)
+	}
+}
+
+func TestLeaseExtendRefusesADurationItCannotRead(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	createLease(t, leaseFixture("unreadable-duration"), activeStatus(time.Now()))
+
+	for name, body := range map[string]any{
+		"no duration at all": map[string]any{},
+		"a null duration":    map[string]any{"durationSeconds": nil},
+		"more seconds than a duration holds": map[string]any{
+			"durationSeconds": int64(math.MaxInt64/int64(time.Second)) + 1,
+		},
+		"a negative duration": map[string]any{"durationSeconds": -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := mutate(t, newWritingServer(t), http.MethodPatch, leaseEndpoint("unreadable-duration"), body)
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusBadRequest, response.Body)
+			}
+			if detail := decodeBody[apiError](t, response).Detail; strings.Contains(detail, "drain") {
+				t.Errorf("detail = %q, want it to name the unreadable duration rather than lecture on shortening", detail)
+			}
+		})
+	}
+	if duration := readLease(t, "unreadable-duration").Spec.Duration.Duration; duration != 2*time.Hour {
+		t.Errorf("duration = %s, want it left at 2h", duration)
+	}
+}
+
 func TestLeaseExtendAnswersNotFoundForAnAbsentLease(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
@@ -440,17 +585,13 @@ func TestMutationsRefuseEachCrossOriginFailureOnItsOwn(t *testing.T) {
 			refused := "guarded-" + strings.ReplaceAll(name, " ", "-")
 			removeAfterTest(t, refused)
 
-			for method, target := range map[string]string{
-				http.MethodPost:   leasesEndpoint,
-				http.MethodPatch:  leaseEndpoint(refused),
-				http.MethodDelete: leaseEndpoint(refused),
-			} {
-				request := newMutation(t, method, target, createRequestFixture(refused))
+			for _, attempt := range mutationsOn(refused) {
+				request := newMutation(t, attempt.method, attempt.target, attempt.body)
 				spoil(request)
 
 				response := send(server, request)
 				if response.Code != http.StatusForbidden {
-					t.Errorf("%s answered %d, want %d, body %s", method, response.Code, http.StatusForbidden, response.Body)
+					t.Errorf("%s answered %d, want %d, body %s", attempt.method, response.Code, http.StatusForbidden, response.Body)
 				}
 			}
 
@@ -545,17 +686,13 @@ func TestMutationsBehindAProxyRefuseEachCrossOriginFailureOnItsOwn(t *testing.T)
 			refused := "proxied-" + strings.ReplaceAll(name, " ", "-")
 			removeAfterTest(t, refused)
 
-			for method, target := range map[string]string{
-				http.MethodPost:   leasesEndpoint,
-				http.MethodPatch:  leaseEndpoint(refused),
-				http.MethodDelete: leaseEndpoint(refused),
-			} {
-				request := newExternalMutation(t, method, target, createRequestFixture(refused))
+			for _, attempt := range mutationsOn(refused) {
+				request := newExternalMutation(t, attempt.method, attempt.target, attempt.body)
 				spoil(request)
 
 				response := send(server, request)
 				if response.Code != http.StatusForbidden {
-					t.Errorf("%s answered %d, want %d, body %s", method, response.Code, http.StatusForbidden, response.Body)
+					t.Errorf("%s answered %d, want %d, body %s", attempt.method, response.Code, http.StatusForbidden, response.Body)
 				}
 			}
 
@@ -627,17 +764,13 @@ func TestAServerWithoutAWriterServesReadsAndRefusesMutations(t *testing.T) {
 		})
 	}
 
-	for method, target := range map[string]string{
-		http.MethodPost:   leasesEndpoint,
-		http.MethodPatch:  leaseEndpoint("read-only-run"),
-		http.MethodDelete: leaseEndpoint("read-only-run"),
-	} {
-		response := mutate(t, server, method, target, createRequestFixture("read-only-run"))
+	for _, attempt := range mutationsOn("read-only-run") {
+		response := mutate(t, server, attempt.method, attempt.target, attempt.body)
 		if response.Code != http.StatusNotImplemented {
-			t.Fatalf("%s answered %d, want %d, body %s", method, response.Code, http.StatusNotImplemented, response.Body)
+			t.Fatalf("%s answered %d, want %d, body %s", attempt.method, response.Code, http.StatusNotImplemented, response.Body)
 		}
 		if detail := decodeBody[apiError](t, response).Detail; !strings.Contains(detail, "read-only") {
-			t.Errorf("%s detail = %q, want it to name the read-only interface", method, detail)
+			t.Errorf("%s detail = %q, want it to name the read-only interface", attempt.method, detail)
 		}
 	}
 
@@ -739,14 +872,10 @@ func TestAServerThatNeverBoundAnAddressRefusesEveryMutation(t *testing.T) {
 		t.Fatalf("new server: %v", err)
 	}
 
-	for method, target := range map[string]string{
-		http.MethodPost:   leasesEndpoint,
-		http.MethodPatch:  leaseEndpoint("unanchored-run"),
-		http.MethodDelete: leaseEndpoint("unanchored-run"),
-	} {
-		response := send(server, newMutation(t, method, target, createRequestFixture("unanchored-run")))
+	for _, attempt := range mutationsOn("unanchored-run") {
+		response := send(server, newMutation(t, attempt.method, attempt.target, attempt.body))
 		if response.Code != http.StatusForbidden {
-			t.Errorf("%s answered %d, want %d, body %s", method, response.Code, http.StatusForbidden, response.Body)
+			t.Errorf("%s answered %d, want %d, body %s", attempt.method, response.Code, http.StatusForbidden, response.Body)
 		}
 	}
 }

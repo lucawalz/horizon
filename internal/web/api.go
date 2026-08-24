@@ -53,6 +53,11 @@ func conditionStatus(conditions []metav1.Condition, name string) *metav1.Conditi
 	return nil
 }
 
+func conditionHolds(conditions []metav1.Condition, name string) bool {
+	status := conditionStatus(conditions, name)
+	return status != nil && *status == metav1.ConditionTrue
+}
+
 func rfc3339(at time.Time) string {
 	return at.UTC().Format(time.RFC3339)
 }

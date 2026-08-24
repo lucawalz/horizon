@@ -2,30 +2,31 @@ package web
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
 
-type durationPatch struct {
-	Spec durationPatchSpec `json:"spec"`
+type ClusterReadWriter interface {
+	client.Reader
+	client.Writer
 }
 
-type durationPatchSpec struct {
-	Duration metav1.Duration `json:"duration"`
+type shorteningRefused struct{ held time.Duration }
+
+func (e shorteningRefused) Error() string {
+	return fmt.Sprintf("web: the lease already runs for %s, and a lease duration may only be lengthened", e.held)
 }
 
-func LeaseWriterFor(api client.Client) LeaseWriter {
+func LeaseWriterFor(api ClusterReadWriter) LeaseWriter {
 	return clusterWriter{api: api}
 }
 
-type clusterWriter struct{ api client.Client }
+type clusterWriter struct{ api ClusterReadWriter }
 
 func (w clusterWriter) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	return w.api.Create(ctx, obj, opts...)
@@ -36,12 +37,16 @@ func (w clusterWriter) Delete(ctx context.Context, obj client.Object, opts ...cl
 }
 
 func (w clusterWriter) Extend(ctx context.Context, name string, duration time.Duration) error {
-	// the patch body is built here rather than accepted, so the one field this verb may move is the only field it names
-	body, err := json.Marshal(durationPatch{Spec: durationPatchSpec{Duration: metav1.Duration{Duration: duration}}})
-	if err != nil {
-		return fmt.Errorf("build the duration patch for %s: %w", name, err)
+	lease := &v1alpha1.CapacityLease{}
+	if err := w.api.Get(ctx, client.ObjectKey{Name: name}, lease); err != nil {
+		return err
+	}
+	if duration <= lease.Spec.Duration.Duration {
+		return shorteningRefused{held: lease.Spec.Duration.Duration}
 	}
 
-	lease := &v1alpha1.CapacityLease{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	return w.api.Patch(ctx, lease, client.RawPatch(types.MergePatchType, body))
+	// the patch carries the resourceVersion this read saw, so a lease that moved in between is refused rather than overwritten with a value measured against a duration it no longer holds
+	patch := client.MergeFromWithOptions(lease.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	lease.Spec.Duration = metav1.Duration{Duration: duration}
+	return w.api.Patch(ctx, lease, patch)
 }

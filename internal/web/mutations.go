@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"time"
 
@@ -28,7 +29,16 @@ const (
 	extensionOnly = "this interface lengthens a lease rather than shortening one. a duration shorter than the one a " +
 		"lease already carries can put its deadline in the past, which leaves no teardown budget and deletes the leased " +
 		"nodes without draining them. releasing the lease gives the capacity back with a drain"
+	extensionRaced = "another change to this lease landed first, so this extension was measured against a duration the " +
+		"lease no longer carries. reading the lease again and submitting the new duration against what it now holds is the way through"
+	durationMissing  = "the request body must name the durationSeconds this lease should run for"
+	extensionExpired = "an expired lease is held at the deadline it passed rather than re-derived, so extending it moves " +
+		"nothing. releasing it and creating another lease is what returns the capacity"
+	extensionReleasing = "a lease that is being released runs its teardown rather than a deadline, so extending it moves " +
+		"nothing. creating another lease is what returns the capacity"
 )
+
+const maxDurationSeconds = int64(math.MaxInt64 / int64(time.Second))
 
 type leaseRequirementsRequest struct {
 	MinCPU       int32  `json:"minCPU"`
@@ -51,7 +61,7 @@ type leaseCreateRequest struct {
 }
 
 type leaseExtendRequest struct {
-	DurationSeconds int64 `json:"durationSeconds"`
+	DurationSeconds *int64 `json:"durationSeconds"`
 }
 
 type leaseReleaseResponse struct {
@@ -196,11 +206,6 @@ func (s *Server) leaseExtend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := r.PathValue("name")
-	if refusedAsAnInvalidName(w, name) {
-		return
-	}
-
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 
@@ -209,22 +214,23 @@ func (s *Server) leaseExtend(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, unreadableExtension+": "+err.Error())
 		return
 	}
+	requested, readable := extensionSpan(w, submitted.DurationSeconds)
+	if !readable {
+		return
+	}
 
-	// only a lengthening is accepted, so two of these racing can still only lengthen and the read needs no lock
+	name := r.PathValue("name")
 	lease, read := s.leaseNamed(w, r, name)
 	if !read {
 		return
 	}
-
-	requested := span(submitted.DurationSeconds)
-	if requested <= lease.Spec.Duration.Duration {
-		writeAPIError(w, http.StatusUnprocessableEntity,
-			fmt.Sprintf("%q already runs for %s. %s", name, lease.Spec.Duration.Duration, extensionOnly))
+	if refusal, pointless := extensionMovesNothing(lease); pointless {
+		writeAPIError(w, http.StatusUnprocessableEntity, refusal)
 		return
 	}
 
 	if err := writer.Extend(r.Context(), name, requested); err != nil {
-		writeClusterRefusal(w, r, err, name, leaseExtendFailed)
+		writeExtensionRefusal(w, r, err, name)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, leaseExtendResponse{
@@ -232,4 +238,43 @@ func (s *Server) leaseExtend(w http.ResponseWriter, r *http.Request) {
 		DurationSeconds: seconds(requested),
 		Detail:          extensionRequested,
 	})
+}
+
+func extensionSpan(w http.ResponseWriter, requested *int64) (time.Duration, bool) {
+	if requested == nil {
+		writeAPIError(w, http.StatusBadRequest, durationMissing)
+		return 0, false
+	}
+	// past this bound a count of seconds no longer survives the conversion, and the apiserver would quote back a duration nobody asked for
+	if *requested <= 0 || *requested > maxDurationSeconds {
+		writeAPIError(w, http.StatusBadRequest,
+			fmt.Sprintf("%d is not a number of seconds a capacity lease can run for", *requested))
+		return 0, false
+	}
+	return span(*requested), true
+}
+
+func extensionMovesNothing(lease *v1alpha1.CapacityLease) (string, bool) {
+	switch {
+	case lease.DeletionTimestamp != nil:
+		return fmt.Sprintf("%q is being released. %s", lease.Name, extensionReleasing), true
+	case conditionHolds(lease.Status.Conditions, v1alpha1.ConditionExpired):
+		return fmt.Sprintf("%q has expired. %s", lease.Name, extensionExpired), true
+	default:
+		return "", false
+	}
+}
+
+func writeExtensionRefusal(w http.ResponseWriter, r *http.Request, err error, name string) {
+	var shortening shorteningRefused
+	if errors.As(err, &shortening) {
+		writeAPIError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("%q already runs for %s. %s", name, shortening.held, extensionOnly))
+		return
+	}
+	if apierrors.IsConflict(err) {
+		writeAPIError(w, http.StatusConflict, fmt.Sprintf("%q changed while this extension was in flight. %s", name, extensionRaced))
+		return
+	}
+	writeClusterRefusal(w, r, err, name, leaseExtendFailed)
 }

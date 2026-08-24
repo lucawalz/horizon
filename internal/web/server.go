@@ -25,8 +25,6 @@ const (
 type LeaseWriter interface {
 	Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error
 	Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error
-
-	// the verb takes a name and a duration rather than an object or a patch, so nothing a caller supplies can reach another field of the lease
 	Extend(ctx context.Context, name string, duration time.Duration) error
 }
 
