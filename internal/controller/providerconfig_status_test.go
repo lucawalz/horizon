@@ -224,6 +224,26 @@ func TestPublishKeepsTheLastCatalogueWhenTheFetchFails(t *testing.T) {
 	}
 }
 
+func TestPublishKeepsTheLastCatalogueWhenTheFetchComesBackEmpty(t *testing.T) {
+	api := apiServerClient(t)
+	config := guaranteedProviderConfig(objectName(t))
+	assertCreate(t, api, config, false)
+	publisher := newPublisher(api, publisherSecrets()...)
+
+	if err := publisher.Publish(t.Context(), config, []provider.InstanceType{fetchedType("cx22", "nbg1")}, nil); err != nil {
+		t.Fatalf("first Publish: %v", err)
+	}
+	if err := publisher.Publish(t.Context(), config, nil, nil); err != nil {
+		t.Fatalf("second Publish: %v", err)
+	}
+
+	live := publishedConfig(t, api, config.Name)
+	if len(live.Status.InstanceTypes) != 1 {
+		t.Errorf("published %d instance types, want the last good catalogue of 1", len(live.Status.InstanceTypes))
+	}
+	assertConditionDetail(t, live, v1alpha1.ConditionCataloguePublished, metav1.ConditionFalse, reasonCatalogueEmpty)
+}
+
 func TestPublishTruncatesACatalogueBeyondTheCap(t *testing.T) {
 	api := apiServerClient(t)
 	config := guaranteedProviderConfig(objectName(t))

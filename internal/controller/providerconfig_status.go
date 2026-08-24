@@ -25,6 +25,7 @@ const (
 	reasonProviderUnsupported   = "ProviderUnsupported"
 	reasonCataloguePublished    = "Published"
 	reasonCatalogueTruncated    = "Truncated"
+	reasonCatalogueEmpty        = "Empty"
 )
 
 const readyMessage = "every referenced secret resolves, teardown is guaranteed and the provider answered the instance type query"
@@ -95,7 +96,7 @@ func (p *ProviderConfigPublisher) resolve(
 		ready:     p.readiness(ctx, cfg, fetchErr),
 		published: catalogueCondition(fetchErr, len(types), truncated),
 		types:     published,
-		fetched:   fetchErr == nil,
+		fetched:   fetchErr == nil && len(types) > 0,
 	}
 }
 
@@ -145,6 +146,9 @@ func catalogueCondition(fetchErr error, offered int, truncated bool) metav1.Cond
 	case fetchErr != nil:
 		condition.Reason = reasonCatalogueUnavailable
 		condition.Message = fetchErr.Error()
+	case offered == 0:
+		condition.Reason = reasonCatalogueEmpty
+		condition.Message = "the provider answered with no instance type in any region"
 	case truncated:
 		condition.Reason = reasonCatalogueTruncated
 		condition.Message = fmt.Sprintf("the provider offers %d instance types, more than the %d status holds, so the published catalogue is truncated",
