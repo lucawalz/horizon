@@ -86,6 +86,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 		return ctrl.Result{}, nil
 	}
 	grace := teardownGrace(lease)
+	// a stamp from another replica's clock can read ahead of now, so a zero grace must not depend on the elapsed test
 	if grace <= 0 {
 		return ctrl.Result{}, nil
 	}
@@ -93,7 +94,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	if cond == nil || cond.Reason != reasonPlacementRestored {
 		return ctrl.Result{}, nil
 	}
-	if r.now().Sub(cond.LastTransitionTime.Time) > grace {
+	if r.now().Sub(cond.LastTransitionTime.Time) >= grace {
 		return ctrl.Result{}, nil
 	}
 
