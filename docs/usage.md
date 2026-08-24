@@ -1,6 +1,6 @@
 # Usage
 
-This guide takes a cluster from nothing installed to a leased node registering, and then describes the web interface the same binary serves. The README carries the smallest example; this document carries the whole path. Every flag named along the way is in [docs/cli-reference.md](cli-reference.md).
+The README carries the smallest example; this document carries the whole path, from nothing installed to a leased node registering, and then the web interface the same binary serves. Every flag named along the way is in [docs/cli-reference.md](cli-reference.md).
 
 ## Quick start
 
@@ -131,11 +131,11 @@ kubectl apply -f capacitylease.yaml
 kubectl get capacityleases -w
 ```
 
-The chart install, the CLI render, and the manifest validation against a real API server, `image`, `nodeCredentialSecretRef`, and `joinTokenSecretRef` included, were confirmed while writing this document. Steps 3 and 4, the node credential and join-token Secrets, are the same `kubectl create secret generic` shape as step 2 and were not separately re-run with live tokens. Step 8 needs a Hetzner server to actually boot, and that step alone was not repeated for this document. It has been proven end to end before: a stock `ubuntu-24.04` node registered within 90 seconds of boot on 4 August, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matched it to a lease named `batch-run`.
+A stock `ubuntu-24.04` node registers within about 90 seconds of boot, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matches it to the lease.
 
 ## Images and clusters that are not stock
 
-An unusual image is not a reason to leave the generator. A pre-baked image that already runs k3s, an immutable image that cannot take a unit in `/etc/systemd/system`, and a control plane reachable only over a VPN are each one flag: `--install-kubernetes=false`, `--transient-watchdog-unit`, and `--flavor-config flannel-iface=<interface>`. All three compose, and every one of them defaults to what the generator did before, so an existing rendered document is unchanged by their presence.
+The three capability flags above compose, and each defaults to what the generator did before it existed, so a document rendered earlier is unchanged by their presence. An unusual image is not a reason to leave the generator.
 
 `horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--kubernetes-version`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
 
