@@ -15,14 +15,6 @@ Renting capacity is easy. Guaranteeing it goes away is the engineering problem, 
 
 The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: three bare-metal nodes running NixOS and K3s, reconciled by Flux v2, with Tailscale carrying connectivity for nodes that are not on the home network. bedrock defines the cluster; horizon adds and removes temporary capacity on top of it. horizon is optional and never load-bearing: routine operation happens without it and the cluster keeps running when it is gone.
 
-## Status
-
-The chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`, one version per release tag, and the badge above names the latest. `charts/horizon/Chart.yaml` declares the version the next tag will publish, so a checkout is ahead of both registries while a release is being prepared.
-
-Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, below; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the single-page web interface served locally by `horizon dashboard`, which creates and releases leases as well as reading them; the in-cluster mode of the same interface, served by `horizon serve` behind a verified OIDC token and Kubernetes impersonation, templated by the chart behind `ui.enabled` and off by default; six commands, `horizon controller`, `horizon dashboard`, `horizon serve`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
-
-Not implemented: provider credential writing from the interface, which is the half of its mutating surface that stays unbuilt now that lease creation and release have landed; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty.
-
 ## How teardown is enforced
 
 Teardown is layered, so no single failure leaves a machine running and billing.
@@ -32,6 +24,22 @@ A finalizer blocks lease deletion until the provider confirms the instance gone,
 The last layer runs on the leased server itself: `horizon watchdog`, a dead man's switch on two independent clocks, a monotonic backstop and a renewable wall-clock deadline pulled from the cluster, so the guarantee survives the operator, the cluster, and the network all being gone at once.
 
 See [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) for the crash-safety layers and their exact parameters, [ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md) for the provider seam and the label set, and [ADR 0021](docs/adr/0021-node-side-dead-mans-switch-on-two-clocks.md) for the watchdog's two clocks.
+
+## Capacity model
+
+Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. See [Node join contract](#node-join-contract) for how a node identifies itself once it joins.
+
+When a lease names a workload namespace, horizon rewrites the affinity of each Deployment and StatefulSet in it to target the reserved pool and adds the matching toleration, then restores the original placement during teardown.
+
+```mermaid
+flowchart LR
+  lease[CapacityLease] --> controller[horizon controller]
+  config[ProviderConfig] --> controller
+  controller -->|create and destroy| hcloud[Hetzner Cloud API]
+  hcloud --> servers[(Leased servers)]
+  controller -->|migrate and restore| cluster[(Home cluster)]
+  orphan[Orphan collector] -->|sweep| hcloud
+```
 
 ## Custom resources
 
@@ -92,7 +100,7 @@ spec:
 
 A burst node satisfies four requirements. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
 
-1. **Join as an agent.** The server runs a Kubernetes agent pointed at the control plane, at the version `--kubernetes-version` names rather than whatever release is newest. That version has to match the control plane: a kubelet newer than the apiserver is outside the Kubernetes version skew policy, so a node that installs the latest release against an older control plane is unsupported the moment it joins. `horizon cloud-init` renders this; see [Usage](#usage). An image that already ships the agent takes `--install-kubernetes=false`, which drops the install command and keeps the join configuration. Rendering pins nothing that was rendered earlier: the provider reads the blob behind `cloudInitSecretRef` and never regenerates it, so a Secret written before the version was pinned still installs whatever release is newest, on every node it boots, until it is re-rendered and applied over the old one. Upgrading the control plane is the other half of the same rule, and needs the same re-render.
+1. **Join as an agent.** The server runs a Kubernetes agent pointed at the control plane, at the version `--kubernetes-version` names rather than whatever release is newest. That version has to match the control plane: a kubelet newer than the apiserver is outside the Kubernetes version skew policy, so a node that installs the latest release against an older control plane is unsupported the moment it joins. `horizon cloud-init` renders this; see [docs/usage.md](docs/usage.md). An image that already ships the agent takes `--install-kubernetes=false`, which drops the install command and keeps the join configuration. Rendering pins nothing that was rendered earlier: the provider reads the blob behind `cloudInitSecretRef` and never regenerates it, so a Secret written before the version was pinned still installs whatever release is newest, on every node it boots, until it is re-rendered and applied over the old one. Upgrading the control plane is the other half of the same rule, and needs the same re-render.
 2. **Carry `horizon.dev/pool=reserved` and the burst taint.** The provider build rejects a cloud-init missing the pool label, before any instance is created. The taint, `horizon.dev/burst=<lease>:NoSchedule`, is applied by the controller once it matches the node to its lease, since its value is the lease name and one cloud-init blob serves every lease a `ProviderConfig` provisions.
 3. **Install and arm the watchdog.** `horizon cloud-init` writes the node token and a systemd unit that starts `horizon watchdog` on boot, unless `--install-watchdog-unit=false`. An image whose `/etc/systemd/system` is read-only, a NixOS image among them, takes `--transient-watchdog-unit` instead, which writes the unit to `/run/systemd/system` from a per-boot script and starts it rather than enabling it.
 4. **Reach the control plane.** horizon has no VPN, no firewall management, and no opinion about how a leased server reaches the cluster beyond the `--server` URL it is given; getting a packet from Hetzner's network to the control plane is the adopter's problem, the same way it is bedrock's Tailscale for the nodes it runs permanently. Where that path is a VPN, the agent also has to be told to run its pod network over the tunnel, which is `--flavor-config flannel-iface=<interface>` for k3s.
@@ -105,37 +113,25 @@ Configuration is the `ProviderConfig` resource plus the Secrets it points at. Th
 
 Secret references are resolved in the namespace the controller runs in, taken from the `POD_NAMESPACE` environment variable and falling back to the service account namespace file projected into the pod. A `ProviderConfig` is cluster-scoped, so the reference carries a name and a key but no namespace.
 
-## Capacity model
-
-Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. See [Node join contract](#node-join-contract) for how a node identifies itself once it joins.
-
-When a lease names a workload namespace, horizon rewrites the affinity of each Deployment and StatefulSet in it to target the reserved pool and adds the matching toleration, then restores the original placement during teardown.
-
-```mermaid
-flowchart LR
-  lease[CapacityLease] --> controller[horizon controller]
-  config[ProviderConfig] --> controller
-  controller -->|create and destroy| hcloud[Hetzner Cloud API]
-  hcloud --> servers[(Leased servers)]
-  controller -->|migrate and restore| cluster[(Home cluster)]
-  orphan[Orphan collector] -->|sweep| hcloud
-```
-
 ## Architecture
 
 The controller is built on controller-runtime. The provider is a seam rather than a dependency, so the reconcilers never reach a cloud SDK directly; see [ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md). [Repository layout](#repository-layout) below maps each package to what it owns.
 
-## Requirements
+## Installation
+
+horizon installs as a Helm chart into an existing cluster. Nothing else is deployed, and the cluster keeps running unchanged until a lease is created.
+
+### Requirements
 
 Hard requirements:
 
 - A Kubernetes cluster at 1.29 or newer, and permission to install cluster-scoped custom resource definitions and RBAC into it.
-- A Hetzner Cloud API token and a cloud-init that joins the cluster and applies the `horizon.dev/pool=reserved` node label, each stored in a Secret in the controller's namespace. `horizon cloud-init` generates the second; see [Usage](#usage).
+- A Hetzner Cloud API token and a cloud-init that joins the cluster and applies the `horizon.dev/pool=reserved` node label, each stored in a Secret in the controller's namespace. `horizon cloud-init` generates the second; see [docs/usage.md](docs/usage.md).
 - A delete-capable Hetzner Cloud API token for the leased machines, stored in a Secret in the controller's namespace and named by `nodeCredentialSecretRef`. Hetzner cannot stop billing by self-terminating, so no lease is accepted while that reference is unset.
 - A k3s join token, stored in a Secret in the controller's namespace and named by `joinTokenSecretRef`. Every cloud-init `horizon cloud-init` generates needs it, and the provider build fails before any instance is created while the reference is unset.
 - A boot image in the Hetzner project, selected by exact id, exact name, or one or more labels.
 
-## Installation
+### Installing the controller
 
 The controller is installed from the Helm chart, published as an OCI artifact by a release tag:
 
@@ -235,6 +231,21 @@ horizon version      Print the build version
 
 Every flag, with its default and what it is for, is in [docs/cli-reference.md](docs/cli-reference.md).
 
+## Documentation
+
+The README is the front page. Everything longer lives beside it.
+
+| Document | What it covers |
+| --- | --- |
+| [docs/usage.md](docs/usage.md) | The eight-step path from an empty cluster to a leased node registering, images and clusters that are not stock, and what the web interface serves. |
+| [docs/cli-reference.md](docs/cli-reference.md) | Every command and every flag, with its default and what it is for. |
+| [docs/serving-the-interface.md](docs/serving-the-interface.md) | Serving the interface in a cluster: what an identity provider has to publish, granting an impersonated operator its rights, narrowing the impersonation permission, and reading a refusal. |
+| [charts/horizon/README.md](charts/horizon/README.md) | Every chart value, why the custom resource definitions live in `crds/` rather than `templates/`, and the identity separation between the controller and the interface. |
+| [docs/evaluation.md](docs/evaluation.md) | What was measured and what the measurements do and do not support: time to ready, teardown by enforcing path and per injected failure, cost per burst against theoretical, and two requirement-based sizing policies against a pinned baseline. It also records a latent defect the measurements found that reading the code had not, a diagnosability gap in the operator, and the threats to validity. |
+| [docs/adr/](docs/adr/) | Twenty-eight architecture decision records in MADR format. Superseded records are kept rather than deleted, because the reasoning that was later overturned is the useful part. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Prerequisites, the test commands, the web interface bundle, and the branch and commit conventions. |
+| [SECURITY.md](SECURITY.md) | The credential model and how to report a vulnerability. |
+
 ## Releases
 
 `charts/horizon/Chart.yaml` is the source of truth for the released version; bumping it is a deliberate commit that precedes the tag. Pushing a `v*` tag builds the linux amd64 and arm64 image, packages the chart, and only then publishes the GitHub release, in that order, so a published release always advertises an image and a chart that exist. See [ADR 0020](docs/adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) for the full contract.
@@ -262,30 +273,76 @@ internal/provider/  instance lifecycle interface, capabilities, label constants
 internal/version/   build stamp
 config/crd/bases/   generated custom resource definitions
 charts/horizon/     Helm chart for the in-cluster controller and the optional interface
-docs/               evaluation report, and the guide to serving the interface in a cluster
+docs/               usage guide, command line reference, evaluation report, and the
+                    guide to serving the interface in a cluster
 docs/adr/           architecture decision records
 ```
 
-## Contributing
+## Support
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build, test, branch, and commit conventions. In short: `go build ./...`, `make test`, which fetches the envtest control plane binaries the controller tests need, and `golangci-lint run`, then open a PR against `main`; CI runs the same checks.
+Bug reports, feature requests and questions all go to the [issue tracker](https://github.com/lucawalz/horizon/issues). Two templates are offered, [bug report](.github/ISSUE_TEMPLATE/bug_report.md) and [feature request](.github/ISSUE_TEMPLATE/feature_request.md), and filling one in saves a round trip. There is no chat room and no mailing list.
+
+Two classes of problem have an answer written down already. A refusal from the in-cluster interface, `401`, `403` or `501`, is decoded in [docs/serving-the-interface.md](docs/serving-the-interface.md#reading-a-refusal). A lease that reaches `Provisioning` and stays there is the diagnosability gap recorded in [docs/evaluation.md](docs/evaluation.md) section 8, where the shape of the fault and how it was found are described in full.
+
+A suspected vulnerability is the one thing that does not belong in a public issue.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for the supported versions and how to report a vulnerability.
+Report a suspected vulnerability privately, through the "Report a vulnerability" form under the repository's Security tab, rather than by opening a public issue. Only `main` is maintained.
 
-## Support
+[SECURITY.md](SECURITY.md) states the credential model in full. The short version is that a provider token able to create servers is also able to delete them and to bill the account that owns them, which is why the operator's credential and the credential that reaches a leased machine are separate tokens that rotate independently, and why a Hetzner project containing only ephemeral capacity is the only blast radius control the provider offers. No secret is stored in this repository, and every configuration example uses a placeholder.
 
-Open an issue on the [GitHub repository](https://github.com/lucawalz/horizon/issues).
+## Roadmap
+
+Nothing here carries a date. The list is what the repository itself records as absent, not a product plan, and the seams named in it exist already.
+
+- **Provider credential writing from the interface.** Lease creation and release have landed. Writing a `ProviderConfig` and the Secrets behind it is the half of the mutating surface that stays unbuilt, so configuring a provider is still a `kubectl` job.
+- **`ProviderConfig` status conditions.** The status subresource exists on the type and stays empty, so a misconfigured provider is currently diagnosed from a lease's conditions rather than from the object that is actually wrong.
+- **A better answer for a node that never joins.** `InstancesReady` reports a count and does not separate a machine still booting from one that booted a quarter of an hour ago and is never going to join. [docs/evaluation.md](docs/evaluation.md) section 8 records this as the operator's own diagnosability gap, found by measurement rather than by reading code.
+- **A second provider behind the conformance suite.** `spec.type` accepts `hetzner` and nothing else today. The seam and the contract suite in `internal/provider/conformance/` exist so that a second implementation is a package satisfying an interface rather than a rewrite; none has been written.
+- **A second cloud-init flavour.** `--flavor` accepts `k3s` and nothing else, on the same shape: one file per flavour under `internal/cloudinit/`.
+- **`site` as a required status check.** CI rebuilds the committed web bundle and fails when it differs from what is in the tree, but branch protection does not require the job, so a stale `dist/` is reported rather than blocked. [CONTRIBUTING.md](CONTRIBUTING.md#required-status-checks) carries the command that closes the gap.
+
+The `watch` command and the lease verbs are not on this list and are not planned. Printer columns on `kubectl get capacityleases` cover what they would have done.
+
+## Contributing
+
+Contributions are welcome. Opening an issue before a large change saves work on both sides; a small fix can go straight to a pull request.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) is the full guide. The prerequisites are Go 1.26 or newer, `kubectl` pointed at a cluster for exercising the operator outside the test suite, `golangci-lint`, `helm` and a container runtime with buildx when the chart or the image changes, and Node at the version pinned in `internal/web/site/.nvmrc` when the web interface changes.
+
+```bash
+go build ./...
+make test          # unit and integration, with the envtest control plane binaries
+make test-race     # the same suite under the race detector
+golangci-lint run ./...
+make chart-lint    # helm lint, plus the check that crds/ matches the generated manifests
+```
+
+`go test ./...` still exits zero, but the controller suite skips every case that needs an apiserver when it cannot find the envtest binaries, so `make test` is the invocation that runs everything. A change to the API types needs `make manifests`, which regenerates the custom resource definitions and copies them into the chart. A change under `internal/web/site` needs the bundle rebuilt with `npm ci && npm run build` and the result committed, because it is embedded into the binary.
+
+Branches follow [Conventional Branch](https://conventionalbranch.org/) and commits follow [Conventional Commits](https://www.conventionalcommits.org/), both spelled out with examples in CONTRIBUTING.md. Open the pull request against `main` and fill in the template. CI runs six jobs, `test`, `lint`, `site`, `release-config`, `chart` and `image`; branch protection currently requires `test` and `chart`, and the others report without blocking.
+
+A pull request that introduces or changes an architectural decision carries an ADR in [docs/adr/](docs/adr/), in MADR format, in the same change.
 
 ## Authors and acknowledgment
 
-Built and maintained by Luca Walz. It builds on cobra, controller-runtime, client-go, the kubectl drain libraries, and the Hetzner Cloud SDK.
+Built and maintained by Luca Walz.
+
+horizon rests on work it did not write. controller-runtime and client-go carry the reconcile loop and every call to the apiserver, and the kubectl drain libraries carry the eviction. cobra carries the command line, the Hetzner Cloud SDK carries the provider, and controller-gen generates the custom resource definitions from the Go types. The web interface is React and TypeScript, built by Vite and styled with Tailwind. Releases are cut by GoReleaser and packaged with Helm, and the decision records follow [MADR](https://adr.github.io/madr/).
+
+The cluster horizon was written against is [bedrock](https://github.com/lucawalz/bedrock), which defines it. horizon only borrows it, and is careful to give it back.
 
 ## License
 
-Released under the MIT License. See [LICENSE](LICENSE).
+Released under the MIT License, Copyright (c) 2026 Luca Walz. The full text is in [LICENSE](LICENSE).
+
+It permits use, copying, modification, merging, publication, distribution, sublicensing and sale, commercially included, on the single condition that the copyright notice and the licence text travel with the software or a substantial portion of it. The software is provided as is, and the licence disclaims every warranty and all liability.
 
 ## Project status
 
-Actively developed alongside the bedrock homelab.
+Actively developed, alongside the [bedrock](https://github.com/lucawalz/bedrock) homelab it was written for. The chart and the image are published at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`, one version per release tag, and the badge above names the latest. `charts/horizon/Chart.yaml` declares the version the next tag will publish, so a checkout is ahead of both registries while a release is being prepared.
+
+Implemented: the `CapacityLease` and `ProviderConfig` definitions; the lease controller and its layered teardown guarantee, above; workload migration and node drain; the Hetzner provider behind a conformance-tested seam; image selection by id, name, or label; cloud-init generation; the Helm chart; the single-page web interface served locally by `horizon dashboard`, which creates and releases leases as well as reading them; the in-cluster mode of the same interface, served by `horizon serve` behind a verified OIDC token and Kubernetes impersonation, templated by the chart behind `ui.enabled` and off by default; six commands, `horizon controller`, `horizon dashboard`, `horizon serve`, `horizon watchdog`, `horizon cloud-init`, `horizon version`.
+
+Not implemented: provider credential writing from the interface, which is the half of its mutating surface that stays unbuilt now that lease creation and release have landed; the `watch` command and lease verbs, `kubectl get capacityleases` covers this with printer columns; `ProviderConfig` status conditions, the subresource exists and stays empty. [Roadmap](#roadmap) says which of these are intended and which are not.
