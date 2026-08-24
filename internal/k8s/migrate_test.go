@@ -370,6 +370,31 @@ func TestMigrateEvictsStatefulSetPodsBelowPartition(t *testing.T) {
 	}
 }
 
+func TestMigrateEvictsPausedDeploymentPods(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+			Paused:   true,
+		},
+	}
+	matched := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
+	matched.Labels = map[string]string{"app": "web"}
+
+	kc := fake.NewSimpleClientset(node, dep, matched)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	evicted := evictionNames(kc)
+	if len(evicted) != 1 || evicted[0] != "app-pod" {
+		t.Errorf("evicted = %v, want [app-pod]: a paused deployment never rolls its pods on its own", evicted)
+	}
+}
+
 func TestMigrateDoesNotRelabelNode(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 	kc := fake.NewSimpleClientset(node)
