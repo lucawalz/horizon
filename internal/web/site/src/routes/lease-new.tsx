@@ -1,9 +1,9 @@
 import type { FormEvent } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Button, controlClass, Field } from '@/components/controls'
 import type { LeaseCreateRequest, MachineCatalogueResponse, ProviderConfigSummary } from '@/lib/api'
-import { createLease, fetchMachines, machinesPath } from '@/lib/api'
+import { createLease, fetchMachines, fetchNamespaces, machinesPath } from '@/lib/api'
 import { errorFor } from '@/lib/errors'
 import { fieldValue, numberValue } from '@/lib/form'
 import { EmptyState, Loading, Notice, PageHeader, Panel, Snippet } from '@/routes/page'
@@ -38,6 +38,7 @@ const field = {
 
 const requirementsMode = 'requirements'
 const sizeMode = 'size'
+const namespaceListId = 'workload-namespaces'
 
 const minutesPerHour = 60
 const replicaBounds = { min: 1, max: 8, initial: 2 }
@@ -203,6 +204,53 @@ function RequirementFields({ sizing }: { sizing: Sizing }) {
   )
 }
 
+function useNamespaceSuggestions(): string[] {
+  const [names, setNames] = useState<string[]>([])
+
+  useEffect(() => {
+    let live = true
+
+    const read = async () => {
+      try {
+        const answer = await fetchNamespaces()
+        if (live) setNames(answer.namespaces)
+      } catch {
+        // listing namespaces is an optional grant, so a refusal leaves the field the free text it already is
+      }
+    }
+
+    void read()
+    return () => {
+      live = false
+    }
+  }, [])
+
+  return names
+}
+
+function WorkloadField({ suggestions }: { suggestions: string[] }) {
+  const suggested = suggestions.length > 0
+  return (
+    <Field label="Workload namespace" hint="Optional. Its workloads are drained onto the leased nodes.">
+      <input
+        name={field.workload}
+        list={suggested ? namespaceListId : undefined}
+        placeholder="batch"
+        spellCheck={false}
+        autoComplete="off"
+        className={controlClass}
+      />
+      {suggested ? (
+        <datalist id={namespaceListId}>
+          {suggestions.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
+      ) : null}
+    </Field>
+  )
+}
+
 function SizeField() {
   return (
     <Field label="Machine type" hint="The provider's own name for a type, such as cx23.">
@@ -222,6 +270,7 @@ function CreateForm({ configs }: { configs: ProviderConfigSummary[] }) {
   const [sizing, setSizing] = useState(initialSizing)
   const [failure, setFailure] = useState<Error | null>(null)
   const [pending, setPending] = useState(false)
+  const namespaces = useNamespaceSuggestions()
 
   const observe = (event: FormEvent<HTMLFormElement>) => {
     const held = new FormData(event.currentTarget)
@@ -289,15 +338,7 @@ function CreateForm({ configs }: { configs: ProviderConfigSummary[] }) {
           <Field label="Teardown grace in seconds" hint="How long a drain may take before the machines go anyway.">
             <Numeric name={field.grace} bounds={graceBounds} />
           </Field>
-          <Field label="Workload namespace" hint="Optional. Its workloads are drained onto the leased nodes.">
-            <input
-              name={field.workload}
-              placeholder="batch"
-              spellCheck={false}
-              autoComplete="off"
-              className={controlClass}
-            />
-          </Field>
+          <WorkloadField suggestions={namespaces} />
         </div>
       </Panel>
 

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { LeaseCreateRequest } from '@/lib/api'
-import { interfaceHeader, leasesPath, machinesPath } from '@/lib/api'
+import { interfaceHeader, leasesPath, machinesPath, namespacesPath } from '@/lib/api'
 import { LeaseNewRoute } from '@/routes/lease-new'
 import {
   click,
@@ -11,6 +11,7 @@ import {
   leaseDetailBody,
   machinesBody,
   mount,
+  namespacesBody,
   providerConfigSummary,
   send,
   stubFetchWith,
@@ -21,13 +22,22 @@ const catalogue = machinesBody([providerConfigSummary('hetzner')])
 const gigabyte = 4_000_000_000
 const gibibyte = 4 * 1024 * 1024 * 1024
 const refused = 'CapacityLease.horizon.dev "batch-run" is invalid: spec.replicas: Invalid value: 9'
+const forbidden = 403
+const denied = 'namespaces is forbidden: User "operator" cannot list resource "namespaces"'
 
-function stubCluster(created: (init: RequestInit | undefined) => Response) {
-  return stubFetchWith((input, init) =>
-    Promise.resolve(
-      String(input) === machinesPath('', '') ? jsonResponse(catalogue) : created(init),
-    ),
-  )
+const refusedNamespaces = () =>
+  jsonResponse({ status: forbidden, title: 'Forbidden', detail: denied }, forbidden)
+
+function stubCluster(
+  created: (init: RequestInit | undefined) => Response,
+  namespaces: () => Response = refusedNamespaces,
+) {
+  return stubFetchWith((input, init) => {
+    const target = String(input)
+    if (target === machinesPath('', '')) return Promise.resolve(jsonResponse(catalogue))
+    if (target === namespacesPath) return Promise.resolve(namespaces())
+    return Promise.resolve(created(init))
+  })
 }
 
 function submitted(body: BodyInit | null | undefined): LeaseCreateRequest {
@@ -117,6 +127,36 @@ describe('the create form', () => {
     const request = submitted(respond.mock.calls[respond.mock.calls.length - 1][1]?.body)
     expect(request.size).toBe('cx23')
     expect(request.requirements).toBeNull()
+
+    await view.unmount()
+  })
+
+  it('suggests the namespaces the signed in user may list', async () => {
+    stubCluster(
+      () => jsonResponse(leaseDetailBody()),
+      () => jsonResponse(namespacesBody(['batch', 'default'])),
+    )
+    const { view } = await newLeaseForm()
+
+    const workload = control<HTMLInputElement>(view.container, 'input[name="workload"]')
+    const suggestions = control<HTMLDataListElement>(
+      view.container,
+      `datalist#${workload.getAttribute('list')}`,
+    )
+    expect([...suggestions.options].map((option) => option.value)).toEqual(['batch', 'default'])
+
+    await view.unmount()
+  })
+
+  it('leaves the namespace a plain text field when the cluster refuses the list', async () => {
+    stubCluster(() => jsonResponse(leaseDetailBody()))
+    const { view } = await newLeaseForm()
+
+    const workload = control<HTMLInputElement>(view.container, 'input[name="workload"]')
+    expect(workload.getAttribute('list')).toBeNull()
+    expect(view.container.querySelector('datalist')).toBeNull()
+    expect(view.container.textContent).not.toContain('forbidden')
+    expect(view.container.textContent).not.toContain('namespace could not')
 
     await view.unmount()
   })
