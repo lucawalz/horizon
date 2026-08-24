@@ -26,20 +26,7 @@ ui:
       - platform
 ```
 
-| Value | What it does |
-| --- | --- |
-| `ui.enabled` | Templates the interface Deployment, Service, ServiceAccount, ClusterRole, binding and NetworkPolicy. Off by default. |
-| `ui.oidc.issuer` | The identity provider whose tokens are accepted, and the document the verification key set is discovered from. Required. |
-| `ui.oidc.audience` | The audience a token has to name. Required. A token issued for another application is refused. |
-| `ui.externalOrigin` | The origin a browser reaches the interface at. Required for creating and releasing leases from the interface, because the cross-origin guard compares a mutating request against it. |
-| `ui.authHeader` | The request header the token arrives in. `Authorization` by default. |
-| `ui.usernameClaim` | The claim the impersonated username is read from. |
-| `ui.groupsClaim` | The claim the impersonated group memberships are read from. |
-| `ui.rbac.impersonateUsers` | Usernames the interface is permitted to impersonate. Empty leaves the rule unrestricted. |
-| `ui.rbac.impersonateGroups` | Groups the interface is permitted to impersonate. Empty leaves the rule unrestricted. |
-| `ui.networkPolicy.ingressNamespaces` | Namespaces permitted to reach the interface port. `traefik` by default; an empty list admits nothing. |
-
-The full set, including the port, the service type, resources and security contexts, is documented in the [chart README](../charts/horizon/README.md#web-interface).
+Every key in that example, and the rest of the `ui.*` set including the port, the service type, the resources and the security contexts, is described once in the [chart README](../charts/horizon/README.md#web-interface). That table is the single reference for what a value does and what it defaults to, and this document does not repeat it; what follows is what the values mean for an adopter putting the interface in front of an identity provider.
 
 Two guards make a half-configured install fail early rather than serve. The chart refuses to render when `ui.enabled` is set and either OIDC value is empty, naming whichever is missing, and the command itself refuses to bind a routable address unless the issuer, the audience, the header and both claim names are all set. An interface that cannot verify a caller never reaches the point of listening.
 
