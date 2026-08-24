@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/lucawalz/horizon/internal/provider"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -129,6 +130,29 @@ type workloadTarget struct {
 	annotations map[string]string
 	podSpec     *corev1.PodSpec
 	selector    labels.Selector
+	selfRolls   bool
+}
+
+func workloadSelector(kind, name string, sel *metav1.LabelSelector) (labels.Selector, error) {
+	if sel != nil && len(sel.MatchLabels)+len(sel.MatchExpressions) == 0 {
+		return nil, fmt.Errorf("selector for %s %q: empty selector would match every pod in the namespace", kind, name)
+	}
+	selector, err := metav1.LabelSelectorAsSelector(sel)
+	if err != nil {
+		return nil, fmt.Errorf("selector for %s %q: %w", kind, name, err)
+	}
+	return selector, nil
+}
+
+func statefulSetRollsOnItsOwn(spec appsv1.StatefulSetSpec) bool {
+	if spec.UpdateStrategy.Type == appsv1.OnDeleteStatefulSetStrategyType {
+		return false
+	}
+	rollingUpdate := spec.UpdateStrategy.RollingUpdate
+	if rollingUpdate != nil && rollingUpdate.Partition != nil && *rollingUpdate.Partition != 0 {
+		return false
+	}
+	return true
 }
 
 type workloadClient struct {
@@ -155,15 +179,16 @@ func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient 
 			targets := make([]workloadTarget, 0, len(list.Items))
 			for i := range list.Items {
 				item := &list.Items[i]
-				selector, err := metav1.LabelSelectorAsSelector(item.Spec.Selector)
+				selector, err := workloadSelector(kindDeployment, item.Name, item.Spec.Selector)
 				if err != nil {
-					return nil, fmt.Errorf("migrate: selector for deployment %q: %w", item.Name, err)
+					return nil, err
 				}
 				targets = append(targets, workloadTarget{
 					name:        item.Name,
 					annotations: item.Annotations,
 					podSpec:     &item.Spec.Template.Spec,
 					selector:    selector,
+					selfRolls:   !item.Spec.Paused,
 				})
 			}
 			return targets, nil
@@ -188,15 +213,16 @@ func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient
 			targets := make([]workloadTarget, 0, len(list.Items))
 			for i := range list.Items {
 				item := &list.Items[i]
-				selector, err := metav1.LabelSelectorAsSelector(item.Spec.Selector)
+				selector, err := workloadSelector(kindStatefulSet, item.Name, item.Spec.Selector)
 				if err != nil {
-					return nil, fmt.Errorf("migrate: selector for statefulset %q: %w", item.Name, err)
+					return nil, err
 				}
 				targets = append(targets, workloadTarget{
 					name:        item.Name,
 					annotations: item.Annotations,
 					podSpec:     &item.Spec.Template.Spec,
 					selector:    selector,
+					selfRolls:   statefulSetRollsOnItsOwn(item.Spec),
 				})
 			}
 			return targets, nil
@@ -266,7 +292,9 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, affinity *corev1.A
 				return onBurst, patched, selectors, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
 			}
 			patched = true
-			selectors = append(selectors, t.selector)
+			if t.selfRolls {
+				selectors = append(selectors, t.selector)
+			}
 		}
 		onBurst = append(onBurst, wc.kind+"/"+t.name)
 	}
@@ -302,14 +330,14 @@ func marshalPlacement(podSpec *corev1.PodSpec, name string) (string, error) {
 	return string(data), nil
 }
 
-func evictablePods(pods []corev1.Pod, skip []labels.Selector) []corev1.Pod {
-	var evictable []corev1.Pod
+func evictablePods(pods []corev1.Pod, skip []labels.Selector) []*corev1.Pod {
+	var evictable []*corev1.Pod
 	for i := range pods {
-		pod := pods[i]
-		if isDaemonSetPod(&pod) {
+		pod := &pods[i]
+		if isDaemonSetPod(pod) {
 			continue
 		}
-		if ownedByPatchedWorkload(pod.Labels, skip) {
+		if matchedByPatchedWorkload(pod.Labels, skip) {
 			continue
 		}
 		evictable = append(evictable, pod)
@@ -317,7 +345,7 @@ func evictablePods(pods []corev1.Pod, skip []labels.Selector) []corev1.Pod {
 	return evictable
 }
 
-func ownedByPatchedWorkload(podLabels map[string]string, selectors []labels.Selector) bool {
+func matchedByPatchedWorkload(podLabels map[string]string, selectors []labels.Selector) bool {
 	set := labels.Set(podLabels)
 	for _, sel := range selectors {
 		if sel.Matches(set) {
@@ -407,7 +435,9 @@ func restoreWorkloads(ctx context.Context, wc workloadClient) ([]string, []label
 			continue
 		}
 		restored = append(restored, wc.kind+"/"+t.name)
-		selectors = append(selectors, t.selector)
+		if t.selfRolls {
+			selectors = append(selectors, t.selector)
+		}
 	}
 	return restored, selectors, firstErr
 }
