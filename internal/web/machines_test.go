@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
@@ -26,6 +28,28 @@ func offeredType(name, region string) provider.InstanceType {
 		Region:       region,
 		Available:    true,
 		HourlyRate:   provider.Rate{Amount: 0.0074, Currency: "EUR"},
+	}
+}
+
+func publishedType(name, region string) v1alpha1.InstanceType {
+	return v1alpha1.InstanceType{
+		Name:         name,
+		Region:       region,
+		Architecture: "x86",
+		CPUType:      "shared",
+		CPUCores:     2,
+		MemoryBytes:  4 << 30,
+		DiskBytes:    40 << 30,
+		HourlyRate:   "0.0074",
+		Currency:     "EUR",
+		Available:    true,
+	}
+}
+
+func configPublishing(name string, types ...v1alpha1.InstanceType) v1alpha1.ProviderConfig {
+	return v1alpha1.ProviderConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status:     v1alpha1.ProviderConfigStatus{InstanceTypes: types},
 	}
 }
 
@@ -74,12 +98,13 @@ func TestMachineTypesSeparatesTheCatalogueStates(t *testing.T) {
 	unfilled := fmt.Errorf("%w for provider config %q", catalogue.ErrUnavailable, "hetzner")
 
 	for name, testCase := range map[string]struct {
-		types  catalogue.Reader
-		config string
-		region string
-		rows   int
-		state  catalogueState
-		detail *string
+		types   catalogue.Reader
+		configs []v1alpha1.ProviderConfig
+		config  string
+		region  string
+		rows    int
+		state   catalogueState
+		detail  *string
 	}{
 		"no selection": {types: AbsentCatalogue(), state: stateNoSelection},
 		"no catalogue": {types: AbsentCatalogue(), config: "hetzner", region: "nbg1", state: stateCatalogueAbsent},
@@ -93,11 +118,31 @@ func TestMachineTypesSeparatesTheCatalogueStates(t *testing.T) {
 			types:  stubCatalogue{types: []provider.InstanceType{offeredType("cx22", "nbg1")}, filled: true},
 			config: "hetzner", region: "nbg1", rows: 1, state: stateListed,
 		},
+		"published": {
+			types:   AbsentCatalogue(),
+			configs: []v1alpha1.ProviderConfig{configPublishing("hetzner", publishedType("cx22", "nbg1"))},
+			config:  "hetzner", region: "nbg1", rows: 1, state: stateListed,
+		},
+		"published in another region": {
+			types:   AbsentCatalogue(),
+			configs: []v1alpha1.ProviderConfig{configPublishing("hetzner", publishedType("cx22", "fsn1"))},
+			config:  "hetzner", region: "nbg1", state: stateNoMatch,
+		},
+		"published by another config": {
+			types:   stubCatalogue{err: unfilled},
+			configs: []v1alpha1.ProviderConfig{configPublishing("other", publishedType("cx22", "nbg1"))},
+			config:  "hetzner", region: "nbg1", state: stateCatalogueUnfilled,
+		},
+		"published nothing yet": {
+			types:   stubCatalogue{types: []provider.InstanceType{offeredType("cx22", "nbg1")}, filled: true},
+			configs: []v1alpha1.ProviderConfig{configPublishing("hetzner")},
+			config:  "hetzner", region: "nbg1", rows: 1, state: stateListed,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := newTestServer(t, failingReader{err: errors.New("unused")}, testCase.types)
 
-			found := server.machineTypes(testCase.config, testCase.region)
+			found := server.machineTypes(testCase.configs, testCase.config, testCase.region)
 
 			if len(found.types) != testCase.rows {
 				t.Errorf("rows = %d, want %d", len(found.types), testCase.rows)
@@ -186,6 +231,45 @@ func TestMachinesRendersTheOfferedTypes(t *testing.T) {
 	want := time.Now().Add(-30 * time.Minute)
 	if drift := refreshedAt.Sub(want); drift > refreshTolerance || drift < -refreshTolerance {
 		t.Errorf("refreshedAt = %s, want %s within %s", refreshedAt, want, refreshTolerance)
+	}
+}
+
+func TestMachinesRendersTheTypesTheControllerPublished(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	config := createProviderConfig(t, "hetzner")
+	config.Status.InstanceTypes = []v1alpha1.InstanceType{publishedType("cx22", "nbg1")}
+	if err := testEnv.Client.Status().Update(t.Context(), config); err != nil {
+		t.Fatalf("publish the catalogue: %v", err)
+	}
+
+	server := newTestServer(t, testEnv.Client, AbsentCatalogue())
+	response := get(t, server, "/api/machines?config=hetzner&region=nbg1")
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	body := decodeBody[machineCatalogueResponse](t, response)
+	if body.State != stateListed {
+		t.Fatalf("state = %q, want %q", body.State, stateListed)
+	}
+	if len(body.Types) != 1 {
+		t.Fatalf("types = %d, want 1", len(body.Types))
+	}
+
+	offered := body.Types[0]
+	if offered.Name != "cx22" || offered.CPUCores != 2 || offered.MemoryBytes != 4<<30 || offered.DiskBytes != 40<<30 {
+		t.Errorf("offered = %+v, want the published row", offered)
+	}
+	if architecture := present(t, "architecture", offered.Architecture); architecture != "x86" {
+		t.Errorf("architecture = %q, want %q", architecture, "x86")
+	}
+	if cpuType := present(t, "cpuType", offered.CPUType); cpuType != "shared" {
+		t.Errorf("cpuType = %q, want %q", cpuType, "shared")
+	}
+	hourly := present(t, "hourlyRate", offered.HourlyRate)
+	if hourly.Amount != 0.0074 || hourly.Currency != "EUR" {
+		t.Errorf("hourlyRate = %+v, want 0.0074 EUR", hourly)
 	}
 }
 

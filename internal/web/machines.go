@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -119,11 +120,64 @@ func rate(hourly provider.Rate) *money {
 	return &money{Amount: hourly.Amount, Currency: hourly.Currency}
 }
 
-func (s *Server) machineTypes(config, region string) catalogueResult {
+// the controller publishes what it fetched onto the provider config, so the interface reads it from the cluster rather than from a cache of its own
+func (s *Server) machineTypes(configs []v1alpha1.ProviderConfig, config, region string) catalogueResult {
 	if config == "" || region == "" {
 		return catalogueResult{state: stateNoSelection}
 	}
+	if published, filled := publishedCatalogue(configs, config); filled {
+		return offeredInRegion(published, region)
+	}
+	return s.cachedMachineTypes(config, region)
+}
 
+func publishedCatalogue(configs []v1alpha1.ProviderConfig, config string) ([]v1alpha1.InstanceType, bool) {
+	for i := range configs {
+		if configs[i].Name == config {
+			return configs[i].Status.InstanceTypes, len(configs[i].Status.InstanceTypes) > 0
+		}
+	}
+	return nil, false
+}
+
+func offeredInRegion(published []v1alpha1.InstanceType, region string) catalogueResult {
+	types := make([]machineType, 0, len(published))
+	for _, one := range published {
+		if one.Region == region {
+			types = append(types, newMachineType(offeredInstanceType(one)))
+		}
+	}
+	if len(types) == 0 {
+		return catalogueResult{state: stateNoMatch}
+	}
+	return catalogueResult{types: types, state: stateListed}
+}
+
+func offeredInstanceType(published v1alpha1.InstanceType) provider.InstanceType {
+	return provider.InstanceType{
+		Name:         published.Name,
+		Architecture: published.Architecture,
+		CPUType:      published.CPUType,
+		CPUCores:     int(published.CPUCores),
+		MemoryBytes:  published.MemoryBytes,
+		DiskBytes:    published.DiskBytes,
+		Region:       published.Region,
+		Available:    published.Available,
+		Deprecated:   published.Deprecated,
+		HourlyRate:   publishedRate(published),
+	}
+}
+
+// a rate that does not parse is reported as unquoted rather than as a price of zero
+func publishedRate(published v1alpha1.InstanceType) provider.Rate {
+	amount, err := strconv.ParseFloat(published.HourlyRate, 64)
+	if err != nil {
+		return provider.Rate{}
+	}
+	return provider.Rate{Amount: amount, Currency: published.Currency}
+}
+
+func (s *Server) cachedMachineTypes(config, region string) catalogueResult {
 	offered, err := s.catalogue.List(config, region)
 	switch {
 	case errors.Is(err, errAbsentCatalogue):
@@ -157,7 +211,7 @@ func (s *Server) refreshed(config string, now time.Time) *string {
 func (s *Server) newMachineCatalogueResponse(
 	configs []v1alpha1.ProviderConfig, config, region string, now time.Time,
 ) machineCatalogueResponse {
-	found := s.machineTypes(config, region)
+	found := s.machineTypes(configs, config, region)
 	return machineCatalogueResponse{
 		Configs:     newProviderConfigSummaries(configs),
 		Config:      config,

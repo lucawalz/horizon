@@ -167,7 +167,7 @@ func secretRef(name, key string) corev1.SecretKeySelector {
 	}
 }
 
-func createProviderConfig(t *testing.T, name string) {
+func createProviderConfig(t *testing.T, name string) *v1alpha1.ProviderConfig {
 	t.Helper()
 	config := &v1alpha1.ProviderConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -193,4 +193,5 @@ func createProviderConfig(t *testing.T, name string) {
 			t.Errorf("delete provider config %s: %v", name, err)
 		}
 	})
+	return config
 }
