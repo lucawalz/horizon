@@ -755,3 +755,26 @@ func TestADisruptiveWorkloadIsNamedBeforeItIsMoved(t *testing.T) {
 		t.Errorf("migrated workloads are %v, want [deployment/api]: a warning must not block the move", got)
 	}
 }
+
+func TestAClassificationFailureWarnsWithoutBlockingTheMigration(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload(func(deployment *appsv1.Deployment) {
+		deployment.Annotations = map[string]string{k8s.PrePlacementAnnotationKey: "{not json"}
+	})
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue)
+	h.assertCondition(v1alpha1.ConditionWorkloadMigratable, metav1.ConditionUnknown)
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigratable, reasonClassificationFailed, "unmarshal placement")
+
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "deployment/api" {
+		t.Errorf("migrated workloads are %v, want [deployment/api]: classification must never block the move", got)
+	}
+	if got := h.lease().Status.MigrationWarnings; len(got) != 0 {
+		t.Errorf("migration warnings are %+v, want none while the classification is unknown", got)
+	}
+}

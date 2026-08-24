@@ -39,14 +39,16 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 
 func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, namespace string) (ctrl.Result, error) {
 	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, namespace)
-	if classifyErr != nil {
-		return r.failedMigration(ctx, lease, fmt.Errorf("classify workload in %q: %w", namespace, classifyErr))
-	}
-	r.recordMigrationWarnings(lease, assessments)
+	r.recordMigratability(lease, assessments, classifyErr)
 
 	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, provider.ReservedPoolValue)
 	if migrateErr != nil {
-		return r.failedMigration(ctx, lease, fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr))
+		migrateErr = fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr)
+		r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())
+		if err := r.writeStatus(ctx, lease); err != nil {
+			return ctrl.Result{}, errors.Join(migrateErr, err)
+		}
+		return ctrl.Result{}, migrateErr
 	}
 
 	lease.Status.MigratedWorkloads = migrated
@@ -58,15 +60,14 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
 }
 
-func (r *CapacityLeaseReconciler) failedMigration(ctx context.Context, lease *v1alpha1.CapacityLease, cause error) (ctrl.Result, error) {
-	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, cause.Error())
-	if err := r.writeStatus(ctx, lease); err != nil {
-		return ctrl.Result{}, errors.Join(cause, err)
+// a classification the controller cannot make is reported rather than treated as a reason to leave the workload where it is
+func (r *CapacityLeaseReconciler) recordMigratability(lease *v1alpha1.CapacityLease, assessments []k8s.WorkloadMigratability, classifyErr error) {
+	if classifyErr != nil {
+		lease.Status.MigrationWarnings = nil
+		r.setCondition(lease, v1alpha1.ConditionWorkloadMigratable, metav1.ConditionUnknown, reasonClassificationFailed, classifyErr.Error())
+		return
 	}
-	return ctrl.Result{}, cause
-}
 
-func (r *CapacityLeaseReconciler) recordMigrationWarnings(lease *v1alpha1.CapacityLease, assessments []k8s.WorkloadMigratability) {
 	var warnings []v1alpha1.MigrationWarning
 	for _, assessment := range assessments {
 		if assessment.Verdict == k8s.VerdictSeamless {
