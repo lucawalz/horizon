@@ -241,7 +241,6 @@ The README is the front page. Everything longer lives beside it.
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command and every flag, with its default and what it is for. |
 | [docs/serving-the-interface.md](docs/serving-the-interface.md) | Serving the interface in a cluster: what an identity provider has to publish, granting an impersonated operator its rights, narrowing the impersonation permission, and reading a refusal. |
 | [charts/horizon/README.md](charts/horizon/README.md) | Every chart value, why the custom resource definitions live in `crds/` rather than `templates/`, and the identity separation between the controller and the interface. |
-| [docs/evaluation.md](docs/evaluation.md) | What was measured and what the measurements do and do not support: time to ready, teardown by enforcing path and per injected failure, cost per burst against theoretical, and two requirement-based sizing policies against a pinned baseline. It also records a latent defect the measurements found that reading the code had not, a diagnosability gap in the operator, and the threats to validity. |
 | [docs/adr/](docs/adr/) | Twenty-eight architecture decision records in MADR format. Superseded records are kept rather than deleted, because the reasoning that was later overturned is the useful part. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Prerequisites, the test commands, the web interface bundle, and the branch and commit conventions. |
 | [SECURITY.md](SECURITY.md) | The credential model and how to report a vulnerability. |
@@ -273,8 +272,8 @@ internal/provider/  instance lifecycle interface, capabilities, label constants
 internal/version/   build stamp
 config/crd/bases/   generated custom resource definitions
 charts/horizon/     Helm chart for the in-cluster controller and the optional interface
-docs/               usage guide, command line reference, evaluation report, and the
-                    guide to serving the interface in a cluster
+docs/               usage guide, command line reference, and the guide to
+                    serving the interface in a cluster
 docs/adr/           architecture decision records
 ```
 
@@ -282,7 +281,7 @@ docs/adr/           architecture decision records
 
 Bug reports, feature requests and questions all go to the [issue tracker](https://github.com/lucawalz/horizon/issues). Two templates are offered, [bug report](.github/ISSUE_TEMPLATE/bug_report.md) and [feature request](.github/ISSUE_TEMPLATE/feature_request.md), and filling one in saves a round trip. There is no chat room and no mailing list.
 
-Two classes of problem have an answer written down already. A refusal from the in-cluster interface, `401`, `403` or `501`, is decoded in [docs/serving-the-interface.md](docs/serving-the-interface.md#reading-a-refusal). A lease that reaches `Provisioning` and stays there is the diagnosability gap recorded in [docs/evaluation.md](docs/evaluation.md) section 8, where the shape of the fault and how it was found are described in full.
+A refusal from the in-cluster interface, `401`, `403` or `501`, is decoded in [docs/serving-the-interface.md](docs/serving-the-interface.md#reading-a-refusal). A lease that reaches `Provisioning` and stays there is a known gap: `InstancesReady` reports a count and does not separate a machine still booting from one that will never join, so the lease conditions do not say which it is.
 
 A suspected vulnerability is the one thing that does not belong in a public issue.
 
@@ -298,7 +297,7 @@ Nothing here carries a date. The list is what the repository itself records as a
 
 - **Provider credential writing from the interface.** Lease creation and release have landed. Writing a `ProviderConfig` and the Secrets behind it is the half of the mutating surface that stays unbuilt, so configuring a provider is still a `kubectl` job.
 - **`ProviderConfig` status conditions.** The status subresource exists on the type and stays empty, so a misconfigured provider is currently diagnosed from a lease's conditions rather than from the object that is actually wrong.
-- **A better answer for a node that never joins.** `InstancesReady` reports a count and does not separate a machine still booting from one that booted a quarter of an hour ago and is never going to join. [docs/evaluation.md](docs/evaluation.md) section 8 records this as the operator's own diagnosability gap, found by measurement rather than by reading code.
+- **A better answer for a node that never joins.** `InstancesReady` reports a count and does not separate a machine still booting from one that booted a quarter of an hour ago and is never going to join.
 - **A second provider behind the conformance suite.** `spec.type` accepts `hetzner` and nothing else today. The seam and the contract suite in `internal/provider/conformance/` exist so that a second implementation is a package satisfying an interface rather than a rewrite; none has been written.
 - **A second cloud-init flavour.** `--flavor` accepts `k3s` and nothing else, on the same shape: one file per flavour under `internal/cloudinit/`.
 - **`site` as a required status check.** CI rebuilds the committed web bundle and fails when it differs from what is in the tree, but branch protection does not require the job, so a stale `dist/` is reported rather than blocked. [CONTRIBUTING.md](CONTRIBUTING.md#required-status-checks) carries the command that closes the gap.
