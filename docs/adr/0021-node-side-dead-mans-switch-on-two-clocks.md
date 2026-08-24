@@ -64,3 +64,13 @@ An agent restart resets the monotonic backstop. A sentinel file written before t
 The watchdog's delete retries back off from 5 seconds, doubling, capped at a minute apart, and continue for as long as the process lives; giving up leaves the server billing. Identity is proved by reading the instance back exactly as the controller does, and the provider client the watchdog builds carries no server-create specification, so it can delete but never create.
 
 This record extends [0018](0018-provider-seam-around-instance-lifecycle.md) and supersedes nothing. It adds the layer that record's capability reporting was designed to describe, and it implements the refusal that record specified.
+
+## Update 2026-08-24
+
+"The schema already caps a lease `duration` at 8h and `maxLifetime` at 24h, so the bound is consistent with the resources by construction rather than by convention" was wrong. The two caps are ceilings, not a relation, and the schema validates each field against its own bounds and never against the other. A `ProviderConfig` may set `maxLifetime` as low as 5m while a `CapacityLease` against it asks for 8h, and both are admitted. The lease then outlives the machine: the server destroys itself at the backstop while the cluster still reports the lease as live.
+
+The rule is cross-resource, so CEL cannot express it, and there is no admission webhook in the repository to hold it either. The controller therefore derives `status.expiresAt` on every reconcile as the earlier of the requested deadline and the backstop, rather than stamping it once at acceptance, and reports an `ExpiryClamped` condition when the backstop is the one that holds. Clamping is preferred over refusing the lease, because the failure worth eliminating is a silent overrun: after the clamp, what the cluster believes matches what the machine does.
+
+The backstop the controller computes is not the one the agent runs. The agent measures `maxLifetime` from its own process start, which the cluster cannot observe, so the controller anchors on the earliest instance's creation instead. That is deliberately conservative, because creation precedes agent start.
+
+A second gap is recorded here rather than closed. The `horizon.dev/expires-at` label is written once in the create call and the provider seam offers no way to update it, so it goes stale on a lease whose deadline later moves. An agent reads it at start to seed the wall clock before its first node read, and the node annotation supersedes that seed on the first successful poll, so a stale value governs for at most one poll interval.
