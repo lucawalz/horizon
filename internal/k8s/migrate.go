@@ -141,12 +141,12 @@ func poolNodeAffinity(poolLabelValue string) *corev1.Affinity {
 }
 
 type workloadTarget struct {
-	name          string
-	annotations   map[string]string
-	podSpec       *corev1.PodSpec
-	selector      labels.Selector
-	rolloutReason string
-	disruptions   []string
+	name           string
+	annotations    map[string]string
+	podSpec        *corev1.PodSpec
+	selector       labels.Selector
+	rolloutReason  string
+	strategyReason string
 }
 
 func (t workloadTarget) selfRolls() bool {
@@ -197,12 +197,12 @@ func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient 
 					return nil, err
 				}
 				targets = append(targets, workloadTarget{
-					name:          item.Name,
-					annotations:   item.Annotations,
-					podSpec:       &item.Spec.Template.Spec,
-					selector:      selector,
-					rolloutReason: deploymentRolloutReason(item.Spec),
-					disruptions:   deploymentDisruptions(item.Spec),
+					name:           item.Name,
+					annotations:    item.Annotations,
+					podSpec:        &item.Spec.Template.Spec,
+					selector:       selector,
+					rolloutReason:  deploymentRolloutReason(item.Spec),
+					strategyReason: deploymentStrategyReason(item.Spec),
 				})
 			}
 			return targets, nil
@@ -237,7 +237,6 @@ func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient
 					podSpec:       &item.Spec.Template.Spec,
 					selector:      selector,
 					rolloutReason: statefulSetRolloutReason(item.Spec.UpdateStrategy),
-					disruptions:   statefulSetDisruptions(item.Spec),
 				})
 			}
 			return targets, nil

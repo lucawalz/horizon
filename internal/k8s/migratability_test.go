@@ -247,3 +247,19 @@ func TestMigrateSkipsPodsOfWorkloadsThatRollThemselves(t *testing.T) {
 		t.Errorf("evicted = %v, want none: a recreate deployment still rolls its own pods", evicted)
 	}
 }
+
+func TestClassifyMigratabilityStillFlagsAWorkloadAlreadyMovedOntoBurst(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "dep1",
+			Namespace:   testNS,
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: `{"nodeSelector":{"disktype":"ssd"}}`},
+		},
+	}
+
+	got := classifyOne(t, dep)
+	want := []string{k8s.ReasonNodeSelectorPinned}
+	if !reflect.DeepEqual(got.Reasons, want) {
+		t.Errorf("reasons = %v, want %v: a retried pass reads the pin from the saved placement", got.Reasons, want)
+	}
+}

@@ -2,10 +2,10 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 )
@@ -56,10 +56,17 @@ func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespa
 }
 
 func (t workloadTarget) migratability(kind string) WorkloadMigratability {
-	reasons := t.disruptions
+	var reasons []string
 	if t.rolloutReason != "" {
-		reasons = append([]string{t.rolloutReason}, reasons...)
+		reasons = append(reasons, t.rolloutReason)
 	}
+	if t.strategyReason != "" {
+		reasons = append(reasons, t.strategyReason)
+	}
+	if len(t.preBurstNodeSelector()) > 0 {
+		reasons = append(reasons, ReasonNodeSelectorPinned)
+	}
+
 	verdict := VerdictSeamless
 	if len(reasons) > 0 {
 		verdict = VerdictDisruptive
@@ -85,25 +92,27 @@ func statefulSetRolloutReason(strategy appsv1.StatefulSetUpdateStrategy) string 
 	return ""
 }
 
-func deploymentDisruptions(spec appsv1.DeploymentSpec) []string {
-	var reasons []string
+// migration clears the node selector, so a repeated pass has to read the pin back out of the saved placement
+func (t workloadTarget) preBurstNodeSelector() map[string]string {
+	placement, ok := t.annotations[PrePlacementAnnotationKey]
+	if !ok {
+		return t.podSpec.NodeSelector
+	}
+	var saved savedPlacement
+	if err := json.Unmarshal([]byte(placement), &saved); err != nil {
+		return t.podSpec.NodeSelector
+	}
+	return saved.NodeSelector
+}
+
+func deploymentStrategyReason(spec appsv1.DeploymentSpec) string {
 	if spec.Strategy.Type == appsv1.RecreateDeploymentStrategyType {
-		reasons = append(reasons, ReasonRecreateStrategy)
-	} else if deploymentReplicas(spec) > 0 && deploymentSurgeCapacity(spec) == 0 {
-		reasons = append(reasons, ReasonNoSurgeCapacity)
+		return ReasonRecreateStrategy
 	}
-	return append(reasons, podSpecDisruptions(&spec.Template.Spec)...)
-}
-
-func statefulSetDisruptions(spec appsv1.StatefulSetSpec) []string {
-	return podSpecDisruptions(&spec.Template.Spec)
-}
-
-func podSpecDisruptions(podSpec *corev1.PodSpec) []string {
-	if len(podSpec.NodeSelector) > 0 {
-		return []string{ReasonNodeSelectorPinned}
+	if deploymentReplicas(spec) > 0 && deploymentSurgeCapacity(spec) == 0 {
+		return ReasonNoSurgeCapacity
 	}
-	return nil
+	return ""
 }
 
 func deploymentReplicas(spec appsv1.DeploymentSpec) int {
