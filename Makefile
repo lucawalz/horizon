@@ -3,6 +3,7 @@ LDFLAGS := -X github.com/lucawalz/horizon/internal/version.version=$(VERSION)
 PREFIX ?= $(HOME)/.local/bin
 CONTROLLER_GEN := go tool controller-gen
 SETUP_ENVTEST := go tool setup-envtest
+GOFUMPT := go tool gofumpt
 API_PATHS := ./api/...
 CRD_DIR := config/crd/bases
 CHART_DIR := charts/horizon
@@ -29,7 +30,7 @@ vet:
 	go vet ./...
 
 fmt:
-	gofumpt -w .
+	$(GOFUMPT) -w .
 
 manifests:
 	$(CONTROLLER_GEN) crd paths=$(API_PATHS) output:crd:artifacts:config=$(CRD_DIR)
