@@ -20,6 +20,7 @@ import type {
   LeaseReleaseResponse,
   LeaseRequirements,
   LeaseSelection,
+  MigrationWarning,
 } from '@/lib/api'
 import { deleteLease, fetchLease, leasePath, notFound, RequestFailed } from '@/lib/api'
 import { errorFor } from '@/lib/errors'
@@ -472,6 +473,53 @@ function LeaseFacts({ lease }: { lease: LeaseDetailResponse }) {
   )
 }
 
+const migrationReasons: Record<string, string> = {
+  RolloutPaused: 'the rollout is paused, so pods are cycled by horizon instead',
+  ManualRollout: 'the update strategy is OnDelete',
+  PartitionedRollout: 'a rollout partition holds pods back',
+  RecreateStrategy: 'every replica stops before a replacement starts',
+  NoSurgeCapacity: 'maxSurge leaves no room for a replacement pod',
+  NodeSelectorPinned: 'the node selector is cleared for the duration of the lease',
+}
+
+// a newer controller can classify a shape this bundle predates, and dropping its reason would hide the warning entirely
+const unworded = 'the binary serving this interface reports a reason this build has no wording for'
+
+function MigrationWarningsPanel({ warnings }: { warnings: MigrationWarning[] }) {
+  if (warnings.length === 0) return null
+
+  return (
+    <Panel title="Migration warnings">
+      <p className="row-rule max-w-[70ch] px-gutter py-cell text-copy-13 text-subtle">
+        Every workload here still moves onto the leased nodes. Each one goes dark while it does,
+        because nothing stands in for a pod between the moment it stops and the moment its
+        replacement is ready.
+      </p>
+      <ul>
+        {warnings.map((warning) => (
+          <li
+            key={warning.workload}
+            data-severity="attention"
+            className="row-rule grid gap-tight px-gutter py-cell [--rail:var(--tint-signal,transparent)] last:[--hairline:transparent] sm:grid-cols-[14rem_1fr] sm:gap-gutter"
+          >
+            <span className="text-label-14 font-emphasis text-ink-strong">{warning.workload}</span>
+            <ul className="flex flex-col gap-tight">
+              {warning.reasons.map((reason) => (
+                <li key={reason} className="flex flex-wrap items-center gap-snug">
+                  <StatusPill severity="attention">{reason}</StatusPill>
+                  <span className="text-copy-13 text-subtle">
+                    {migrationReasons[reason] ?? unworded}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  )
+}
+
 function MigratedPanel({ workloads }: { workloads: string[] }) {
   return (
     <Panel title="Migrated workloads">
@@ -518,6 +566,7 @@ function LeaseDetailBody({ name, view }: { name: string; view: Polled<LeaseDetai
       <SelectionPanel selection={view.data.selection} size={view.data.size} />
       <InstancesPanel instances={view.data.instances} />
       <ConditionsPanel conditions={view.data.conditions} />
+      <MigrationWarningsPanel warnings={view.data.migrationWarnings} />
       <MigratedPanel workloads={view.data.migratedWorkloads} />
       {view.data.summary.releasedAt === null ? (
         <ReleasePanel name={name} />

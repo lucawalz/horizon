@@ -93,6 +93,11 @@ export interface LeaseSelection {
   decidedAt: string
 }
 
+export interface MigrationWarning {
+  workload: string
+  reasons: string[]
+}
+
 export interface LeaseDetailResponse {
   summary: LeaseSummary
   providerRef: string
@@ -103,7 +108,9 @@ export interface LeaseDetailResponse {
   teardownGraceSeconds: number | null
   workloadNamespace: string | null
   migratedWorkloads: string[]
+  migrationWarnings: MigrationWarning[]
   acceptedAt: string | null
+  backstopAt: string | null
   watchdogDeadline: string | null
   observedGeneration: number
   conditions: ConditionEntry[]
@@ -171,6 +178,17 @@ export interface LeaseReleaseResponse {
   detail: string
 }
 
+export interface LeaseExtendResponse {
+  name: string
+  durationSeconds: number
+  detail: string
+}
+
+export interface NamespaceListResponse {
+  namespaces: string[]
+  observedAt: string
+}
+
 interface ApiErrorBody {
   status: number
   title: string
@@ -187,7 +205,10 @@ export class RequestFailed extends Error {
   }
 }
 
+export const badRequest = 400
 export const notFound = 404
+export const conflict = 409
+export const unprocessable = 422
 
 export const interfaceHeader = 'X-Horizon-Interface'
 
@@ -195,10 +216,12 @@ const interfaceHeaderValue = 'true'
 const jsonContentType = 'application/json'
 const createMethod = 'POST'
 const deleteMethod = 'DELETE'
+const extendMethod = 'PATCH'
 const configQueryKey = 'config'
 const regionQueryKey = 'region'
 
 export const leasesPath = '/api/leases'
+export const namespacesPath = '/api/namespaces'
 const machinesBasePath = '/api/machines'
 
 export function leasePath(name: string): string {
@@ -261,4 +284,12 @@ export function createLease(request: LeaseCreateRequest): Promise<LeaseDetailRes
 
 export function deleteLease(name: string): Promise<LeaseReleaseResponse> {
   return change<LeaseReleaseResponse>(leasePath(name), deleteMethod)
+}
+
+export function extendLease(name: string, durationSeconds: number): Promise<LeaseExtendResponse> {
+  return change<LeaseExtendResponse>(leasePath(name), extendMethod, { durationSeconds })
+}
+
+export function fetchNamespaces(): Promise<NamespaceListResponse> {
+  return read<NamespaceListResponse>(namespacesPath)
 }

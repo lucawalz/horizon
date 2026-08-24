@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { LeaseInstance, LeaseSelection } from '@/lib/api'
+import type { LeaseInstance, LeaseSelection, MigrationWarning } from '@/lib/api'
 import { interfaceHeader, leasePath } from '@/lib/api'
 import { LeaseDetailRoute } from '@/routes/lease-detail'
 import { leaseHref, leasesHref } from '@/routes/router'
@@ -22,6 +22,7 @@ const keepLabel = 'Keep the lease'
 const deleteLabel = 'Delete this record'
 const confirmDeleteLabel = 'Delete the record'
 const releasedAt = '2026-08-21T11:45:00Z'
+const unlistedReason = 'SidecarHoldsTheDrain'
 
 const selection: LeaseSelection = {
   strategy: 'LowestPricePerCore',
@@ -58,6 +59,28 @@ const instances: LeaseInstance[] = [
     lastError: null,
   },
 ]
+
+const migrationCopy: [string, string][] = [
+  ['RolloutPaused', 'the rollout is paused, so pods are cycled by horizon instead'],
+  ['ManualRollout', 'the update strategy is OnDelete'],
+  ['PartitionedRollout', 'a rollout partition holds pods back'],
+  ['RecreateStrategy', 'every replica stops before a replacement starts'],
+  ['NoSurgeCapacity', 'maxSurge leaves no room for a replacement pod'],
+  ['NodeSelectorPinned', 'the node selector is cleared for the duration of the lease'],
+]
+
+const everyReason: MigrationWarning[] = migrationCopy.map(([reason], index) => ({
+  workload: `batch/worker-${index}`,
+  reasons: [reason],
+}))
+
+function pillLabelled(container: HTMLElement, label: string): HTMLElement {
+  const found = [...container.querySelectorAll<HTMLElement>('[data-severity]')].find(
+    (pill) => pill.textContent === label,
+  )
+  if (found === undefined) throw new Error(`the view rendered no pill labelled ${label}`)
+  return found
+}
 
 function stubLease(body: unknown) {
   return stubFetchWith((_input, init) =>
@@ -115,6 +138,45 @@ describe('the lease detail', () => {
     const view = await mount(<LeaseDetailRoute name={leaseName} />)
 
     expect(view.container.textContent).toContain('named cx22 itself')
+
+    await view.unmount()
+  })
+
+  it('names what the move costs every workload the controller flagged', async () => {
+    stubLease(leaseDetailBody({ migrationWarnings: everyReason }))
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    const shown = view.container.textContent ?? ''
+    for (const [reason, copy] of migrationCopy) {
+      expect(pillLabelled(view.container, reason).dataset.severity).toBe('attention')
+      expect(shown).toContain(copy)
+    }
+    const panel = pillLabelled(view.container, migrationCopy[0][0]).closest('section')
+    expect(panel?.querySelector('[data-severity="danger"]')).toBeNull()
+    expect(panel?.textContent).toContain('still moves onto the leased nodes')
+
+    await view.unmount()
+  })
+
+  it('shows a warning reason it has no wording for rather than dropping it', async () => {
+    stubLease(
+      leaseDetailBody({
+        migrationWarnings: [{ workload: 'batch/worker', reasons: [unlistedReason] }],
+      }),
+    )
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    expect(pillLabelled(view.container, unlistedReason).dataset.severity).toBe('attention')
+    expect(view.container.textContent).toContain('no wording for')
+
+    await view.unmount()
+  })
+
+  it('leaves the migration warnings out when the controller flagged nothing', async () => {
+    stubLease(leaseDetailBody())
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    expect(view.container.textContent).not.toContain('Migration warnings')
 
     await view.unmount()
   })

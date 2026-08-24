@@ -9,6 +9,7 @@ import type {
   LeaseListResponse,
   LeaseSummary,
   MachineCatalogueResponse,
+  NamespaceListResponse,
   ProviderConfigSummary,
 } from '@/lib/api'
 
@@ -168,7 +169,9 @@ export function leaseDetailBody(overrides: Partial<LeaseDetailResponse> = {}): L
     teardownGraceSeconds: 120,
     workloadNamespace: null,
     migratedWorkloads: [],
+    migrationWarnings: [],
     acceptedAt: '2026-08-21T11:00:00Z',
+    backstopAt: null,
     watchdogDeadline: null,
     observedGeneration: 1,
     conditions: [],
@@ -176,4 +179,8 @@ export function leaseDetailBody(overrides: Partial<LeaseDetailResponse> = {}): L
     observedAt: '2026-08-21T12:00:00Z',
     ...overrides,
   }
+}
+
+export function namespacesBody(names: string[]): NamespaceListResponse {
+  return { namespaces: names, observedAt: '2026-08-21T12:00:00Z' }
 }
