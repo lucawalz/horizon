@@ -101,7 +101,7 @@ The monitor is created in the release namespace and selects the chart's own Serv
 
 ### Web interface
 
-The table below is the single reference for the `ui.*` values; no other document repeats it. The end-to-end guide to this mode, covering what an identity provider has to publish, how to grant an impersonated operator rights over horizon's resources, and the security properties the arrangement rests on, is [docs/serving-the-interface.md](../../docs/serving-the-interface.md). The decision behind it is [ADR 0028](../../docs/adr/0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md).
+The table below is the single reference for the `ui.*` values; no other document repeats it. [docs/serving-the-interface.md](../../docs/serving-the-interface.md) is the end-to-end guide to this mode, covering what an identity provider has to publish, how to grant an impersonated operator rights over horizon's resources, and the security properties the arrangement rests on. The decision behind it is [ADR 0028](../../docs/adr/0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md).
 
 | Key | Default | Description |
 | --- | --- | --- |
