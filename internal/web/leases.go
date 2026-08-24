@@ -96,6 +96,7 @@ type leaseDetailResponse struct {
 	MigratedWorkloads    []string           `json:"migratedWorkloads"`
 	MigrationWarnings    []migrationWarning `json:"migrationWarnings"`
 	AcceptedAt           *string            `json:"acceptedAt"`
+	BackstopAt           *string            `json:"backstopAt"`
 	WatchdogDeadline     *string            `json:"watchdogDeadline"`
 	ObservedGeneration   int64              `json:"observedGeneration"`
 	Conditions           []conditionEntry   `json:"conditions"`
@@ -140,6 +141,7 @@ func newLeaseDetailResponse(lease *v1alpha1.CapacityLease, now time.Time) leaseD
 		MigratedWorkloads:    orEmpty(lease.Status.MigratedWorkloads),
 		MigrationWarnings:    newMigrationWarnings(lease.Status.MigrationWarnings),
 		AcceptedAt:           instant(lease.Status.AcceptedAt),
+		BackstopAt:           instant(lease.Status.LifetimeBackstop()),
 		WatchdogDeadline:     instant(lease.Status.WatchdogDeadline),
 		ObservedGeneration:   lease.Status.ObservedGeneration,
 		Conditions:           newConditionEntries(lease.Status.Conditions),

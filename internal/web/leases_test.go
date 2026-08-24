@@ -169,6 +169,54 @@ func TestLeaseDetailRendersStatusConditionsAndInstances(t *testing.T) {
 	}
 }
 
+func latchedInstance(name string, phase v1alpha1.InstancePhase, backstop time.Time) v1alpha1.InstanceStatus {
+	return v1alpha1.InstanceStatus{
+		Name:       name,
+		Phase:      phase,
+		BackstopAt: &metav1.Time{Time: backstop},
+	}
+}
+
+// the ceiling an extension may ask for is the earliest machine that destroys itself, and a released one destroys nothing
+func TestLeaseDetailCarriesTheEarliestBackstopStillHeld(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	now := time.Now()
+	status := activeStatus(now)
+	status.Instances = []v1alpha1.InstanceStatus{
+		latchedInstance("burst-0", v1alpha1.InstancePhaseJoined, now.Add(6*time.Hour)),
+		latchedInstance("burst-1", v1alpha1.InstancePhaseCreated, now.Add(5*time.Hour)),
+		latchedInstance("burst-2", v1alpha1.InstancePhaseReleased, now.Add(time.Hour)),
+	}
+	createLease(t, leaseFixture("ceiling-run"), status)
+
+	response := get(t, newTestServer(t, testEnv.Client, AbsentCatalogue()), leaseEndpoint("ceiling-run"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusOK, response.Body)
+	}
+
+	detail := decodeBody[leaseDetailResponse](t, response)
+	backstop := parseInstant(t, "backstopAt", present(t, "backstopAt", detail.BackstopAt))
+	if want := now.Add(5 * time.Hour).Truncate(time.Second); !backstop.Equal(want) {
+		t.Errorf("backstopAt = %s, want %s", backstop, want)
+	}
+}
+
+// a lease whose machines record no backstop has no ceiling to offer, and the clamp condition is what says so
+func TestLeaseDetailReportsNoBackstopWhereNoneIsLatched(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	createLease(t, leaseFixture("unlatched-run"), activeStatus(time.Now()))
+
+	response := get(t, newTestServer(t, testEnv.Client, AbsentCatalogue()), leaseEndpoint("unlatched-run"))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusOK, response.Body)
+	}
+	if backstop := decodeBody[leaseDetailResponse](t, response).BackstopAt; backstop != nil {
+		t.Errorf("backstopAt = %q, want it absent", *backstop)
+	}
+}
+
 func findCondition(conditions []conditionEntry, name string) *conditionEntry {
 	for i := range conditions {
 		if conditions[i].Type == name {
