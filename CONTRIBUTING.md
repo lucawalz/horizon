@@ -121,18 +121,6 @@ fix(hetzner): name the crd image selector field in create errors
 chore(deps): bump k8s client-go to v0.36
 ```
 
-## Code quality
-
-All contributions follow these principles:
-
-- **DRY**: extract shared logic; a change happens in one place
-- **KISS**: simplest solution that correctly solves the problem
-- **SRP**: each function and module has one reason to change
-- **Meaningful names**: names reveal intent without needing comments
-- **No magic numbers**: use named constants
-- **Fail fast**: validate inputs at the earliest possible point
-- **Comments**: add only where the intent is not obvious from the code itself, one line max
-
 ## Architectural decisions
 
 Significant design choices are documented as ADRs in [`docs/adr/`](docs/adr/). Add or update an ADR when a PR introduces or changes an architectural decision.
