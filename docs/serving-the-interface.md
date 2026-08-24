@@ -60,6 +60,8 @@ The interface holds no permissions over horizon's own resources and never acts u
 
 `CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. This role covers everything the interface can do: list and read leases, create one, extend a running one by patching its duration, release one by deleting it, delete the leftover record of one already released, and read the provider configurations the create form offers.
 
+The `namespaces` rule is the one optional entry. With it, the create form suggests the namespaces the signed-in operator may list. Without it the apiserver refuses that one call, the field stays a plain text box, and nothing else changes.
+
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -85,6 +87,12 @@ rules:
       - get
       - list
       - watch
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - list
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
