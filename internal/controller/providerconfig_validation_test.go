@@ -181,7 +181,7 @@ func TestProviderConfigStatusCapsThePublishedCatalogue(t *testing.T) {
 			config := validProviderConfig(objectName(t))
 			assertCreate(t, c, config, false)
 
-			config.Status.InstanceTypes = publishedCatalogue(tc.count)
+			config.Status.InstanceTypes = catalogueOfSize(tc.count)
 			err := c.Status().Update(t.Context(), config)
 			switch {
 			case tc.wantRejected && err == nil:
@@ -193,7 +193,7 @@ func TestProviderConfigStatusCapsThePublishedCatalogue(t *testing.T) {
 	}
 }
 
-func publishedCatalogue(count int) []v1alpha1.InstanceType {
+func catalogueOfSize(count int) []v1alpha1.InstanceType {
 	types := make([]v1alpha1.InstanceType, 0, count)
 	for i := range count {
 		types = append(types, v1alpha1.InstanceType{

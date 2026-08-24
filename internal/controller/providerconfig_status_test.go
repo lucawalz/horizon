@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -90,6 +91,56 @@ func assertConditionDetail(t *testing.T, config *v1alpha1.ProviderConfig, name s
 	}
 	if found.Status != status || found.Reason != reason {
 		t.Errorf("condition %q = %s/%s, want %s/%s", name, found.Status, found.Reason, status, reason)
+	}
+	if found.ObservedGeneration != config.Generation {
+		t.Errorf("condition %q observed generation %d, want %d", name, found.ObservedGeneration, config.Generation)
+	}
+}
+
+func fetchedTypes(count int) []provider.InstanceType {
+	types := make([]provider.InstanceType, 0, count)
+	for i := range count {
+		types = append(types, fetchedType(fmt.Sprintf("cx%04d", i), "nbg1"))
+	}
+	return types
+}
+
+func TestPublishableCatalogueTruncatesOnlyBeyondTheCap(t *testing.T) {
+	tests := []struct {
+		name      string
+		offered   int
+		want      int
+		truncated bool
+	}{
+		{"below the cap", v1alpha1.MaxPublishedInstanceTypes - 1, v1alpha1.MaxPublishedInstanceTypes - 1, false},
+		{"at the cap", v1alpha1.MaxPublishedInstanceTypes, v1alpha1.MaxPublishedInstanceTypes, false},
+		{"one beyond the cap", v1alpha1.MaxPublishedInstanceTypes + 1, v1alpha1.MaxPublishedInstanceTypes, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			published, truncated := publishableCatalogue(fetchedTypes(tc.offered))
+
+			if len(published) != tc.want {
+				t.Errorf("published %d of %d offered, want %d", len(published), tc.offered, tc.want)
+			}
+			if truncated != tc.truncated {
+				t.Errorf("truncated = %t, want %t", truncated, tc.truncated)
+			}
+		})
+	}
+}
+
+func TestPublishableCatalogueOrdersEntriesThatShareARegionAndName(t *testing.T) {
+	small := fetchedType("cx22", "nbg1")
+	large := fetchedType("cx22", "nbg1")
+	large.MemoryBytes = 8 << 30
+
+	forward, _ := publishableCatalogue([]provider.InstanceType{small, large})
+	reverse, _ := publishableCatalogue([]provider.InstanceType{large, small})
+
+	if !slices.Equal(forward, reverse) {
+		t.Errorf("the same catalogue in a different order published %+v then %+v, want one order", forward, reverse)
 	}
 }
 
@@ -304,12 +355,7 @@ func TestPublishTruncatesACatalogueBeyondTheCap(t *testing.T) {
 	assertCreate(t, api, config, false)
 	publisher := newPublisher(api, publisherSecrets()...)
 
-	oversized := make([]provider.InstanceType, 0, v1alpha1.MaxPublishedInstanceTypes+1)
-	for i := range v1alpha1.MaxPublishedInstanceTypes + 1 {
-		oversized = append(oversized, fetchedType(fmt.Sprintf("cx%04d", i), "nbg1"))
-	}
-
-	if err := publisher.Publish(t.Context(), config, oversized, nil); err != nil {
+	if err := publisher.Publish(t.Context(), config, fetchedTypes(v1alpha1.MaxPublishedInstanceTypes+1), nil); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 

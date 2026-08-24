@@ -1,10 +1,10 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -65,6 +65,7 @@ func (p *ProviderConfigPublisher) Publish(
 			}
 			return fmt.Errorf("read provider config %q: %w", key.Name, err)
 		}
+		// two replicas racing on the same probe result compute the same content, so the second finds nothing to write
 		if !desired.applyTo(&live) {
 			return nil
 		}
@@ -181,16 +182,39 @@ func publishableCatalogue(types []provider.InstanceType) ([]v1alpha1.InstanceTyp
 	for _, offered := range types {
 		published = append(published, publishedInstanceType(offered))
 	}
-	slices.SortFunc(published, func(a, b v1alpha1.InstanceType) int {
-		if byRegion := strings.Compare(a.Region, b.Region); byRegion != 0 {
-			return byRegion
-		}
-		return strings.Compare(a.Name, b.Name)
-	})
+	slices.SortFunc(published, compareInstanceTypes)
 	if len(published) <= v1alpha1.MaxPublishedInstanceTypes {
 		return published, false
 	}
 	return published[:v1alpha1.MaxPublishedInstanceTypes], true
+}
+
+// every field takes part, so entries that compare equal are identical and the order cannot alternate between passes
+func compareInstanceTypes(a, b v1alpha1.InstanceType) int {
+	return cmp.Or(
+		cmp.Compare(a.Region, b.Region),
+		cmp.Compare(a.Name, b.Name),
+		cmp.Compare(a.Architecture, b.Architecture),
+		cmp.Compare(a.CPUType, b.CPUType),
+		cmp.Compare(a.CPUCores, b.CPUCores),
+		cmp.Compare(a.MemoryBytes, b.MemoryBytes),
+		cmp.Compare(a.DiskBytes, b.DiskBytes),
+		cmp.Compare(a.HourlyRate, b.HourlyRate),
+		cmp.Compare(a.Currency, b.Currency),
+		compareFlag(a.Available, b.Available),
+		compareFlag(a.Deprecated, b.Deprecated),
+	)
+}
+
+func compareFlag(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case b:
+		return -1
+	default:
+		return 1
+	}
 }
 
 func publishedInstanceType(offered provider.InstanceType) v1alpha1.InstanceType {

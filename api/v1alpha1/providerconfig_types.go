@@ -12,7 +12,7 @@ const (
 
 const ProviderTypeHetzner = "hetzner"
 
-// the live catalogue holds 114 entries across six locations, so this leaves fourfold headroom while capping status near a tenth of the etcd object limit
+// many times the largest catalogue any supported provider offers, while keeping status an order of magnitude below the etcd object limit
 const MaxPublishedInstanceTypes = 512
 
 // +kubebuilder:validation:XValidation:rule="[has(self.name), has(self.id), has(self.selector)].filter(x, x).size() == 1",message="set exactly one of name, id or selector"
