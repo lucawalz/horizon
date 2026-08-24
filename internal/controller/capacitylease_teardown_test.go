@@ -478,48 +478,31 @@ func TestTeardownProceedsOnceTheWorkloadLeavesTheBurstNodes(t *testing.T) {
 }
 
 func TestTeardownProceedsAfterTheRestoreGraceElapsesWithTheWorkloadStillNotReady(t *testing.T) {
-	// this deadline is anchored on real deletion metadata stamped by envtest, so it is exercised
-	// with a real clock and a real sleep rather than the stub clock's Advance; a couple of seconds
-	// of headroom absorbs the API server's second-truncated deletion timestamp and normal call latency
-	const grace = 2 * time.Second
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
-		lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
 	})
 	h.seedWorkload()
 	h.settle()
 	name := h.instanceName(0)
 	h.joinNode(name, true)
 	h.settle()
-	h.pinExpiresAtIntoTheRealFuture()
 
-	r := h.reconciler()
-	r.Clock = time.Now
 	h.deleteLease()
-
-	req := ctrl.Request{NamespacedName: client.ObjectKey{Name: h.name}}
-	if _, err := r.Reconcile(h.recordingLogs(), req); err != nil {
+	if _, err := h.reconcile(); err != nil {
 		t.Fatalf("restore pass: %v", err)
 	}
 	h.seedPod("stuck", testWorkloadNS, name)
 
-	if _, err := r.Reconcile(h.recordingLogs(), req); err != nil {
+	if _, err := h.reconcile(); err != nil {
 		t.Fatalf("reconcile before the grace elapses: %v", err)
 	}
 	if got := len(h.providerInstances()); got != 1 {
 		t.Fatalf("provider holds %d instances before the grace elapses, want the release withheld", got)
 	}
 
-	time.Sleep(2 * grace)
-	for range maxSettlePasses {
-		res, err := r.Reconcile(h.recordingLogs(), req)
-		if err != nil {
-			t.Fatalf("settle after the grace elapses: %v", err)
-		}
-		if res.IsZero() {
-			break
-		}
-	}
+	h.clock.Advance(2 * time.Minute)
+	h.settle()
 
 	h.assertProviderEmpty()
 	if !h.leaseGone() {
@@ -664,15 +647,6 @@ func blockEviction(kc *k8sfake.Clientset) {
 	})
 }
 
-func (h *harness) pinExpiresAtIntoTheRealFuture() {
-	h.t.Helper()
-	lease := h.lease()
-	lease.Status.ExpiresAt = &metav1.Time{Time: time.Now().Add(time.Hour)}
-	if err := h.api.Status().Update(h.t.Context(), lease); err != nil {
-		h.t.Fatalf("pin expiresAt into the real future: %v", err)
-	}
-}
-
 func TestTeardownBoundIsSharedAcrossReplicasNotMultipliedPerInstance(t *testing.T) {
 	const grace = 2 * time.Second
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
@@ -689,8 +663,6 @@ func TestTeardownBoundIsSharedAcrossReplicasNotMultipliedPerInstance(t *testing.
 		h.seedPod(fmt.Sprintf("straggler-%d", i), testWorkloadNS, name)
 	}
 	blockEviction(h.kube)
-	// the stub clock's expiry sits weeks behind the real clock this test drives; move it out of the way
-	h.pinExpiresAtIntoTheRealFuture()
 
 	r := h.reconciler()
 	r.Clock = time.Now
@@ -771,28 +743,19 @@ func TestASpentTeardownBudgetSkipsTheDrainAndReleasesAnyway(t *testing.T) {
 }
 
 func TestATeardownAnchoredOnDeletionIsBoundedEvenBeforeExpiry(t *testing.T) {
-	const grace = 300 * time.Millisecond
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
 	})
 	h.settle()
 	name := h.instanceName(0)
 	h.joinNode(name, true)
 	h.settle()
 	h.seedPod("straggler", testWorkloadNS, name)
-	h.pinExpiresAtIntoTheRealFuture()
 
-	r := h.reconciler()
-	r.Clock = time.Now
 	h.deleteLease()
-
-	// the lease's expiry is still an hour off; only the deletion anchor can bound this
-	time.Sleep(2 * grace)
-
-	req := ctrl.Request{NamespacedName: client.ObjectKey{Name: h.name}}
-	if _, err := r.Reconcile(h.recordingLogs(), req); err != nil {
-		t.Fatalf("teardown: %v", err)
-	}
+	// the lease's hour-long expiry is still far off; only the deletion anchor can bound this
+	h.clock.Advance(2 * time.Minute)
+	h.settle()
 
 	h.assertProviderEmpty()
 	if !h.podExists("straggler", testWorkloadNS) {

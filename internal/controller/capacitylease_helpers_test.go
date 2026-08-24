@@ -45,7 +45,7 @@ type stubClock struct {
 }
 
 func newStubClock() *stubClock {
-	return &stubClock{current: testInstant}
+	return &stubClock{current: time.Now().UTC().Truncate(time.Second)}
 }
 
 func (c *stubClock) Now() time.Time {
