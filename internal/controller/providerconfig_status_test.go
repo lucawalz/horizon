@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
 	"github.com/lucawalz/horizon/internal/provider/hetzner"
 )
@@ -263,6 +264,10 @@ func TestReadinessNamesTheCheckThatFailed(t *testing.T) {
 			fetchErr: errCatalogueFetch, status: metav1.ConditionFalse, reason: reasonCatalogueUnavailable,
 		},
 		{
+			name: "the provider offers nothing anywhere", mutate: func(*v1alpha1.ProviderConfig) {}, secrets: publisherSecrets(),
+			fetchErr: catalogue.ErrEmpty, status: metav1.ConditionFalse, reason: reasonCatalogueEmpty,
+		},
+		{
 			name: "the provider type has no implementation", mutate: func(c *v1alpha1.ProviderConfig) {
 				c.Spec.Type = "aws"
 			},
@@ -347,6 +352,7 @@ func TestPublishKeepsTheLastCatalogueWhenTheFetchComesBackEmpty(t *testing.T) {
 		t.Errorf("published %d instance types, want the last good catalogue of 1", len(live.Status.InstanceTypes))
 	}
 	assertConditionDetail(t, live, v1alpha1.ConditionCataloguePublished, metav1.ConditionFalse, reasonCatalogueEmpty)
+	assertConditionDetail(t, live, v1alpha1.ConditionReady, metav1.ConditionFalse, reasonCatalogueEmpty)
 }
 
 func TestPublishTruncatesACatalogueBeyondTheCap(t *testing.T) {

@@ -15,6 +15,16 @@ const ReasonUnavailable = "catalogue_unavailable"
 
 var ErrUnavailable = errors.New("catalogue: " + ReasonUnavailable)
 
+var ErrEmpty = errors.New("catalogue: the provider offers no instance type in any region")
+
+// an answer carrying nothing has delivered no catalogue, so every consumer treats it exactly as it treats a refusal
+func FetchError(types []provider.InstanceType, err error) error {
+	if err == nil && len(types) == 0 {
+		return ErrEmpty
+	}
+	return err
+}
+
 type Reader interface {
 	List(config, region string) ([]provider.InstanceType, error)
 	Age(config string) (time.Duration, bool)

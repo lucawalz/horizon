@@ -202,3 +202,29 @@ func TestRetainDropsTheEntriesOfProviderConfigsThatAreGone(t *testing.T) {
 		t.Errorf("List of a retained provider config = %v, want no error", err)
 	}
 }
+
+func TestFetchErrorReportsAnAnswerCarryingNothingAsNoCatalogue(t *testing.T) {
+	refused := errors.New("the provider rejected the token")
+	offered := []provider.InstanceType{instanceType("small", regionA)}
+
+	tests := []struct {
+		name  string
+		types []provider.InstanceType
+		err   error
+		want  error
+	}{
+		{"types and no error", offered, nil, nil},
+		{"no types and no error", nil, nil, ErrEmpty},
+		{"an empty list and no error", []provider.InstanceType{}, nil, ErrEmpty},
+		{"no types and an error", nil, refused, refused},
+		{"types and an error", offered, refused, refused},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FetchError(tc.types, tc.err); !errors.Is(got, tc.want) {
+				t.Errorf("FetchError = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

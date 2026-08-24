@@ -214,6 +214,12 @@ func (p *Provider) SeedInstanceType(it provider.InstanceType) {
 	p.instanceTypes = append(p.instanceTypes, it)
 }
 
+func (p *Provider) ForgetInstanceTypes() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.instanceTypes = nil
+}
+
 func (p *Provider) ListInstanceTypes(_ context.Context, region string) ([]provider.InstanceType, error) {
 	if err := inject(p.FailListInstanceTypes, region); err != nil {
 		return nil, err

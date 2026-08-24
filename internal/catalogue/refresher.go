@@ -108,6 +108,13 @@ func (r *Refresher) refreshAll(ctx context.Context) error {
 
 func (r *Refresher) refresh(ctx context.Context, cfg *v1alpha1.ProviderConfig) error {
 	types, err := r.fetch(ctx, cfg)
+	err = FetchError(types, err)
+	// the cache fills before the status is published, so no reader is told of a catalogue this replica cannot serve
+	if err == nil {
+		r.Cache.store(cfg.Name, types)
+		recordInstanceTypes(cfg.Name, types)
+	}
+
 	published := r.publish(ctx, cfg, types, err)
 	if err != nil {
 		r.failures.Add(1)
@@ -115,8 +122,6 @@ func (r *Refresher) refresh(ctx context.Context, cfg *v1alpha1.ProviderConfig) e
 		return errors.Join(fmt.Errorf("catalogue: refresh provider config %q: %w", cfg.Name, err), published)
 	}
 	r.successes.Add(1)
-	r.Cache.store(cfg.Name, types)
-	recordInstanceTypes(cfg.Name, types)
 	r.recordRefresh(cfg.Name, metrics.ResultSuccess)
 	return published
 }

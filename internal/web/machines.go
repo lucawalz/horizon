@@ -45,10 +45,11 @@ func (absentCatalogue) List(string, string) ([]provider.InstanceType, error) {
 func (absentCatalogue) Age(string) (time.Duration, bool) { return 0, false }
 
 type providerConfigSummary struct {
-	Name      string                  `json:"name"`
-	Type      string                  `json:"type"`
-	Ready     *metav1.ConditionStatus `json:"ready"`
-	CreatedAt string                  `json:"createdAt"`
+	Name               string                  `json:"name"`
+	Type               string                  `json:"type"`
+	Ready              *metav1.ConditionStatus `json:"ready"`
+	CataloguePublished *metav1.ConditionStatus `json:"cataloguePublished"`
+	CreatedAt          string                  `json:"createdAt"`
 }
 
 type money struct {
@@ -90,10 +91,11 @@ func newProviderConfigSummaries(configs []v1alpha1.ProviderConfig) []providerCon
 	for i := range configs {
 		config := &configs[i]
 		summaries = append(summaries, providerConfigSummary{
-			Name:      config.Name,
-			Type:      config.Spec.Type,
-			Ready:     conditionStatus(config.Status.Conditions, v1alpha1.ConditionReady),
-			CreatedAt: rfc3339(config.CreationTimestamp.Time),
+			Name:               config.Name,
+			Type:               config.Spec.Type,
+			Ready:              conditionStatus(config.Status.Conditions, v1alpha1.ConditionReady),
+			CataloguePublished: conditionStatus(config.Status.Conditions, v1alpha1.ConditionCataloguePublished),
+			CreatedAt:          rfc3339(config.CreationTimestamp.Time),
 		})
 	}
 	return summaries

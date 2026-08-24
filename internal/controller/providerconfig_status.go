@@ -3,6 +3,7 @@ package controller
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -28,7 +29,7 @@ const (
 	reasonProviderUnusable      = "ProviderUnusable"
 	reasonCataloguePublished    = "Published"
 	reasonCatalogueTruncated    = "Truncated"
-	reasonCatalogueEmpty        = "Empty"
+	reasonCatalogueEmpty        = "CatalogueEmpty"
 )
 
 // rewriting the stamp no more than twice per refresh keeps replicas minutes apart from each writing their own
@@ -110,13 +111,14 @@ func (s providerConfigStatus) stampDue(last *metav1.Time) bool {
 func (p *ProviderConfigPublisher) resolve(
 	ctx context.Context, cfg *v1alpha1.ProviderConfig, types []provider.InstanceType, fetchErr error,
 ) providerConfigStatus {
+	fetchErr = catalogue.FetchError(types, fetchErr)
 	published, truncated := publishableCatalogue(types)
 	return providerConfigStatus{
 		ready:       p.readiness(ctx, cfg, fetchErr),
 		published:   catalogueCondition(fetchErr, len(types), truncated),
 		types:       published,
 		refreshedAt: metav1.Time{Time: p.now()},
-		fetched:     fetchErr == nil && len(types) > 0,
+		fetched:     fetchErr == nil,
 	}
 }
 
@@ -136,7 +138,7 @@ func (p *ProviderConfigPublisher) readiness(ctx context.Context, cfg *v1alpha1.P
 		return unreadyCondition(reasonTeardownNotGuaranteed, err)
 	}
 	if fetchErr != nil {
-		return unreadyCondition(reasonCatalogueUnavailable, fetchErr)
+		return unreadyCondition(catalogueReason(fetchErr), fetchErr)
 	}
 	return metav1.Condition{
 		Type:    v1alpha1.ConditionReady,
@@ -159,11 +161,8 @@ func catalogueCondition(fetchErr error, offered int, truncated bool) metav1.Cond
 	condition := metav1.Condition{Type: v1alpha1.ConditionCataloguePublished, Status: metav1.ConditionFalse}
 	switch {
 	case fetchErr != nil:
-		condition.Reason = reasonCatalogueUnavailable
+		condition.Reason = catalogueReason(fetchErr)
 		condition.Message = fetchErr.Error()
-	case offered == 0:
-		condition.Reason = reasonCatalogueEmpty
-		condition.Message = "the provider answered with no instance type in any region"
 	case truncated:
 		condition.Reason = reasonCatalogueTruncated
 		condition.Message = fmt.Sprintf("the provider offers %d instance types, more than the %d status holds, so the published catalogue is truncated",
@@ -174,6 +173,13 @@ func catalogueCondition(fetchErr error, offered int, truncated bool) metav1.Cond
 		condition.Message = fmt.Sprintf("the provider offers %d instance types", offered)
 	}
 	return condition
+}
+
+func catalogueReason(fetchErr error) string {
+	if errors.Is(fetchErr, catalogue.ErrEmpty) {
+		return reasonCatalogueEmpty
+	}
+	return reasonCatalogueUnavailable
 }
 
 func publishableCatalogue(types []provider.InstanceType) ([]v1alpha1.InstanceType, bool) {

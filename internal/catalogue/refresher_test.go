@@ -112,6 +112,52 @@ func TestRefreshServesThePreviousSnapshotWhenTheProviderFails(t *testing.T) {
 	}
 }
 
+func TestRefreshServesThePreviousSnapshotWhenTheProviderAnswersWithNothing(t *testing.T) {
+	prov := seededProvider(regionA)
+	cache := NewCache()
+	refresher := &Refresher{
+		Client: apiClient(providerConfig(testConfig)),
+		Lister: staticFactory(prov),
+		Cache:  cache,
+	}
+
+	if err := refresher.refreshAll(t.Context()); err != nil {
+		t.Fatalf("first refreshAll: %v", err)
+	}
+
+	prov.ForgetInstanceTypes()
+	if err := refresher.refreshAll(t.Context()); !errors.Is(err, ErrEmpty) {
+		t.Fatalf("refreshAll of an empty answer = %v, want %v", err, ErrEmpty)
+	}
+
+	got, err := cache.List(testConfig, regionA)
+	if err != nil {
+		t.Fatalf("List after an empty answer = %v, want the previous snapshot", err)
+	}
+	if len(got) != 1 {
+		t.Errorf("List after an empty answer = %v, want the previous snapshot", names(got))
+	}
+}
+
+func TestRefreshLeavesTheCatalogueUnavailableWhenTheProviderNeverOffersAnything(t *testing.T) {
+	prov := seededProvider(regionA)
+	prov.ForgetInstanceTypes()
+	cache := NewCache()
+	refresher := &Refresher{
+		Client: apiClient(providerConfig(testConfig)),
+		Lister: staticFactory(prov),
+		Cache:  cache,
+	}
+
+	if err := refresher.refreshAll(t.Context()); !errors.Is(err, ErrEmpty) {
+		t.Fatalf("refreshAll of an empty answer = %v, want %v", err, ErrEmpty)
+	}
+
+	if _, err := cache.List(testConfig, regionA); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("List of a catalogue that only ever answered empty = %v, want %v", err, ErrUnavailable)
+	}
+}
+
 func TestRefreshLeavesTheCatalogueUnavailableWhenTheFirstFetchFails(t *testing.T) {
 	prov := seededProvider(regionA)
 	prov.FailListInstanceTypes = func(string) error { return errors.New("hetzner is down") }
