@@ -307,8 +307,10 @@ func TestASizedLeaseAnnouncesWhatItChoseAndWhatItBeat(t *testing.T) {
 	}
 
 	h.assertAnnouncedSelection(
-		"Normal InstanceTypeSelected LowestPrice chose fake-small from 2 of 4 offered candidates, runner-up fake-large")
-	h.assertLogged("selected an instance type from requirements",
+		"Normal InstanceTypeSelected LowestPrice chose fake-small from 2 of 4 offered candidates, runner-up fake-large",
+	)
+	h.assertLogged(
+		"selected an instance type from requirements",
 		`"instanceType"="fake-small"`,
 		`"strategy"="LowestPrice"`,
 		`"runnerUp"="fake-large"`,

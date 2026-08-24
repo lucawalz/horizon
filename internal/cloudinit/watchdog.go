@@ -54,7 +54,8 @@ func watchdogCommands(opts Options) []string {
 		"curl -fsSL --max-time 60 -o \"$TMP/" + checksumFileName + "\" \"$BASE/horizon_${NUM}_checksums.txt\"",
 	}
 	install = append(install, verifyChecksum()...)
-	install = append(install,
+	install = append(
+		install,
 		"tar -xzf \"$TMP/$TARBALL\" -C \"$TMP\" horizon",
 		"install -D -m0755 \"$TMP/horizon\" "+watchdogBinaryPath,
 		watchdogBinaryPath+" version >/dev/null",

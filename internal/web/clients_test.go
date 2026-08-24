@@ -262,11 +262,14 @@ func TestAClusterRefusalAnswersAsAnAuthorisationFailureNamingTheUser(t *testing.
 		"machine":   getAs(server, servedIdentity(), machinesEndpoint),
 		"namespace": getAs(server, servedIdentity(), namespacesEndpoint),
 		"create": send(server, asIdentity(
-			newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")), servedIdentity())),
+			newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")), servedIdentity(),
+		)),
 		"extend": send(server, asIdentity(
-			newMutation(t, http.MethodPatch, leaseEndpoint("named"), extendRequestFixture(3*time.Hour)), servedIdentity())),
+			newMutation(t, http.MethodPatch, leaseEndpoint("named"), extendRequestFixture(3*time.Hour)), servedIdentity(),
+		)),
 		"release": send(server, asIdentity(
-			newMutation(t, http.MethodDelete, leaseEndpoint("named"), nil), servedIdentity())),
+			newMutation(t, http.MethodDelete, leaseEndpoint("named"), nil), servedIdentity(),
+		)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if response.Code != http.StatusForbidden {
@@ -305,7 +308,8 @@ func TestTheServedInterfaceWithoutAWriterFactoryRefusesEveryMutation(t *testing.
 	anchor(t, server)
 
 	response := send(server, asIdentity(
-		newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")), servedIdentity()))
+		newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")), servedIdentity(),
+	))
 
 	if response.Code != http.StatusNotImplemented {
 		t.Errorf("status = %d, want %d", response.Code, http.StatusNotImplemented)

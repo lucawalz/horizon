@@ -18,7 +18,8 @@ var (
 )
 
 func addKnownTypes(s *runtime.Scheme) error {
-	s.AddKnownTypes(GroupVersion,
+	s.AddKnownTypes(
+		GroupVersion,
 		&CapacityLease{},
 		&CapacityLeaseList{},
 		&ProviderConfig{},
