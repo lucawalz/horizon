@@ -1,6 +1,6 @@
 # Command line reference
 
-horizon is a single binary carrying six commands. `horizon` with no subcommand prints help, and every command accepts `--help`, which lists its flags with their defaults.
+`horizon` with no subcommand prints help, and every command accepts `--help`, which lists its flags with their defaults:
 
 ```
 horizon controller   Run the in-cluster capacity lease controller
@@ -11,11 +11,9 @@ horizon cloud-init   Render the cloud-init a burst node needs to join a cluster
 horizon version      Print the build version
 ```
 
-Three of the six run somewhere other than an operator's terminal. `horizon controller` is what the Helm chart runs in the cluster, `horizon serve` is what the chart runs behind `ui.enabled`, and `horizon watchdog` runs on the leased server itself, started by the cloud-init that boots it.
-
 ## horizon controller
 
-Runs the in-cluster capacity lease controller. It takes four flags.
+Runs the in-cluster capacity lease controller, which is what the Helm chart runs. It takes four flags.
 
 | Flag | Default | Description |
 | --- | --- | --- |
