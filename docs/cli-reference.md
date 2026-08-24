@@ -66,7 +66,7 @@ Runs on the leased server rather than in the cluster, started by the cloud-init 
 
 ## horizon cloud-init
 
-Renders the join document a burst node needs. [Usage](usage.md#render-the-cloud-init) shows the rendered output.
+Renders the join document a burst node needs. [Usage](usage.md#quick-start) shows the rendered output.
 
 `--server` and `--kubernetes-version` are required unless `--passthrough`, the version only while the flavour installs Kubernetes. It names an exact flavour release, `v1.35.6+k3s1` for k3s, read off the server version line of `kubectl version`. Anything else is refused at render time, so a bare `v1.35.6` taken from the client version line one row above it fails before a node ever boots on it.
 
