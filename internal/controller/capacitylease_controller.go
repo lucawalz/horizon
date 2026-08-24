@@ -285,12 +285,17 @@ func (r *CapacityLeaseReconciler) writeStatus(ctx context.Context, lease *v1alph
 }
 
 func setCondition(lease *v1alpha1.CapacityLease, condition string, status metav1.ConditionStatus, reason, message string) bool {
+	return setConditionAt(lease, condition, status, reason, message, time.Time{})
+}
+
+func setConditionAt(lease *v1alpha1.CapacityLease, condition string, status metav1.ConditionStatus, reason, message string, at time.Time) bool {
 	return meta.SetStatusCondition(&lease.Status.Conditions, metav1.Condition{
 		Type:               condition,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
 		ObservedGeneration: lease.Generation,
+		LastTransitionTime: metav1.NewTime(at),
 	})
 }
 

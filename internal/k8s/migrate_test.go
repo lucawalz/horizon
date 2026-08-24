@@ -1090,3 +1090,92 @@ func TestWorkloadOnBurstNodes_ListErrorSurfaces(t *testing.T) {
 		t.Fatal("expected the pod list failure to surface instead of a false negative")
 	}
 }
+
+func TestWorkloadOffBurstNodes_ReportsReadyOnlyAfterLeavingBurstNodes(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testNS),
+		makePod("p1", testNS, "burst-1", corev1.PodRunning),
+	)
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if ready {
+		t.Error("a pod still running on a burst node must not report ready")
+	}
+
+	pod, err := kc.CoreV1().Pods(testNS).Get(context.Background(), "p1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	pod.Spec.NodeName = "home-1"
+	if _, err := kc.CoreV1().Pods(testNS).Update(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("update pod: %v", err)
+	}
+
+	ready, err = k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("a pod moved off the burst nodes must report ready")
+	}
+}
+
+func TestWorkloadOffBurstNodes_PendingNotReady(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testNS),
+		makePod("p1", testNS, "home-1", corev1.PodRunning),
+		makePod("p2", testNS, "home-1", corev1.PodPending),
+	)
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if ready {
+		t.Error("a pending pod must not report ready")
+	}
+}
+
+func TestWorkloadOffBurstNodes_NoWorkloadIsReady(t *testing.T) {
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testNS))
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("an empty namespace has nothing left to restore, so it must report ready")
+	}
+}
+
+func TestWorkloadOffBurstNodes_DaemonSetIgnored(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testNS),
+		makePod("app", testNS, "home-1", corev1.PodRunning),
+		makeDSPod("ds-pod", testNS, "burst-1"),
+	)
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("a daemonset pod on a burst node must not hold the check back")
+	}
+}
+
+func TestWorkloadOffBurstNodes_EmptyNamespace(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	if _, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, ""); err == nil {
+		t.Fatal("expected error for empty namespace, got nil")
+	}
+}
+
+func TestWorkloadOffBurstNodes_ListErrorSurfaces(t *testing.T) {
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testNS))
+	kc.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("forbidden")
+	})
+	if _, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS); err == nil {
+		t.Fatal("expected the pod list failure to surface instead of a false negative")
+	}
+}

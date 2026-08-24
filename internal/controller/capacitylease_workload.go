@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -72,10 +73,37 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 	}
 
 	lease.Status.MigratedWorkloads = nil
-	setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonPlacementRestored,
-		"workload placement restored")
+	setConditionAt(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonPlacementRestored,
+		"workload placement restored", r.now())
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+}
+
+func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+	if lease.Spec.Workload == nil {
+		return ctrl.Result{}, nil
+	}
+	grace := teardownGrace(lease)
+	if grace <= 0 {
+		return ctrl.Result{}, nil
+	}
+	cond := meta.FindStatusCondition(lease.Status.Conditions, v1alpha1.ConditionWorkloadMigrated)
+	if cond == nil || cond.Reason != reasonPlacementRestored {
+		return ctrl.Result{}, nil
+	}
+	if r.now().Sub(cond.LastTransitionTime.Time) >= grace {
+		return ctrl.Result{}, nil
+	}
+
+	namespace := lease.Spec.Workload.Namespace
+	restored, err := k8s.WorkloadOffBurstNodes(ctx, r.Kube, namespace)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("check workload restored in %q: %w", namespace, err)
+	}
+	if restored {
+		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
 }

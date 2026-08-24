@@ -410,6 +410,123 @@ func TestADrainedNodeLosesItsPodsWithinTheGrace(t *testing.T) {
 	}
 }
 
+func TestTeardownWithholdsReleaseWhileTheWorkloadRemainsOnBurstNodes(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload()
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue)
+
+	h.deleteLease()
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("restore pass: %v", err)
+	}
+	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse)
+	h.seedPod("stuck", testWorkloadNS, name)
+
+	for range 5 {
+		if _, err := h.reconcile(); err != nil {
+			t.Fatalf("reconcile while the workload sits on the burst node: %v", err)
+		}
+	}
+
+	if got := len(h.providerInstances()); got != 1 {
+		t.Errorf("provider holds %d instances, want the release withheld", got)
+	}
+	if _, ok := h.node(name); !ok {
+		t.Error("the burst node was drained before the workload left it")
+	}
+}
+
+func TestTeardownProceedsOnceTheWorkloadLeavesTheBurstNodes(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload()
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.deleteLease()
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("restore pass: %v", err)
+	}
+	h.seedPod("api-1", testWorkloadNS, "home-1")
+
+	h.settle()
+
+	h.assertProviderEmpty()
+	if _, ok := h.node(name); ok {
+		t.Error("the burst node outlived a workload restored to a local node")
+	}
+	if !h.leaseGone() {
+		t.Error("the lease was not released after the workload left the burst nodes")
+	}
+}
+
+func TestTeardownProceedsAfterTheRestoreGraceElapsesWithTheWorkloadStillNotReady(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
+	})
+	h.seedWorkload()
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.deleteLease()
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("restore pass: %v", err)
+	}
+	h.seedPod("stuck", testWorkloadNS, name)
+
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("reconcile before the grace elapses: %v", err)
+	}
+	if got := len(h.providerInstances()); got != 1 {
+		t.Fatalf("provider holds %d instances before the grace elapses, want the release withheld", got)
+	}
+
+	h.clock.Advance(time.Minute + time.Second)
+	h.settle()
+
+	h.assertProviderEmpty()
+	if !h.leaseGone() {
+		t.Error("the lease was not released once the restore grace elapsed")
+	}
+}
+
+func TestAZeroTeardownGraceSkipsTheRestoreGate(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: 0}
+	})
+	h.seedWorkload()
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.deleteLease()
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("restore pass: %v", err)
+	}
+	h.seedPod("stuck", testWorkloadNS, name)
+
+	h.settle()
+
+	h.assertProviderEmpty()
+	if !h.leaseGone() {
+		t.Error("a zero teardown grace still waited on the workload")
+	}
+}
+
 func leaseFallingDue(deletion, expiry *metav1.Time) *v1alpha1.CapacityLease {
 	lease := &v1alpha1.CapacityLease{}
 	lease.DeletionTimestamp = deletion

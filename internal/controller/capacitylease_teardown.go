@@ -23,6 +23,9 @@ func (r *CapacityLeaseReconciler) teardown(ctx context.Context, lease *v1alpha1.
 	if res, err := r.restoreWorkload(ctx, lease); err != nil || !res.IsZero() {
 		return res, err
 	}
+	if res, err := r.awaitWorkloadRestored(ctx, lease); err != nil || !res.IsZero() {
+		return res, err
+	}
 
 	if hasUnreleasedInstances(lease) {
 		_, prov, err := r.providerFor(ctx, lease)

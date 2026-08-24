@@ -480,16 +480,24 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 }
 
 func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string) (bool, error) {
+	return workloadNodeMembership(ctx, kc, namespace, true, "workload-on-burst-nodes")
+}
+
+func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string) (bool, error) {
+	return workloadNodeMembership(ctx, kc, namespace, false, "workload-off-burst-nodes")
+}
+
+func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namespace string, wantBurst bool, opName string) (bool, error) {
 	if namespace == "" {
-		return false, fmt.Errorf("workload-on-burst-nodes: namespace must not be empty")
+		return false, fmt.Errorf("%s: namespace must not be empty", opName)
 	}
 	burstNodes, err := poolNodes(ctx, kc)
 	if err != nil {
-		return false, fmt.Errorf("workload-on-burst-nodes: list nodes: %w", err)
+		return false, fmt.Errorf("%s: list nodes: %w", opName, err)
 	}
-	spread, err := workloadSpreadReady(ctx, kc, namespace, burstNodes)
+	spread, err := workloadSpreadReady(ctx, kc, namespace, burstNodes, wantBurst)
 	if err != nil {
-		return false, fmt.Errorf("workload-on-burst-nodes: list pods in %q: %w", namespace, err)
+		return false, fmt.Errorf("%s: list pods in %q: %w", opName, namespace, err)
 	}
 	return spread, nil
 }
@@ -508,7 +516,7 @@ func poolNodes(ctx context.Context, kc kubernetes.Interface) (map[string]bool, e
 	return burst, nil
 }
 
-func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace string, burstNodes map[string]bool) (bool, error) {
+func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace string, burstNodes map[string]bool, wantBurst bool) (bool, error) {
 	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return false, err
@@ -520,9 +528,10 @@ func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace
 			continue
 		}
 		counted++
-		if p.Status.Phase != corev1.PodRunning || !burstNodes[p.Spec.NodeName] {
+		if p.Status.Phase != corev1.PodRunning || burstNodes[p.Spec.NodeName] != wantBurst {
 			return false, nil
 		}
 	}
-	return counted > 0, nil
+	// an empty namespace has nothing left on burst nodes, so the off-burst check is vacuously true
+	return counted > 0 || !wantBurst, nil
 }
