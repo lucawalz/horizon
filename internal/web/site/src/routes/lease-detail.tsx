@@ -1,8 +1,8 @@
 import { ArrowLeft } from 'lucide-react'
-import type { ReactNode } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { useState } from 'react'
 
-import { Button } from '@/components/controls'
+import { Button, controlClass } from '@/components/controls'
 import {
   Cell,
   HeadCell,
@@ -15,15 +15,30 @@ import {
 import { StatusPill } from '@/components/status-pill'
 import type {
   ConditionEntry,
+  ConditionStatus,
   LeaseDetailResponse,
+  LeaseExtendResponse,
   LeaseInstance,
   LeaseReleaseResponse,
   LeaseRequirements,
   LeaseSelection,
   MigrationWarning,
 } from '@/lib/api'
-import { deleteLease, fetchLease, leasePath, notFound, RequestFailed } from '@/lib/api'
+import {
+  badRequest,
+  conflict,
+  deleteLease,
+  extendLease,
+  fetchLease,
+  leasePath,
+  notFound,
+  RequestFailed,
+  unprocessable,
+} from '@/lib/api'
+import { minuteMs } from '@/lib/duration'
 import { errorFor } from '@/lib/errors'
+import { numberValue } from '@/lib/form'
+import type { Severity } from '@/lib/status'
 import {
   ConditionChip,
   Countdown,
@@ -45,7 +60,14 @@ import {
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
 import { leasesHref, navigate } from '@/routes/router'
-import { absent, formatInstant, formatRate, formatSpan } from '@/routes/units'
+import {
+  absent,
+  formatInstant,
+  formatRate,
+  formatSpan,
+  leaseMinutes,
+  secondsPerMinute,
+} from '@/routes/units'
 
 const conditionColumns = 5
 const instanceColumns = 7
@@ -62,14 +84,25 @@ function BackLink() {
   )
 }
 
-function ExpiryHero({ at, released }: { at: string | null; released: boolean }) {
+function ExpiryHero({
+  at,
+  released,
+  extension,
+}: {
+  at: string | null
+  released: boolean
+  extension: ReactNode
+}) {
   return (
-    <div className="text-right">
-      <div className="text-label-12 text-subtle">{released ? 'Expired' : 'Expires'}</div>
-      <Countdown at={at} size="hero" released={released} className="block" />
-      <div className="mt-tight text-label-12 text-subtle">
-        {at === null ? 'The controller has not accepted this lease yet.' : formatInstant(at)}
+    <div className="flex flex-col items-end gap-cell text-right">
+      <div>
+        <div className="text-label-12 text-subtle">{released ? 'Expired' : 'Expires'}</div>
+        <Countdown at={at} size="hero" released={released} className="block" />
+        <div className="mt-tight text-label-12 text-subtle">
+          {at === null ? 'The controller has not accepted this lease yet.' : formatInstant(at)}
+        </div>
       </div>
+      {extension}
     </div>
   )
 }
@@ -259,6 +292,26 @@ function SelectionPanel({
   )
 }
 
+function Prompt({
+  severity,
+  heading,
+  children,
+}: {
+  severity: Severity
+  heading: string
+  children: ReactNode
+}) {
+  return (
+    <div
+      data-severity={severity}
+      className="space-y-cell rounded-panel border border-tint-line bg-tint p-gutter"
+    >
+      <p className="text-label-14 font-emphasis text-tint-fg">{heading}</p>
+      {children}
+    </div>
+  )
+}
+
 function Confirmation({
   heading,
   confirmLabel,
@@ -279,11 +332,7 @@ function Confirmation({
   children: ReactNode
 }) {
   return (
-    <div
-      data-severity="attention"
-      className="space-y-cell rounded-panel border border-tint-line bg-tint p-gutter"
-    >
-      <p className="text-label-14 font-emphasis text-tint-fg">{heading}</p>
+    <Prompt severity="attention" heading={heading}>
       <p className="max-w-[70ch] text-copy-13 text-tint-fg/85">{children}</p>
       <div className="flex flex-wrap gap-snug">
         <Button type="button" tone="danger" onClick={onConfirm} disabled={pending}>
@@ -293,6 +342,204 @@ function Confirmation({
           {declineLabel}
         </Button>
       </div>
+    </Prompt>
+  )
+}
+
+const expiryClamped = 'ExpiryClamped'
+const extensionField = 'minutes'
+const extensionStepMinutes = 30
+
+const extensionTitles: Record<number, string> = {
+  [badRequest]: 'That is not a duration this interface can submit',
+  [conflict]: 'The lease changed while this extension was in flight',
+  [unprocessable]: 'The cluster refused this extension',
+}
+
+const extensionRefused = 'The lease was not extended'
+
+interface ExtensionBounds {
+  min: number
+  max: number
+  initial: number
+  ceiling: string
+}
+
+function conditionOf(conditions: ConditionEntry[], type: string): ConditionStatus | null {
+  return conditions.find((condition) => condition.type === type)?.status ?? null
+}
+
+function backstopMinutes(lease: LeaseDetailResponse): number | null {
+  if (lease.backstopAt === null || lease.acceptedAt === null) return null
+  const held = Date.parse(lease.backstopAt) - Date.parse(lease.acceptedAt)
+  return Number.isNaN(held) ? null : Math.floor(held / minuteMs)
+}
+
+function ceilingNote(lease: LeaseDetailResponse, backstop: number | null, max: number): string {
+  const longest = `Up to ${formatSpan(max * secondsPerMinute)}`
+  if (backstop !== null) {
+    return backstop < leaseMinutes.max
+      ? `${longest}, when the earliest leased machine destroys itself.`
+      : `${longest}, the longest a lease may run.`
+  }
+  if (conditionOf(lease.conditions, expiryClamped) === 'Unknown') {
+    return `${longest}. No leased machine records a lifetime backstop yet, and a deadline past one is held there.`
+  }
+  return `${longest}. This lease holds no machine yet, so nothing else caps the deadline.`
+}
+
+function extensionBounds(lease: LeaseDetailResponse): ExtensionBounds {
+  const held = Math.floor(lease.durationSeconds / secondsPerMinute)
+  const backstop = backstopMinutes(lease)
+  const max = backstop === null ? leaseMinutes.max : Math.min(leaseMinutes.max, backstop)
+  const min = Math.max(leaseMinutes.min, held + 1)
+
+  return {
+    min,
+    max,
+    initial: Math.min(max, Math.max(min, held + extensionStepMinutes)),
+    ceiling: ceilingNote(lease, backstop, max),
+  }
+}
+
+function refusalNotice(failure: Error): { severity: Severity; title: string } {
+  if (!(failure instanceof RequestFailed)) return { severity: 'danger', title: extensionRefused }
+  return {
+    // a raced write is the same request measured against a lease that has since moved, so it is worth retrying rather than reporting as a refusal
+    severity: failure.status === conflict ? 'attention' : 'danger',
+    title: extensionTitles[failure.status] ?? extensionRefused,
+  }
+}
+
+interface Extension {
+  asking: boolean
+  pending: boolean
+  failure: Error | null
+  answer: LeaseExtendResponse | null
+  ask: () => void
+  decline: () => void
+  submit: (minutes: number) => void
+}
+
+function useLeaseExtension(name: string, onExtended: () => void): Extension {
+  const [asking, setAsking] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [failure, setFailure] = useState<Error | null>(null)
+  const [answer, setAnswer] = useState<LeaseExtendResponse | null>(null)
+
+  const submit = async (minutes: number) => {
+    setPending(true)
+    setFailure(null)
+    try {
+      setAnswer(await extendLease(name, minutes * secondsPerMinute))
+      setAsking(false)
+      onExtended()
+    } catch (cause) {
+      setFailure(errorFor(cause))
+    }
+    setPending(false)
+  }
+
+  return {
+    asking,
+    pending,
+    failure,
+    answer,
+    ask: () => {
+      setAnswer(null)
+      setFailure(null)
+      setAsking(true)
+    },
+    decline: () => setAsking(false),
+    submit,
+  }
+}
+
+function ExtensionForm({
+  name,
+  bounds,
+  extension,
+}: {
+  name: string
+  bounds: ExtensionBounds
+  extension: Extension
+}) {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    extension.submit(numberValue(new FormData(event.currentTarget), extensionField))
+  }
+
+  return (
+    <Prompt severity="info" heading={`Extend ${name}`}>
+      <form onSubmit={submit} className="space-y-cell">
+        <p className="text-copy-13 text-tint-fg/85">
+          The deadline is derived from the moment the lease was accepted, so this is how long the
+          lease runs in total rather than the time added to it. {bounds.ceiling}
+        </p>
+        <span className="flex flex-wrap items-center gap-snug">
+          <input
+            name={extensionField}
+            type="number"
+            required
+            min={bounds.min}
+            max={bounds.max}
+            defaultValue={bounds.initial}
+            className={`${controlClass} w-[7rem]`}
+          />
+          <span className="text-label-13 text-tint-fg/85">minutes in total</span>
+        </span>
+        <div className="flex flex-wrap gap-snug">
+          <Button type="submit" tone="primary" disabled={extension.pending}>
+            {extension.pending ? 'Asking the controller' : 'Extend the lease'}
+          </Button>
+          <Button type="button" onClick={extension.decline} disabled={extension.pending}>
+            Keep the deadline
+          </Button>
+        </div>
+      </form>
+    </Prompt>
+  )
+}
+
+function ExtendControl({
+  lease,
+  onExtended,
+}: {
+  lease: LeaseDetailResponse
+  onExtended: () => void
+}) {
+  const name = lease.summary.name
+  const bounds = extensionBounds(lease)
+  const extension = useLeaseExtension(name, onExtended)
+
+  if (bounds.min > bounds.max) {
+    return (
+      <p className="max-w-[44ch] text-label-12 text-subtle">
+        {bounds.ceiling} Nothing longer is left to ask for.
+      </p>
+    )
+  }
+
+  return (
+    <div className="max-w-[32rem] space-y-cell text-left">
+      {extension.answer === null ? null : (
+        <Notice
+          severity="info"
+          title={`${name} now runs for ${formatSpan(extension.answer.durationSeconds)}`}
+        >
+          {extension.answer.detail}
+        </Notice>
+      )}
+      {extension.failure === null ? null : (
+        <Notice {...refusalNotice(extension.failure)}>{extension.failure.message}</Notice>
+      )}
+      {extension.asking ? (
+        <ExtensionForm name={name} bounds={bounds} extension={extension} />
+      ) : (
+        <Button type="button" onClick={extension.ask}>
+          Extend this lease
+        </Button>
+      )}
     </div>
   )
 }
@@ -581,6 +828,7 @@ export function LeaseDetailRoute({ name }: { name: string }) {
   const view = usePolled(() => fetchLease(name), leasePath(name))
   const summary = view.data?.summary ?? null
   const missing = view.error instanceof RequestFailed && view.error.status === notFound
+  const released = (summary?.releasedAt ?? null) !== null
 
   return (
     <>
@@ -598,7 +846,15 @@ export function LeaseDetailRoute({ name }: { name: string }) {
           missing ? undefined : (
             <>
               <PhaseChip phase={summary?.phase ?? null} />
-              <ExpiryHero at={summary?.expiresAt ?? null} released={(summary?.releasedAt ?? null) !== null} />
+              <ExpiryHero
+                at={summary?.expiresAt ?? null}
+                released={released}
+                extension={
+                  view.data === null || released ? null : (
+                    <ExtendControl lease={view.data} onExtended={view.reload} />
+                  )
+                }
+              />
             </>
           )
         }

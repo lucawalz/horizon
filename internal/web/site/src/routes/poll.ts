@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { secondMs } from '@/lib/duration'
 import { errorFor } from '@/lib/errors'
@@ -6,20 +6,25 @@ import { errorFor } from '@/lib/errors'
 // the countdown advances on its own, so the poll only has to observe phase transitions
 export const pollIntervalMs = 20 * secondMs
 
-export interface Polled<T> {
+interface Answer<T> {
   data: T | null
   error: Error | null
   settled: boolean
 }
 
-interface Held<T> extends Polled<T> {
+export interface Polled<T> extends Answer<T> {
+  reload: () => void
+}
+
+interface Held<T> extends Answer<T> {
   key: string
 }
 
-const pending: Polled<never> = { data: null, error: null, settled: false }
+const pending: Answer<never> = { data: null, error: null, settled: false }
 
 export function usePolled<T>(load: () => Promise<T>, key: string): Polled<T> {
   const [held, setHeld] = useState<Held<T>>(() => ({ ...pending, key }))
+  const [attempt, setAttempt] = useState(0)
   const latest = useRef(load)
 
   useEffect(() => {
@@ -52,8 +57,12 @@ export function usePolled<T>(load: () => Promise<T>, key: string): Polled<T> {
       live = false
       clearInterval(timer)
     }
-  }, [key])
+  }, [key, attempt])
 
+  // a mutation lands before the next interval, so the view that made it asks for the answer rather than waiting
+  const reload = useCallback(() => setAttempt((was) => was + 1), [])
   // a key that changed since the last answer has nothing to show yet, so the held one is not its result
-  return held.key === key ? held : pending
+  const answer = held.key === key ? held : pending
+
+  return { data: answer.data, error: answer.error, settled: answer.settled, reload }
 }

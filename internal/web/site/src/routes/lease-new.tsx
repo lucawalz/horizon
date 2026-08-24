@@ -13,7 +13,9 @@ import { leaseHref, navigate } from '@/routes/router'
 import {
   bytesFor,
   formatCount,
+  leaseMinutes,
   memoryUnits,
+  minutesPerHour,
   quantityFor,
   secondsPerMinute,
 } from '@/routes/units'
@@ -40,10 +42,9 @@ const requirementsMode = 'requirements'
 const sizeMode = 'size'
 const namespaceListId = 'workload-namespaces'
 
-const minutesPerHour = 60
 const replicaBounds = { min: 1, max: 8, initial: 2 }
 const coreBounds = { min: 1, max: 64, initial: 2 }
-const durationBounds = { min: 5, max: 8 * minutesPerHour, initial: minutesPerHour }
+const durationBounds = { ...leaseMinutes, initial: minutesPerHour }
 const graceBounds = { min: 0, max: 15 * secondsPerMinute, initial: 2 * secondsPerMinute }
 
 const architectures = ['x86', 'arm']

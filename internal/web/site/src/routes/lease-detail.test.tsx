@@ -2,15 +2,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { LeaseInstance, LeaseSelection, MigrationWarning } from '@/lib/api'
 import { interfaceHeader, leasePath } from '@/lib/api'
+import { hourMs, minuteMs } from '@/lib/duration'
 import { LeaseDetailRoute } from '@/routes/lease-detail'
 import { leaseHref, leasesHref } from '@/routes/router'
 import {
   buttonLabelled,
   click,
+  control,
+  fill,
   jsonResponse,
   leaseDetailBody,
   leaseSummary,
   mount,
+  send,
+  settle,
   stubFetchWith,
 } from '@/routes/test-support'
 
@@ -95,6 +100,166 @@ function stubLease(body: unknown) {
 function deletions(calls: [RequestInfo | URL, (RequestInit | undefined)?][]) {
   return calls.filter(([, init]) => init?.method === 'DELETE')
 }
+
+const extendLabel = 'Extend this lease'
+const askLabel = 'Extend the lease'
+const requestedMinutes = 180
+const accepted = {
+  name: leaseName,
+  durationSeconds: requestedMinutes * 60,
+  detail: 'the controller re-derives the deadline of this lease on its next pass',
+}
+
+interface Refusal {
+  status: number
+  severity: string
+  title: string
+  detail: string
+}
+
+const refusals: Refusal[] = [
+  {
+    status: 400,
+    severity: 'danger',
+    title: 'That is not a duration this interface can submit',
+    detail: '-1 is not a number of seconds a capacity lease can run for',
+  },
+  {
+    status: 409,
+    severity: 'attention',
+    title: 'The lease changed while this extension was in flight',
+    detail: '"batch-run" changed while this extension was in flight. reading the lease again',
+  },
+  {
+    status: 422,
+    severity: 'danger',
+    title: 'The cluster refused this extension',
+    detail: '"batch-run" already runs for 3h0m0s. this interface lengthens a lease',
+  },
+]
+
+function heroCountdown(container: HTMLElement): HTMLElement {
+  // the hero is the first instant the page renders, and the ramp it carries is what an extension has to move
+  return control<HTMLElement>(container, 'time')
+}
+
+function stubExtending(answer: () => Response) {
+  let expiresAt = new Date(Date.now() + 2 * minuteMs).toISOString()
+
+  return stubFetchWith((_input, init) => {
+    if (init?.method !== 'PATCH') {
+      return Promise.resolve(jsonResponse(leaseDetailBody({ summary: leaseSummary({ expiresAt }) })))
+    }
+    const reply = answer()
+    if (reply.ok) expiresAt = new Date(Date.now() + 2 * hourMs).toISOString()
+    return Promise.resolve(reply)
+  })
+}
+
+async function askToExtend(container: HTMLElement, minutes: number) {
+  await click(buttonLabelled(container, extendLabel))
+  await fill(control<HTMLInputElement>(container, 'input[name="minutes"]'), String(minutes))
+  await send(control<HTMLFormElement>(container, 'form'))
+  await settle()
+}
+
+function patches(calls: [RequestInfo | URL, (RequestInit | undefined)?][]) {
+  return calls.filter(([, init]) => init?.method === 'PATCH')
+}
+
+describe('extending a running lease', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('submits the total the form holds and lets the countdown ramp back down', async () => {
+    const respond = stubExtending(() => jsonResponse(accepted, 202))
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    expect(heroCountdown(view.container).dataset.severity).toBe('attention')
+    expect(patches(respond.mock.calls)).toHaveLength(0)
+
+    await askToExtend(view.container, requestedMinutes)
+
+    const [target, init] = patches(respond.mock.calls)[0]
+    expect(target).toBe(leasePath(leaseName))
+    expect(new Headers(init?.headers).get(interfaceHeader)).not.toBeNull()
+    expect(JSON.parse(String(init?.body))).toEqual({ durationSeconds: accepted.durationSeconds })
+    expect(heroCountdown(view.container).dataset.severity).toBe('neutral')
+    expect(view.container.textContent).toContain(accepted.detail)
+    expect(view.container.textContent).toContain('now runs for 3h')
+
+    await view.unmount()
+  })
+
+  it('offers the backstop a leased machine enforces as the ceiling', async () => {
+    stubFetchWith(() =>
+      Promise.resolve(
+        jsonResponse(
+          leaseDetailBody({
+            acceptedAt: '2026-08-21T11:00:00Z',
+            backstopAt: '2026-08-21T14:00:00Z',
+          }),
+        ),
+      ),
+    )
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    await click(buttonLabelled(view.container, extendLabel))
+    const minutes = control<HTMLInputElement>(view.container, 'input[name="minutes"]')
+    expect(minutes.max).toBe('180')
+    expect(view.container.textContent).toContain('Up to 3h, when the earliest leased machine')
+
+    await view.unmount()
+  })
+
+  it('says the ceiling is unknown while a leased machine has latched none', async () => {
+    stubFetchWith(() =>
+      Promise.resolve(
+        jsonResponse(
+          leaseDetailBody({
+            conditions: [
+              {
+                type: 'ExpiryClamped',
+                status: 'Unknown',
+                reason: 'BackstopUnknown',
+                message: 'no backstop is recorded',
+                lastTransitionTime: '2026-08-21T11:00:00Z',
+              },
+            ],
+          }),
+        ),
+      ),
+    )
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    await click(buttonLabelled(view.container, extendLabel))
+    expect(view.container.textContent).toContain('No leased machine records a lifetime backstop yet')
+
+    await view.unmount()
+  })
+
+  for (const refusal of refusals) {
+    it(`keeps the ${refusal.status} refusal distinct from the others`, async () => {
+      stubExtending(() =>
+        jsonResponse({ status: refusal.status, title: 'refused', detail: refusal.detail }, refusal.status),
+      )
+      const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+      await askToExtend(view.container, requestedMinutes)
+
+      const notice = control<HTMLElement>(
+        view.container,
+        `[role="status"][data-severity="${refusal.severity}"]`,
+      )
+      expect(notice.textContent).toContain(refusal.title)
+      expect(notice.textContent).toContain(refusal.detail)
+      expect(buttonLabelled(view.container, askLabel).textContent).toBe(askLabel)
+
+      await view.unmount()
+    })
+  }
+})
 
 describe('the lease detail', () => {
   afterEach(() => {

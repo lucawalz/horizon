@@ -7,7 +7,11 @@ const compactCeiling = 10
 const rateDigits = 4
 
 export const secondsPerMinute = 60
+export const minutesPerHour = 60
 const secondsPerHour = 60 * secondsPerMinute
+
+// the crd holds spec.duration between these through its own cel rule, so a control offering more only earns a refusal
+export const leaseMinutes = { min: 5, max: 8 * minutesPerHour }
 
 export const absent = 'not set'
 
