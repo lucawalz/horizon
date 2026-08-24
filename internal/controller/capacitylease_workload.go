@@ -94,7 +94,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	if cond == nil || cond.Reason != reasonPlacementRestored {
 		return ctrl.Result{}, nil
 	}
-	if r.now().Sub(cond.LastTransitionTime.Time) >= grace {
+	if r.remainingTeardownBudget(lease) <= 0 {
 		return ctrl.Result{}, nil
 	}
 

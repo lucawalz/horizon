@@ -41,7 +41,6 @@ func (r *CapacityLeaseReconciler) teardown(ctx context.Context, lease *v1alpha1.
 }
 
 func (r *CapacityLeaseReconciler) releaseInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider) (ctrl.Result, error) {
-	grace := teardownGrace(lease)
 	var records metricWrites
 	var blocking error
 
@@ -50,7 +49,8 @@ func (r *CapacityLeaseReconciler) releaseInstances(ctx context.Context, lease *v
 		if entry.Phase == v1alpha1.InstancePhaseReleased {
 			continue
 		}
-		err := r.releaseInstance(ctx, lease, prov, entry, grace, &records)
+		// each instance draws down the same teardown deadline, not a fresh grace of its own
+		err := r.releaseInstance(ctx, lease, prov, entry, r.remainingTeardownBudget(lease), &records)
 		switch {
 		case err == nil:
 		case errors.Is(err, errReleaseDegraded):
@@ -193,6 +193,17 @@ func teardownStart(lease *v1alpha1.CapacityLease) (time.Time, bool) {
 		}
 	}
 	return start, !start.IsZero()
+}
+
+func (r *CapacityLeaseReconciler) remainingTeardownBudget(lease *v1alpha1.CapacityLease) time.Duration {
+	grace := teardownGrace(lease)
+	start, due := teardownStart(lease)
+	if !due {
+		return grace
+	}
+	// clamp elapsed before subtracting so a stamp that reads ahead of now never inflates the remainder past grace
+	elapsed := max(r.now().Sub(start), 0)
+	return max(grace-elapsed, 0)
 }
 
 func (r *CapacityLeaseReconciler) instanceReleaseRecord(lease *v1alpha1.CapacityLease, entry v1alpha1.InstanceStatus, path metrics.Path) func() {

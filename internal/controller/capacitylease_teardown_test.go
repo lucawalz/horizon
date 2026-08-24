@@ -2,13 +2,18 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
@@ -473,31 +478,48 @@ func TestTeardownProceedsOnceTheWorkloadLeavesTheBurstNodes(t *testing.T) {
 }
 
 func TestTeardownProceedsAfterTheRestoreGraceElapsesWithTheWorkloadStillNotReady(t *testing.T) {
+	// this deadline is anchored on real deletion metadata stamped by envtest, so it is exercised
+	// with a real clock and a real sleep rather than the stub clock's Advance; a couple of seconds
+	// of headroom absorbs the API server's second-truncated deletion timestamp and normal call latency
+	const grace = 2 * time.Second
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
-		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
 	})
 	h.seedWorkload()
 	h.settle()
 	name := h.instanceName(0)
 	h.joinNode(name, true)
 	h.settle()
+	h.pinExpiresAtIntoTheRealFuture()
 
+	r := h.reconciler()
+	r.Clock = time.Now
 	h.deleteLease()
-	if _, err := h.reconcile(); err != nil {
+
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Name: h.name}}
+	if _, err := r.Reconcile(h.recordingLogs(), req); err != nil {
 		t.Fatalf("restore pass: %v", err)
 	}
 	h.seedPod("stuck", testWorkloadNS, name)
 
-	if _, err := h.reconcile(); err != nil {
+	if _, err := r.Reconcile(h.recordingLogs(), req); err != nil {
 		t.Fatalf("reconcile before the grace elapses: %v", err)
 	}
 	if got := len(h.providerInstances()); got != 1 {
 		t.Fatalf("provider holds %d instances before the grace elapses, want the release withheld", got)
 	}
 
-	h.clock.Advance(time.Minute + time.Second)
-	h.settle()
+	time.Sleep(2 * grace)
+	for range maxSettlePasses {
+		res, err := r.Reconcile(h.recordingLogs(), req)
+		if err != nil {
+			t.Fatalf("settle after the grace elapses: %v", err)
+		}
+		if res.IsZero() {
+			break
+		}
+	}
 
 	h.assertProviderEmpty()
 	if !h.leaseGone() {
@@ -630,5 +652,179 @@ func TestAReleaseConfirmedBeforeTeardownFellDueObservesZero(t *testing.T) {
 	}
 	if sum != 0 {
 		t.Errorf("a release confirmed before teardown fell due observed %v seconds, want 0", sum)
+	}
+}
+
+func blockEviction(kc *k8sfake.Clientset) {
+	kc.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() != "eviction" {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewTooManyRequests("pdb blocks eviction", 1)
+	})
+}
+
+func (h *harness) pinExpiresAtIntoTheRealFuture() {
+	h.t.Helper()
+	lease := h.lease()
+	lease.Status.ExpiresAt = &metav1.Time{Time: time.Now().Add(time.Hour)}
+	if err := h.api.Status().Update(h.t.Context(), lease); err != nil {
+		h.t.Fatalf("pin expiresAt into the real future: %v", err)
+	}
+}
+
+func TestTeardownBoundIsSharedAcrossReplicasNotMultipliedPerInstance(t *testing.T) {
+	const grace = 2 * time.Second
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Replicas = 3
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
+	})
+	h.settle()
+	names := [3]string{h.instanceName(0), h.instanceName(1), h.instanceName(2)}
+	for _, name := range names {
+		h.joinNode(name, true)
+	}
+	h.settle()
+	for i, name := range names {
+		h.seedPod(fmt.Sprintf("straggler-%d", i), testWorkloadNS, name)
+	}
+	blockEviction(h.kube)
+	// the stub clock's expiry sits weeks behind the real clock this test drives; move it out of the way
+	h.pinExpiresAtIntoTheRealFuture()
+
+	r := h.reconciler()
+	r.Clock = time.Now
+	h.deleteLease()
+
+	started := time.Now()
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Name: h.name}}
+	if _, err := r.Reconcile(h.recordingLogs(), req); err != nil {
+		t.Fatalf("teardown returned %v, want release to proceed despite blocked drains", err)
+	}
+	elapsed := time.Since(started)
+
+	if elapsed < 4*time.Second {
+		t.Fatalf("teardown finished in %s without any drain actually blocking, the test proves nothing", elapsed)
+	}
+	if elapsed >= 10*time.Second {
+		t.Errorf("teardown of 3 blocked drains took %s, want it bounded near one teardownGrace's real cost regardless of replica count", elapsed)
+	}
+	h.assertProviderEmpty()
+}
+
+func TestTheRestoreGateAndTheDrainDrawFromTheSameBudget(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
+	})
+	h.seedWorkload()
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.clock.Advance(testLeaseDuration + time.Millisecond)
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("expire and restore pass: %v", err)
+	}
+	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse)
+	h.seedPod("stuck", testWorkloadNS, name)
+
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("gate poll: %v", err)
+	}
+	if got := len(h.providerInstances()); got != 1 {
+		t.Fatalf("provider holds %d instances while the gate waits, want the release withheld", got)
+	}
+
+	h.clock.Advance(time.Minute)
+	if err := h.kube.CoreV1().Pods(testWorkloadNS).Delete(h.t.Context(), "stuck", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("remove stuck pod: %v", err)
+	}
+	h.seedPod("straggler", testWorkloadNS, name)
+
+	h.settle()
+
+	h.assertProviderEmpty()
+	if !h.podExists("straggler", testWorkloadNS) {
+		t.Error("the drain still ran after the restore gate alone spent nearly the whole teardown grace")
+	}
+}
+
+func TestASpentTeardownBudgetSkipsTheDrainAndReleasesAnyway(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
+	})
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+	h.seedPod("straggler", testWorkloadNS, name)
+
+	h.clock.Advance(testLeaseDuration + time.Minute + time.Second)
+	h.settle()
+
+	h.assertProviderEmpty()
+	if !h.podExists("straggler", testWorkloadNS) {
+		t.Error("a spent teardown budget still drained the node instead of skipping straight to release")
+	}
+}
+
+func TestATeardownAnchoredOnDeletionIsBoundedEvenBeforeExpiry(t *testing.T) {
+	const grace = 300 * time.Millisecond
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
+	})
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+	h.seedPod("straggler", testWorkloadNS, name)
+	h.pinExpiresAtIntoTheRealFuture()
+
+	r := h.reconciler()
+	r.Clock = time.Now
+	h.deleteLease()
+
+	// the lease's expiry is still an hour off; only the deletion anchor can bound this
+	time.Sleep(2 * grace)
+
+	req := ctrl.Request{NamespacedName: client.ObjectKey{Name: h.name}}
+	if _, err := r.Reconcile(h.recordingLogs(), req); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+
+	h.assertProviderEmpty()
+	if !h.podExists("straggler", testWorkloadNS) {
+		t.Error("a lease deleted long before its expiry still drained past its deletion-anchored deadline")
+	}
+}
+
+func TestRemainingTeardownBudgetNeverExceedsGraceOrGoesNegative(t *testing.T) {
+	const grace = time.Minute
+	anchor := testInstant
+
+	cases := []struct {
+		name string
+		now  time.Time
+		want time.Duration
+	}{
+		{"just became due", anchor, grace},
+		{"partway through the grace", anchor.Add(20 * time.Second), 40 * time.Second},
+		{"the grace has fully elapsed", anchor.Add(grace), 0},
+		{"far past the grace", anchor.Add(time.Hour), 0},
+		{"a stamp from another replica's clock reads ahead of now", anchor.Add(-time.Hour), grace},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lease := leaseFallingDue(nil, &metav1.Time{Time: anchor})
+			lease.Spec.TeardownGrace = &metav1.Duration{Duration: grace}
+			r := &CapacityLeaseReconciler{Clock: func() time.Time { return tc.now }}
+
+			if got := r.remainingTeardownBudget(lease); got != tc.want {
+				t.Errorf("remaining budget is %s, want %s", got, tc.want)
+			}
+		})
 	}
 }
