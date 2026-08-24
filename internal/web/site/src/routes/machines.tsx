@@ -109,7 +109,8 @@ function TypesTable({ types }: { types: MachineType[] }) {
       <TableBody>
         {types.length === 0 ? (
           <TableEmpty span={typeColumns}>
-            The provider answered with no instance type in this region.
+            The provider answered with no instance type in this region. Check the region code
+            against the provider, or try another one.
           </TableEmpty>
         ) : (
           types.map((type) => (
