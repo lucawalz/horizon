@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-22
+amended: 2026-08-24
 ---
 
 # 0027. Let the web interface create and release leases, behind a typed writer and a cross-origin guard
@@ -106,4 +107,4 @@ A lease name that no object could carry is refused locally with `400` rather tha
 
 ## Update 2026-08-24
 
-"The form carries no catalogue, because a local dashboard holds none" and "a local dashboard holds no catalogue at all" were both accurate the day this record was written: `horizon dashboard` was the only process serving the interface, and the catalogue lived in the controller's memory, reachable by nothing else. [0028](0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md) added `horizon serve` afterward and wired it to the same absent catalogue as `horizon dashboard`, without this record being revisited. The constraint above therefore now applies to both processes, and it holds regardless of where either one runs: the catalogue is held in the controller's own memory, behind a mutex, with no ConfigMap, Secret or other surface any other process can read. Making the Machines route work needs the catalogue published somewhere a reader outside the controller can reach, which is a separate piece of work.
+"The form carries no catalogue, because a local dashboard holds none" and "a local dashboard holds no catalogue at all" were both accurate the day this record was written: `horizon dashboard` was the only process serving the interface, and the catalogue lived in the controller's memory, reachable by nothing else. [0028](0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md) added `horizon serve` afterward and wired it to the same absent catalogue as `horizon dashboard`, without this record being revisited. Both statements above therefore now apply to `horizon serve` as much as to `horizon dashboard`, and they hold regardless of where either process runs: the catalogue is held in the controller's own memory, behind a mutex, with no ConfigMap, Secret or other surface any other process can read. Making the Machines route work needs the catalogue published somewhere a reader outside the controller can reach, which is a separate piece of work.
