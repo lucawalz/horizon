@@ -188,8 +188,8 @@ func publishableCatalogue(types []provider.InstanceType) ([]v1alpha1.InstanceTyp
 	return published[:v1alpha1.MaxPublishedInstanceTypes], true
 }
 
-// every field takes part, so the comparator is a total order and the published catalogue cannot alternate between passes
 func compareInstanceTypes(a, b v1alpha1.InstanceType) int {
+	// every field takes part, so the comparator is a total order and the published catalogue cannot alternate between passes
 	return cmp.Or(
 		cmp.Compare(a.Region, b.Region),
 		cmp.Compare(a.Name, b.Name),
