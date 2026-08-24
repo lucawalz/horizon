@@ -26,7 +26,7 @@ ui:
       - platform
 ```
 
-Every key in that example, and the rest of the `ui.*` set including the port, the service type, the resources and the security contexts, is described once in the [chart README](../charts/horizon/README.md#web-interface). That table is the single reference for what a value does and what it defaults to, and this document does not repeat it; what follows is what the values mean for an adopter putting the interface in front of an identity provider.
+Every key in that example, and the rest of the `ui.*` set including the port, the service type, the resources and the security contexts, is described once in the [chart README](../charts/horizon/README.md#web-interface). That table is the single reference for what a value does and what it defaults to. What follows is what the values mean for an adopter putting the interface in front of an identity provider.
 
 Two guards make a half-configured install fail early rather than serve. The chart refuses to render when `ui.enabled` is set and either OIDC value is empty, naming whichever is missing, and the command itself refuses to bind a routable address unless the issuer, the audience, the header and both claim names are all set. An interface that cannot verify a caller never reaches the point of listening.
 
@@ -118,7 +118,7 @@ The two lists are independent, and a list left empty leaves that resource unrest
 
 ## The security properties this rests on
 
-Stated plainly, so that an adopter can decide whether the arrangement is acceptable and what has to hold for it to stay so.
+The arrangement is acceptable only while every property below keeps holding.
 
 **The identity provider is the only thing that can vouch for an identity.** Tokens are verified against the key set the issuer publishes about itself, using asymmetric algorithms only. Nothing in front of the interface is trusted to assert who a caller is, and no header stating an identity is believed.
 
