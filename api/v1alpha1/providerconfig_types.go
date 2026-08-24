@@ -127,6 +127,9 @@ type ProviderConfigStatus struct {
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=512
 	InstanceTypes []InstanceType `json:"instanceTypes,omitempty"`
+
+	// +optional
+	CatalogueRefreshedAt *metav1.Time `json:"catalogueRefreshedAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -14,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/catalogue"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -29,12 +31,16 @@ const (
 	reasonCatalogueEmpty        = "Empty"
 )
 
+// rewriting the stamp no more than twice per refresh keeps replicas minutes apart from each writing their own
+const catalogueStampInterval = catalogue.RefreshInterval / 2
+
 const readyMessage = "the resolved configuration builds a provider, teardown is guaranteed and the provider answered the instance type query"
 
 type ProviderConfigPublisher struct {
 	client    client.Client
 	kube      kubernetes.Interface
 	namespace string
+	now       func() time.Time
 }
 
 func NewProviderConfigPublisher(api client.Client, kc kubernetes.Interface) (*ProviderConfigPublisher, error) {
@@ -42,7 +48,7 @@ func NewProviderConfigPublisher(api client.Client, kc kubernetes.Interface) (*Pr
 	if err != nil {
 		return nil, err
 	}
-	return &ProviderConfigPublisher{client: api, kube: kc, namespace: namespace}, nil
+	return &ProviderConfigPublisher{client: api, kube: kc, namespace: namespace, now: time.Now}, nil
 }
 
 func (p *ProviderConfigPublisher) Publish(
@@ -67,10 +73,11 @@ func (p *ProviderConfigPublisher) Publish(
 }
 
 type providerConfigStatus struct {
-	ready     metav1.Condition
-	published metav1.Condition
-	types     []v1alpha1.InstanceType
-	fetched   bool
+	ready       metav1.Condition
+	published   metav1.Condition
+	types       []v1alpha1.InstanceType
+	refreshedAt metav1.Time
+	fetched     bool
 }
 
 func (s providerConfigStatus) applyTo(live *v1alpha1.ProviderConfig) bool {
@@ -81,12 +88,23 @@ func (s providerConfigStatus) applyTo(live *v1alpha1.ProviderConfig) bool {
 	readyChanged := meta.SetStatusCondition(&live.Status.Conditions, s.ready)
 	publishedChanged := meta.SetStatusCondition(&live.Status.Conditions, s.published)
 
-	// a failed fetch keeps the last published catalogue rather than wiping a good one over a transient outage
+	// a failed or empty fetch keeps the last published catalogue rather than wiping a good one over a transient outage
 	typesChanged := s.fetched && !slices.Equal(live.Status.InstanceTypes, s.types)
 	if typesChanged {
 		live.Status.InstanceTypes = s.types
 	}
-	return readyChanged || publishedChanged || typesChanged
+	stampDue := s.stampDue(live.Status.CatalogueRefreshedAt)
+	if typesChanged || stampDue {
+		live.Status.CatalogueRefreshedAt = &s.refreshedAt
+	}
+	return readyChanged || publishedChanged || typesChanged || stampDue
+}
+
+func (s providerConfigStatus) stampDue(last *metav1.Time) bool {
+	if !s.fetched {
+		return false
+	}
+	return last == nil || !s.refreshedAt.Time.Before(last.Add(catalogueStampInterval))
 }
 
 func (p *ProviderConfigPublisher) resolve(
@@ -94,10 +112,11 @@ func (p *ProviderConfigPublisher) resolve(
 ) providerConfigStatus {
 	published, truncated := publishableCatalogue(types)
 	return providerConfigStatus{
-		ready:     p.readiness(ctx, cfg, fetchErr),
-		published: catalogueCondition(fetchErr, len(types), truncated),
-		types:     published,
-		fetched:   fetchErr == nil && len(types) > 0,
+		ready:       p.readiness(ctx, cfg, fetchErr),
+		published:   catalogueCondition(fetchErr, len(types), truncated),
+		types:       published,
+		refreshedAt: metav1.Time{Time: p.now()},
+		fetched:     fetchErr == nil && len(types) > 0,
 	}
 }
 

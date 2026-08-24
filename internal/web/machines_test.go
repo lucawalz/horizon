@@ -53,6 +53,12 @@ func configPublishing(name string, types ...v1alpha1.InstanceType) v1alpha1.Prov
 	}
 }
 
+func configRefreshedAt(name string, at time.Time) v1alpha1.ProviderConfig {
+	config := configPublishing(name, publishedType("cx22", "nbg1"))
+	config.Status.CatalogueRefreshedAt = &metav1.Time{Time: at}
+	return config
+}
+
 func TestMachinesListsTheProviderConfigs(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
@@ -237,8 +243,10 @@ func TestMachinesRendersTheOfferedTypes(t *testing.T) {
 func TestMachinesRendersTheTypesTheControllerPublished(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
 
+	fetched := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Second)
 	config := createProviderConfig(t, "hetzner")
 	config.Status.InstanceTypes = []v1alpha1.InstanceType{publishedType("cx22", "nbg1")}
+	config.Status.CatalogueRefreshedAt = &metav1.Time{Time: fetched}
 	if err := testEnv.Client.Status().Update(t.Context(), config); err != nil {
 		t.Fatalf("publish the catalogue: %v", err)
 	}
@@ -271,6 +279,9 @@ func TestMachinesRendersTheTypesTheControllerPublished(t *testing.T) {
 	if hourly.Amount != 0.0074 || hourly.Currency != "EUR" {
 		t.Errorf("hourlyRate = %+v, want 0.0074 EUR", hourly)
 	}
+	if refreshedAt := present(t, "refreshedAt", body.RefreshedAt); refreshedAt != fetched.Format(time.RFC3339) {
+		t.Errorf("refreshedAt = %q, want the published %q", refreshedAt, fetched.Format(time.RFC3339))
+	}
 }
 
 func TestMachinesReportsAClusterFailure(t *testing.T) {
@@ -290,9 +301,10 @@ func TestRefreshedReportsTheCatalogueFetchInstant(t *testing.T) {
 	fetched := now.Add(-30 * time.Minute)
 
 	for name, testCase := range map[string]struct {
-		types  catalogue.Reader
-		config string
-		want   *string
+		types   catalogue.Reader
+		configs []v1alpha1.ProviderConfig
+		config  string
+		want    *string
 	}{
 		"no selection": {types: stubCatalogue{age: 30 * time.Minute, filled: true}},
 		"never filled": {types: stubCatalogue{age: 30 * time.Minute}, config: "hetzner"},
@@ -300,11 +312,21 @@ func TestRefreshedReportsTheCatalogueFetchInstant(t *testing.T) {
 			types: stubCatalogue{age: 30 * time.Minute, filled: true}, config: "hetzner",
 			want: ptr(fetched.Format(time.RFC3339)),
 		},
+		"published": {
+			types:   AbsentCatalogue(),
+			configs: []v1alpha1.ProviderConfig{configRefreshedAt("hetzner", fetched)},
+			config:  "hetzner", want: ptr(fetched.Format(time.RFC3339)),
+		},
+		"published without a refresh time": {
+			types:   AbsentCatalogue(),
+			configs: []v1alpha1.ProviderConfig{configPublishing("hetzner", publishedType("cx22", "nbg1"))},
+			config:  "hetzner",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server := newTestServer(t, failingReader{err: errors.New("unused")}, testCase.types)
 
-			refreshedAt := server.refreshed(testCase.config, now)
+			refreshedAt := server.refreshed(testCase.configs, testCase.config, now)
 			if testCase.want == nil {
 				if refreshedAt != nil {
 					t.Errorf("refreshedAt = %q, want null for a catalogue that reports no fetch", *refreshedAt)

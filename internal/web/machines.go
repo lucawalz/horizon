@@ -124,19 +124,19 @@ func (s *Server) machineTypes(configs []v1alpha1.ProviderConfig, config, region 
 	if config == "" || region == "" {
 		return catalogueResult{state: stateNoSelection}
 	}
-	if published, filled := publishedCatalogue(configs, config); filled {
-		return offeredInRegion(published, region)
+	if named := configNamed(configs, config); named != nil && len(named.Status.InstanceTypes) > 0 {
+		return offeredInRegion(named.Status.InstanceTypes, region)
 	}
 	return s.cachedMachineTypes(config, region)
 }
 
-func publishedCatalogue(configs []v1alpha1.ProviderConfig, config string) ([]v1alpha1.InstanceType, bool) {
+func configNamed(configs []v1alpha1.ProviderConfig, name string) *v1alpha1.ProviderConfig {
 	for i := range configs {
-		if configs[i].Name == config {
-			return configs[i].Status.InstanceTypes, len(configs[i].Status.InstanceTypes) > 0
+		if configs[i].Name == name {
+			return &configs[i]
 		}
 	}
-	return nil, false
+	return nil
 }
 
 func offeredInRegion(published []v1alpha1.InstanceType, region string) catalogueResult {
@@ -196,9 +196,12 @@ func (s *Server) cachedMachineTypes(config, region string) catalogueResult {
 	return catalogueResult{types: types, state: stateListed}
 }
 
-func (s *Server) refreshed(config string, now time.Time) *string {
+func (s *Server) refreshed(configs []v1alpha1.ProviderConfig, config string, now time.Time) *string {
 	if config == "" {
 		return nil
+	}
+	if named := configNamed(configs, config); named != nil && named.Status.CatalogueRefreshedAt != nil {
+		return ptr(rfc3339(named.Status.CatalogueRefreshedAt.Time))
 	}
 	since, filled := s.catalogue.Age(config)
 	if !filled {
@@ -217,7 +220,7 @@ func (s *Server) newMachineCatalogueResponse(
 		Region:      region,
 		State:       found.state,
 		Detail:      found.detail,
-		RefreshedAt: s.refreshed(config, now),
+		RefreshedAt: s.refreshed(configs, config, now),
 		Types:       orEmpty(found.types),
 		ObservedAt:  rfc3339(now),
 	}

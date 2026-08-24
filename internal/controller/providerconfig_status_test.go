@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -39,10 +40,15 @@ func secretWith(name, key, value string) *corev1.Secret {
 }
 
 func newPublisher(api client.Client, secrets ...runtime.Object) *ProviderConfigPublisher {
+	return newPublisherWithClock(api, newStubClock(), secrets...)
+}
+
+func newPublisherWithClock(api client.Client, clock *stubClock, secrets ...runtime.Object) *ProviderConfigPublisher {
 	return &ProviderConfigPublisher{
 		client:    api,
 		kube:      k8sfake.NewSimpleClientset(secrets...),
 		namespace: publisherNamespace,
+		now:       clock.Now,
 	}
 }
 
@@ -313,6 +319,60 @@ func TestPublishTruncatesACatalogueBeyondTheCap(t *testing.T) {
 	}
 	assertConditionDetail(t, live, v1alpha1.ConditionCataloguePublished, metav1.ConditionFalse, reasonCatalogueTruncated)
 	assertConditionDetail(t, live, v1alpha1.ConditionReady, metav1.ConditionTrue, reasonProviderConfigReady)
+}
+
+func TestPublishStampsTheRefreshOncePerWindow(t *testing.T) {
+	api := apiServerClient(t)
+	config := guaranteedProviderConfig(objectName(t))
+	assertCreate(t, api, config, false)
+	clock := newStubClock()
+	publisher := newPublisherWithClock(api, clock, publisherSecrets()...)
+	fetched := []provider.InstanceType{fetchedType("cx22", "nbg1")}
+
+	if err := publisher.Publish(t.Context(), config, fetched, nil); err != nil {
+		t.Fatalf("first Publish: %v", err)
+	}
+	stamped := publishedConfig(t, api, config.Name)
+	if stamped.Status.CatalogueRefreshedAt == nil {
+		t.Fatal("the first publish recorded no refresh time")
+	}
+	if !stamped.Status.CatalogueRefreshedAt.Time.Equal(clock.Now()) {
+		t.Errorf("refresh time = %s, want %s", stamped.Status.CatalogueRefreshedAt.Time, clock.Now())
+	}
+
+	clock.Advance(catalogueStampInterval - time.Minute)
+	if err := publisher.Publish(t.Context(), config, fetched, nil); err != nil {
+		t.Fatalf("Publish inside the window: %v", err)
+	}
+	inside := publishedConfig(t, api, config.Name)
+	if inside.ResourceVersion != stamped.ResourceVersion {
+		t.Errorf("resourceVersion moved from %s to %s, want a refresh inside the window to write nothing",
+			stamped.ResourceVersion, inside.ResourceVersion)
+	}
+
+	clock.Advance(2 * time.Minute)
+	if err := publisher.Publish(t.Context(), config, fetched, nil); err != nil {
+		t.Fatalf("Publish beyond the window: %v", err)
+	}
+	beyond := publishedConfig(t, api, config.Name)
+	if !beyond.Status.CatalogueRefreshedAt.Time.Equal(clock.Now()) {
+		t.Errorf("refresh time = %s, want it to follow the clock to %s", beyond.Status.CatalogueRefreshedAt.Time, clock.Now())
+	}
+}
+
+func TestPublishRecordsNoRefreshTimeWhenTheFetchFails(t *testing.T) {
+	api := apiServerClient(t)
+	config := guaranteedProviderConfig(objectName(t))
+	assertCreate(t, api, config, false)
+	publisher := newPublisher(api, publisherSecrets()...)
+
+	if err := publisher.Publish(t.Context(), config, nil, errCatalogueFetch); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	if stamp := publishedConfig(t, api, config.Name).Status.CatalogueRefreshedAt; stamp != nil {
+		t.Errorf("refresh time = %s, want none for a fetch that never answered", stamp)
+	}
 }
 
 func TestPublishIgnoresAProviderConfigThatIsGone(t *testing.T) {
