@@ -147,6 +147,9 @@ type InstanceStatus struct {
 	CreatedAt *metav1.Time `json:"createdAt,omitempty"`
 
 	// +optional
+	BackstopAt *metav1.Time `json:"backstopAt,omitempty"`
+
+	// +optional
 	LastError string `json:"lastError,omitempty"`
 }
 

@@ -665,7 +665,7 @@ func adoptedEntry(t *testing.T, entry v1alpha1.InstanceStatus, observed provider
 
 	var records metricWrites
 	changed, err := (&CapacityLeaseReconciler{}).adoptObservedInstances(
-		t.Context(), lease, nil, []provider.Instance{observed}, &records)
+		t.Context(), lease, nil, testPolicy(testRenewInterval, testSlack), []provider.Instance{observed}, &records)
 	if err != nil {
 		t.Fatalf("adopt an observed instance: %v", err)
 	}

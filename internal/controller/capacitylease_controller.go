@@ -63,6 +63,7 @@ const (
 
 	reasonRequestedDuration    = "RequestedDuration"
 	reasonNodeLifetimeBackstop = "NodeLifetimeBackstop"
+	reasonBackstopUnknown      = "BackstopUnknown"
 
 	reasonUnsatisfiedRequirements = "UnsatisfiedRequirements"
 	reasonInstanceTypeSelected    = "InstanceTypeSelected"
@@ -130,7 +131,7 @@ func (r *CapacityLeaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.admit(ctx, lease, cfg, prov)
 	}
 
-	if err := r.refreshDeadline(ctx, lease, policy); err != nil {
+	if err := r.refreshDeadline(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -161,7 +162,7 @@ func (r *CapacityLeaseReconciler) reconcileCapacity(ctx context.Context, lease *
 	if err := r.reportWaitingForInstances(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
-	if res, err := r.reconcileInstances(ctx, lease, prov, degraded); err != nil || !res.IsZero() {
+	if res, err := r.reconcileInstances(ctx, lease, prov, policy, degraded); err != nil || !res.IsZero() {
 		return res, err
 	}
 	if res, err := r.reconcileNodes(ctx, lease, policy); err != nil || !res.IsZero() {
@@ -221,10 +222,10 @@ func (r *CapacityLeaseReconciler) rejectLease(ctx context.Context, lease *v1alph
 	return ctrl.Result{}, cause
 }
 
-func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy, attributed leaseAttribution, alsoRecord ...func()) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) acceptLease(ctx context.Context, lease *v1alpha1.CapacityLease, attributed leaseAttribution, alsoRecord ...func()) (ctrl.Result, error) {
 	accepted := r.now()
 	lease.Status.AcceptedAt = &metav1.Time{Time: accepted}
-	r.applyDeadline(lease, policy)
+	r.applyDeadline(lease)
 	unsized := lease.Status.InstanceType == ""
 	latchAttribution(lease, attributed)
 	r.setCondition(lease, v1alpha1.ConditionAccepted, metav1.ConditionTrue, reasonAccepted, "lease accepted and deadline recorded")

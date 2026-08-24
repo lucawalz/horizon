@@ -21,14 +21,14 @@ const (
 	nodeRegistrationTimeout = 15 * time.Minute
 )
 
-func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, degraded *degradation) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, policy v1alpha1.WatchdogPolicy, degraded *degradation) (ctrl.Result, error) {
 	observed, err := prov.List(ctx, leaseSelector(lease))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("list instances of lease %q: %w", lease.Name, err)
 	}
 
 	var records metricWrites
-	changed, err := r.adoptObservedInstances(ctx, lease, prov, observed, &records)
+	changed, err := r.adoptObservedInstances(ctx, lease, prov, policy, observed, &records)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -48,12 +48,12 @@ func (r *CapacityLeaseReconciler) reconcileInstances(ctx context.Context, lease 
 		return ctrl.Result{}, nil
 	}
 	if entry == nil || entry.Phase != v1alpha1.InstancePhaseIntended {
-		return r.recordIntent(ctx, lease, name, entry)
+		return r.recordIntent(ctx, lease, policy, name, entry)
 	}
-	return r.createInstance(ctx, lease, prov, entry)
+	return r.createInstance(ctx, lease, prov, policy, entry)
 }
 
-func (r *CapacityLeaseReconciler) adoptObservedInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, observed []provider.Instance, records *metricWrites) (bool, error) {
+func (r *CapacityLeaseReconciler) adoptObservedInstances(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, policy v1alpha1.WatchdogPolicy, observed []provider.Instance, records *metricWrites) (bool, error) {
 	unmatched := make(map[string]provider.Instance, len(observed))
 	for _, inst := range observed {
 		unmatched[inst.Name] = inst
@@ -74,6 +74,7 @@ func (r *CapacityLeaseReconciler) adoptObservedInstances(ctx context.Context, le
 			changed = changed || vanished
 		case entry.Phase == v1alpha1.InstancePhaseIntended || entry.Phase == v1alpha1.InstancePhaseReleased:
 			markCreated(entry, inst.ProviderID)
+			latchBackstop(entry, policy)
 			changed = true
 		case entry.ProviderID != inst.ProviderID:
 			entry.ProviderID = inst.ProviderID
@@ -83,12 +84,14 @@ func (r *CapacityLeaseReconciler) adoptObservedInstances(ctx context.Context, le
 
 	for _, name := range slices.Sorted(maps.Keys(unmatched)) {
 		inst := unmatched[name]
-		lease.Status.Instances = append(lease.Status.Instances, v1alpha1.InstanceStatus{
+		adopted := v1alpha1.InstanceStatus{
 			Name:       inst.Name,
 			ProviderID: inst.ProviderID,
 			Phase:      v1alpha1.InstancePhaseCreated,
 			CreatedAt:  &metav1.Time{Time: inst.CreatedAt},
-		})
+		}
+		latchBackstop(&adopted, policy)
+		lease.Status.Instances = append(lease.Status.Instances, adopted)
 		changed = true
 	}
 	return changed, nil
@@ -150,12 +153,13 @@ func findInstance(lease *v1alpha1.CapacityLease, name string) *v1alpha1.Instance
 	return nil
 }
 
-func (r *CapacityLeaseReconciler) recordIntent(ctx context.Context, lease *v1alpha1.CapacityLease, name string, entry *v1alpha1.InstanceStatus) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) recordIntent(ctx context.Context, lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy, name string, entry *v1alpha1.InstanceStatus) (ctrl.Result, error) {
 	intended := v1alpha1.InstanceStatus{
 		Name:      name,
 		Phase:     v1alpha1.InstancePhaseIntended,
 		CreatedAt: &metav1.Time{Time: r.now()},
 	}
+	latchBackstop(&intended, policy)
 	if entry == nil {
 		lease.Status.Instances = append(lease.Status.Instances, intended)
 	} else {
@@ -188,7 +192,7 @@ func markReleased(entry *v1alpha1.InstanceStatus) {
 	entry.Stage = ""
 }
 
-func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, entry *v1alpha1.InstanceStatus) (ctrl.Result, error) {
+func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1alpha1.CapacityLease, prov provider.Provider, policy v1alpha1.WatchdogPolicy, entry *v1alpha1.InstanceStatus) (ctrl.Result, error) {
 	inst, createErr := prov.Create(ctx, provider.CreateRequest{
 		Name:   entry.Name,
 		Region: lease.Spec.Region,
@@ -206,6 +210,7 @@ func (r *CapacityLeaseReconciler) createInstance(ctx context.Context, lease *v1a
 
 	markCreated(entry, inst.ProviderID)
 	entry.CreatedAt = &metav1.Time{Time: inst.CreatedAt}
+	latchBackstop(entry, policy)
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
