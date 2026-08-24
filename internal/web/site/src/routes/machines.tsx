@@ -30,6 +30,7 @@ const configField = 'config'
 const regionField = 'region'
 const readyCondition = 'Ready'
 const configColumns = 4
+const typeColumns = 8
 
 function Picker({
   configs,
@@ -46,6 +47,9 @@ function Picker({
     navigate(machinesHrefFor(fieldValue(form, configField), fieldValue(form, regionField)))
   }
 
+  // configs can still be loading when config is already known from the route, so its option is synthesised until the real one arrives
+  const configKnown = config === '' || configs.some((one) => one.name === config)
+
   return (
     <form
       onSubmit={submit}
@@ -55,11 +59,12 @@ function Picker({
         <span className="text-label-12 text-subtle">Provider config</span>
         <select
           name={configField}
-          defaultValue={config}
+          value={config}
           onChange={(event) => event.currentTarget.form?.requestSubmit()}
           className={controlClass}
         >
           <option value="">Choose a config</option>
+          {configKnown ? null : <option value={config}>{config}</option>}
           {configs.map((one) => (
             <option key={one.name} value={one.name}>
               {one.name}
@@ -70,6 +75,7 @@ function Picker({
       <label className="flex flex-col gap-tight">
         <span className="text-label-12 text-subtle">Region</span>
         <input
+          key={region}
           name={regionField}
           defaultValue={region}
           placeholder="nbg1"
@@ -101,33 +107,39 @@ function TypesTable({ types }: { types: MachineType[] }) {
         </Row>
       </TableHead>
       <TableBody>
-        {types.map((type) => (
-          <Row key={type.name} interactive className={type.deprecated ? 'opacity-60' : undefined}>
-            <Cell className="font-emphasis text-ink-strong">{type.name}</Cell>
-            <Cell numeric>{type.cpuCores}</Cell>
-            <Cell muted>{type.cpuType ?? absent}</Cell>
-            <Cell muted>{type.architecture ?? absent}</Cell>
-            <Cell numeric>{formatBytes(type.memoryBytes)}</Cell>
-            <Cell numeric>{formatBytes(type.diskBytes)}</Cell>
-            <Cell numeric>
-              {type.hourlyRate === null ? (
-                <span className="text-subtle">not quoted</span>
-              ) : (
-                formatRate(type.hourlyRate)
-              )}
-            </Cell>
-            <Cell>
-              <span className="flex flex-wrap items-center gap-tight">
-                <StatusPill severity={type.available ? 'success' : 'neutral'}>
-                  {type.available ? 'available' : 'sold out'}
-                </StatusPill>
-                {type.deprecated ? (
-                  <StatusPill severity="attention">deprecated</StatusPill>
-                ) : null}
-              </span>
-            </Cell>
-          </Row>
-        ))}
+        {types.length === 0 ? (
+          <TableEmpty span={typeColumns}>
+            The provider answered with no instance type in this region.
+          </TableEmpty>
+        ) : (
+          types.map((type) => (
+            <Row key={type.name} interactive className={type.deprecated ? 'opacity-60' : undefined}>
+              <Cell className="font-emphasis text-ink-strong">{type.name}</Cell>
+              <Cell numeric>{type.cpuCores}</Cell>
+              <Cell muted>{type.cpuType ?? absent}</Cell>
+              <Cell muted>{type.architecture ?? absent}</Cell>
+              <Cell numeric>{formatBytes(type.memoryBytes)}</Cell>
+              <Cell numeric>{formatBytes(type.diskBytes)}</Cell>
+              <Cell numeric>
+                {type.hourlyRate === null ? (
+                  <span className="text-subtle">not quoted</span>
+                ) : (
+                  formatRate(type.hourlyRate)
+                )}
+              </Cell>
+              <Cell>
+                <span className="flex flex-wrap items-center gap-tight">
+                  <StatusPill severity={type.available ? 'success' : 'neutral'}>
+                    {type.available ? 'available' : 'sold out'}
+                  </StatusPill>
+                  {type.deprecated ? (
+                    <StatusPill severity="attention">deprecated</StatusPill>
+                  ) : null}
+                </span>
+              </Cell>
+            </Row>
+          ))
+        )}
       </TableBody>
     </Table>
   )
@@ -256,12 +268,7 @@ export function MachinesRoute({ config, region }: { config: string; region: stri
             {view.error.message}
           </Notice>
         ) : null}
-        <Picker
-          key={`${config}/${region}`}
-          configs={knownConfigs.current}
-          config={config}
-          region={region}
-        />
+        <Picker configs={knownConfigs.current} config={config} region={region} />
         <MachinesBody view={view} />
       </div>
     </>

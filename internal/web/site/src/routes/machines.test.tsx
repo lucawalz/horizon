@@ -1,14 +1,17 @@
-import { act } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { MachineCatalogueResponse } from '@/lib/api'
 import { MachinesRoute } from '@/routes/machines'
+import { machinesHref } from '@/routes/router'
 import {
   control,
+  fill,
   jsonResponse,
   machinesBody,
   mount,
   providerConfigSummary,
+  send,
+  settle,
   stubFetchWith,
 } from '@/routes/test-support'
 
@@ -18,15 +21,15 @@ function catalogueWith(overrides: Partial<MachineCatalogueResponse> = {}): Machi
   return { ...machinesBody([hetzner]), ...overrides }
 }
 
-async function settle() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0))
-  })
+function pageHeader(container: HTMLElement): HTMLElement {
+  const heading = control<HTMLHeadingElement>(container, 'h1')
+  return heading.parentElement?.parentElement as HTMLElement
 }
 
 describe('the machines route', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    window.history.pushState(null, '', machinesHref)
   })
 
   it('shows what would fill the provider config table rather than a bare paragraph', async () => {
@@ -35,7 +38,7 @@ describe('the machines route', () => {
 
     expect(view.container.textContent).not.toContain('Provider configs')
     expect(view.container.textContent).toContain('The cluster holds no ProviderConfig')
-    expect(control<HTMLTableElement>(view.container, 'table')).toBeTruthy()
+    expect(view.container.querySelector('table')).not.toBeNull()
 
     await view.unmount()
   })
@@ -55,7 +58,7 @@ describe('the machines route', () => {
     await view.unmount()
   })
 
-  it('does not repeat the heading bar around the instance type table', async () => {
+  it('does not repeat the heading bar around the instance type table, and relocates the refreshed note', async () => {
     stubFetchWith(() =>
       Promise.resolve(
         jsonResponse(
@@ -72,8 +75,7 @@ describe('the machines route', () => {
     const view = await mount(<MachinesRoute config="hetzner" region="nbg1" />)
 
     expect(view.container.textContent).not.toContain('Instance types')
-    expect(view.container.textContent).toContain('Refreshed')
-    expect(control(view.container, 'thead th')).toBeTruthy()
+    expect(pageHeader(view.container).textContent).toContain('Refreshed')
 
     await view.unmount()
   })
@@ -94,7 +96,6 @@ describe('the machines route', () => {
 
     await view.render(<MachinesRoute config="hetzner" region="nbg1" />)
 
-    expect(control<HTMLFormElement>(view.container, 'form')).toBeTruthy()
     expect(control<HTMLSelectElement>(view.container, 'select[name="config"]').value).toBe('hetzner')
     expect(view.container.textContent).toContain('Reading the provider configs from the cluster.')
     expect(calls).toBe(2)
@@ -106,6 +107,48 @@ describe('the machines route', () => {
 
     expect(view.container.textContent).not.toContain('Reading the provider configs')
     expect(view.container.textContent).toContain('has not been filled for hetzner')
+
+    await view.unmount()
+  })
+
+  it('shows the deep-linked config immediately and keeps it once the catalogue loads', async () => {
+    const resolvers: ((value: Response) => void)[] = []
+    stubFetchWith(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push(resolve)
+        }),
+    )
+
+    const view = await mount(<MachinesRoute config="hetzner" region="nbg1" />)
+    const duringLoad = control<HTMLSelectElement>(view.container, 'select[name="config"]').value
+
+    resolvers[0](
+      jsonResponse(catalogueWith({ config: 'hetzner', region: 'nbg1', state: 'Listed', types: [] })),
+    )
+    await settle()
+    const afterLoad = control<HTMLSelectElement>(view.container, 'select[name="config"]').value
+
+    expect(duringLoad).toBe('hetzner')
+    expect(afterLoad).toBe('hetzner')
+
+    await view.unmount()
+  })
+
+  it('keeps the deep-linked config when only the region is resubmitted', async () => {
+    stubFetchWith(() =>
+      Promise.resolve(
+        jsonResponse(catalogueWith({ config: 'hetzner', region: 'nbg1', state: 'Listed', types: [] })),
+      ),
+    )
+    const view = await mount(<MachinesRoute config="hetzner" region="nbg1" />)
+
+    await fill(control<HTMLInputElement>(view.container, 'input[name="region"]'), 'fsn1')
+    await send(control<HTMLFormElement>(view.container, 'form'))
+
+    expect(window.location.pathname + window.location.search).toBe(
+      '/machines?config=hetzner&region=fsn1',
+    )
 
     await view.unmount()
   })

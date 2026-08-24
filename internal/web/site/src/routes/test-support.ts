@@ -113,6 +113,12 @@ export async function send(form: HTMLFormElement): Promise<void> {
   })
 }
 
+export async function settle(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+}
+
 export function leaseSummary(overrides: Partial<LeaseSummary> = {}): LeaseSummary {
   return {
     name: 'batch-run',
