@@ -7,7 +7,6 @@ import (
 	"regexp"
 
 	"github.com/lucawalz/horizon/internal/provider"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -126,11 +125,20 @@ func poolNodeAffinity(poolLabelValue string) *corev1.Affinity {
 }
 
 type workloadTarget struct {
-	name        string
-	annotations map[string]string
-	podSpec     *corev1.PodSpec
-	selector    labels.Selector
-	selfRolls   bool
+	name          string
+	annotations   map[string]string
+	podSpec       *corev1.PodSpec
+	selector      labels.Selector
+	rolloutReason string
+	disruptions   []string
+}
+
+func (t workloadTarget) selfRolls() bool {
+	return t.rolloutReason == ""
+}
+
+func workloadRef(kind, name string) string {
+	return kind + "/" + name
 }
 
 func workloadSelector(kind, name string, sel *metav1.LabelSelector) (labels.Selector, error) {
@@ -142,17 +150,6 @@ func workloadSelector(kind, name string, sel *metav1.LabelSelector) (labels.Sele
 		return nil, fmt.Errorf("selector for %s %q: %w", kind, name, err)
 	}
 	return selector, nil
-}
-
-func statefulSetRollsOnItsOwn(strategy appsv1.StatefulSetUpdateStrategy) bool {
-	if strategy.Type == appsv1.OnDeleteStatefulSetStrategyType {
-		return false
-	}
-	rollingUpdate := strategy.RollingUpdate
-	if rollingUpdate != nil && rollingUpdate.Partition != nil && *rollingUpdate.Partition != 0 {
-		return false
-	}
-	return true
 }
 
 type workloadClient struct {
@@ -184,11 +181,12 @@ func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient 
 					return nil, err
 				}
 				targets = append(targets, workloadTarget{
-					name:        item.Name,
-					annotations: item.Annotations,
-					podSpec:     &item.Spec.Template.Spec,
-					selector:    selector,
-					selfRolls:   !item.Spec.Paused,
+					name:          item.Name,
+					annotations:   item.Annotations,
+					podSpec:       &item.Spec.Template.Spec,
+					selector:      selector,
+					rolloutReason: deploymentRolloutReason(item.Spec),
+					disruptions:   deploymentDisruptions(item.Spec),
 				})
 			}
 			return targets, nil
@@ -218,11 +216,12 @@ func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient
 					return nil, err
 				}
 				targets = append(targets, workloadTarget{
-					name:        item.Name,
-					annotations: item.Annotations,
-					podSpec:     &item.Spec.Template.Spec,
-					selector:    selector,
-					selfRolls:   statefulSetRollsOnItsOwn(item.Spec.UpdateStrategy),
+					name:          item.Name,
+					annotations:   item.Annotations,
+					podSpec:       &item.Spec.Template.Spec,
+					selector:      selector,
+					rolloutReason: statefulSetRolloutReason(item.Spec.UpdateStrategy),
+					disruptions:   statefulSetDisruptions(item.Spec),
 				})
 			}
 			return targets, nil
@@ -292,11 +291,11 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, affinity *corev1.A
 				return onBurst, patched, selectors, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
 			}
 			patched = true
-			if t.selfRolls {
+			if t.selfRolls() {
 				selectors = append(selectors, t.selector)
 			}
 		}
-		onBurst = append(onBurst, wc.kind+"/"+t.name)
+		onBurst = append(onBurst, workloadRef(wc.kind, t.name))
 	}
 	return onBurst, patched, selectors, nil
 }
@@ -434,8 +433,8 @@ func restoreWorkloads(ctx context.Context, wc workloadClient) ([]string, []label
 			recordFirst(&firstErr, fmt.Errorf("restore-placement: patch %s %q: %w", wc.kind, t.name, err))
 			continue
 		}
-		restored = append(restored, wc.kind+"/"+t.name)
-		if t.selfRolls {
+		restored = append(restored, workloadRef(wc.kind, t.name))
+		if t.selfRolls() {
 			selectors = append(selectors, t.selector)
 		}
 	}
