@@ -1,6 +1,6 @@
 # Serving the web interface in a cluster
 
-`horizon serve` serves the same web interface as `horizon dashboard`, on a routable address instead of loopback, for a team rather than for one operator at one terminal. The two modes differ in who is trusted and how. The local dashboard trusts whoever reaches the socket, because on loopback that is the person whose kubeconfig it is already spending. The served mode trusts nobody by default: it verifies a signed token on every request, impersonates the identity that token names, and lets the cluster's own RBAC decide what happens next.
+`horizon serve` and `horizon dashboard` serve the same web interface and differ in who is trusted and how. The local dashboard trusts whoever reaches the socket, because on loopback that is the person whose kubeconfig it is already spending. `horizon serve` binds a routable address and trusts nobody by default: it verifies a signed token on every request, impersonates the identity that token names, and lets the cluster's own RBAC decide what happens next.
 
 The chart ships the mode off. Enabling it is a deliberate step, and it cannot be taken without configuring an identity provider first. The reasoning behind every choice described here is recorded in [ADR 0028](adr/0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md), and the cross-origin guard it inherits is recorded in [ADR 0027](adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md).
 
@@ -31,6 +31,8 @@ Every key in that example, and the rest of the `ui.*` set including the port, th
 Two guards make a half-configured install fail early rather than serve. The chart refuses to render when `ui.enabled` is set and either OIDC value is empty, naming whichever is missing, and the command itself refuses to bind a routable address unless the issuer, the audience, the header and both claim names are all set. An interface that cannot verify a caller never reaches the point of listening.
 
 Startup also proves the key set is usable rather than assuming it. The command fetches the address the discovery document names and requires at least one asymmetric public key in it, so an unreachable key set and an empty one both stop the process with an error naming the issuer and the address it read. Without that fetch the key set is first read on the first request, which turns either fault into a healthy pod answering `401` to everything.
+
+Every one of these settings is a process argument rather than a cluster object. Whoever can write a custom resource cannot repoint the issuer, so authentication never collapses into write access on an object, and changing who is trusted means changing the deployment.
 
 The interface pod needs egress to the apiserver and to the identity provider. The chart templates no egress rule, because neither address is knowable at packaging time and a rule built on a guess would fail closed on a path the chart cannot verify. Under a default-deny egress policy that rule has to be written by hand, and the symptom of forgetting it is a pod that starts, fails discovery, and never serves.
 
@@ -115,24 +117,6 @@ ui:
 ```
 
 The two lists are independent, and a list left empty leaves that resource unrestricted. Narrowing both is strongly recommended in production. Where identities are managed by group, listing the groups and leaving the user list empty still permits impersonation of any username, so both lists matter.
-
-## The security properties this rests on
-
-The arrangement is acceptable only while every property below keeps holding.
-
-**The identity provider is the only thing that can vouch for an identity.** Tokens are verified against the key set the issuer publishes about itself, using asymmetric algorithms only. Nothing in front of the interface is trusted to assert who a caller is, and no header stating an identity is believed.
-
-**The cluster decides what a caller may do, not horizon.** Authorisation is impersonation and nothing else. There is no permission model inside the application to get wrong, no allowlist to keep in step with the cluster, and no path by which a caller reaches more than their own RBAC grants.
-
-**The interface has no privileges of its own.** Its ServiceAccount holds `impersonate` and nothing further. It cannot read a lease, create one, or touch a node under its own name. The controller's account never gains `impersonate`, the two accounts are separate, and the chart refuses to render if they collide.
-
-**The impersonation permission is the boundary to audit.** Everything above rests on the interface being able to impersonate only intended identities. Narrowing `resourceNames` is what turns a compromise of the pod into a bounded problem rather than a cluster takeover.
-
-**A mutation has to come from the configured origin.** The cross-origin guard is anchored to `ui.externalOrigin`, a process argument no request can move, and it also requires a header the interface sets on its own calls plus `Sec-Fetch-Site: same-origin`. No CORS header is served by anything, which is what makes a cross-origin preflight fail.
-
-**Authentication settings are process arguments, not cluster objects.** Whoever can write a custom resource cannot repoint the issuer, so authentication cannot be collapsed into write access on an object. Changing who is trusted means changing the deployment.
-
-**The network policy is a second line and not the first.** Restricting ingress to the proxy namespace reduces exposure, but the token verification does not depend on it. A request arriving from anywhere else is still refused for want of a valid token.
 
 ## Reading a refusal
 
