@@ -40,6 +40,21 @@ describe('the machines route', () => {
     await view.unmount()
   })
 
+  it('blames the wiring rather than where the interface runs for an absent catalogue', async () => {
+    stubFetchWith(() =>
+      Promise.resolve(
+        jsonResponse(catalogueWith({ config: 'hetzner', region: 'nbg1', state: 'CatalogueAbsent' })),
+      ),
+    )
+    const view = await mount(<MachinesRoute config="hetzner" region="nbg1" />)
+
+    const shown = view.container.textContent ?? ''
+    expect(shown).toContain('cached in memory by the horizon controller process')
+    expect(shown).not.toContain('started outside')
+
+    await view.unmount()
+  })
+
   it('does not repeat the heading bar around the instance type table', async () => {
     stubFetchWith(() =>
       Promise.resolve(

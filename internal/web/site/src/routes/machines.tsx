@@ -184,10 +184,9 @@ function Catalogue({ answer }: { answer: MachineCatalogueResponse }) {
     case 'CatalogueAbsent':
       return (
         <EmptyState title="This process holds no catalogue">
-          Instance types are fetched and cached by the horizon controller running inside the
-          cluster. A dashboard started outside the controller reads the cluster directly and keeps
-          no copy of that cache, so there is nothing local to list. Lease phases and expiry are
-          unaffected.
+          Instance types are fetched and cached in memory by the horizon controller process. The
+          interface runs as a separate process and keeps no copy of that cache, wherever it runs,
+          so there is nothing here to list. Lease phases and expiry are unaffected.
         </EmptyState>
       )
     case 'CatalogueUnfilled':
