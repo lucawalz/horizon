@@ -44,8 +44,6 @@ See [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) for the
 
 Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. See [Node join contract](#node-join-contract) for how a node identifies itself once it joins.
 
-When a lease names a workload namespace, horizon rewrites the affinity of each Deployment and StatefulSet in it to target the reserved pool and adds the matching toleration, then restores the original placement during teardown.
-
 ```mermaid
 flowchart LR
   lease[CapacityLease] --> controller[horizon controller]
@@ -73,8 +71,6 @@ horizon installs as a Helm chart into an existing cluster. Nothing else is deplo
 
 ### Requirements
 
-Hard requirements:
-
 - A Kubernetes cluster at 1.29 or newer, and permission to install cluster-scoped custom resource definitions and RBAC into it.
 - A Hetzner Cloud API token and a cloud-init that joins the cluster and applies the `horizon.dev/pool=reserved` node label, each stored in a Secret in the controller's namespace. `horizon cloud-init` generates the second; see [docs/usage.md](docs/usage.md).
 - A delete-capable Hetzner Cloud API token for the leased machines, stored in a Secret in the controller's namespace and named by `nodeCredentialSecretRef`. Hetzner cannot stop billing by self-terminating, so no lease is accepted while that reference is unset.
@@ -96,7 +92,7 @@ That resolves against the latest published chart. A checkout installs the workin
 helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
 ```
 
-The chart templates the controller Deployment, its ServiceAccount, a ClusterRole and binding for the cluster-scoped work, a namespaced Role and binding for leader election and Secret reads, a Service, and the two custom resource definitions. See [`charts/horizon/README.md`](charts/horizon/README.md) for every value and for why the definitions live in `crds/` rather than `templates/`.
+[`charts/horizon/README.md`](charts/horizon/README.md) carries every value, what else the chart templates, and why the definitions live in `crds/` rather than `templates/`.
 
 Building from source needs Go 1.26 or newer:
 
@@ -159,8 +155,6 @@ horizon dashboard
 
 That credential is the whole of its authentication, so the listener binds `127.0.0.1` and nothing else; only the port is a flag. The interface lists leases with a countdown that ticks in the browser rather than on the network, and opens each lease onto its reservation, timeline, conditions, instances and migrated workloads. It creates a lease from a form and releases one by deleting it. What it shows and how mutation is guarded is in [docs/usage.md](docs/usage.md#web-interface); the reasoning is in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md) and [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md).
 
-### Serving the interface in a cluster
-
 `horizon serve` serves the same interface on a routable address, for a team rather than for one operator at one terminal:
 
 ```
@@ -192,7 +186,7 @@ The image is distroless and runs as uid 65532. The archive binaries and the imag
 
 Bug reports, feature requests and questions all go to the [issue tracker](https://github.com/lucawalz/horizon/issues). Two templates are offered, [bug report](.github/ISSUE_TEMPLATE/bug_report.md) and [feature request](.github/ISSUE_TEMPLATE/feature_request.md), and filling one in saves a round trip. There is no chat room and no mailing list.
 
-A refusal from the in-cluster interface, `401`, `403` or `501`, is decoded in [docs/serving-the-interface.md](docs/serving-the-interface.md#reading-a-refusal). A lease that reaches `Provisioning` and stays there is a known gap: `InstancesReady` reports a count and does not separate a machine still booting from one that will never join, so the lease conditions do not say which it is.
+A refusal from the in-cluster interface, `401`, `403` or `501`, is decoded in [docs/serving-the-interface.md](docs/serving-the-interface.md#reading-a-refusal).
 
 A suspected vulnerability is the one thing that does not belong in a public issue.
 
@@ -228,8 +222,6 @@ The cluster horizon was written against is [bedrock](https://github.com/lucawalz
 ## License
 
 Released under the MIT License, Copyright (c) 2026 Luca Walz. The full text is in [LICENSE](LICENSE).
-
-It permits use, copying, modification, merging, publication, distribution, sublicensing and sale, commercially included, on the single condition that the copyright notice and the licence text travel with the software or a substantial portion of it. The software is provided as is, and the licence disclaims every warranty and all liability.
 
 ## Project status
 
