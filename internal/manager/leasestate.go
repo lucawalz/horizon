@@ -30,6 +30,7 @@ var countedConditions = map[string]bool{
 	v1alpha1.ConditionInstancesReady:   true,
 	v1alpha1.ConditionWatchdogArmed:    true,
 	v1alpha1.ConditionWorkloadMigrated: true,
+	v1alpha1.ConditionExpiryClamped:    true,
 	v1alpha1.ConditionExpired:          true,
 	v1alpha1.ConditionReleased:         true,
 	v1alpha1.ConditionDegraded:         true,
