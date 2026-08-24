@@ -201,6 +201,83 @@ func TestMigrateEviction(t *testing.T) {
 	}
 }
 
+func TestMigrateLeavesDeploymentPodsToItsRollout(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+		},
+	}
+	matched := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
+	matched.Labels = map[string]string{"app": "web"}
+	unmatched := makePod("other-pod", testNS, "homelab-1", corev1.PodRunning)
+
+	kc := fake.NewSimpleClientset(node, dep, matched, unmatched)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	evicted := evictionNames(kc)
+	if len(evicted) != 1 || evicted[0] != "other-pod" {
+		t.Errorf("evicted = %v, want [other-pod]: the deployment's own pod belongs to its rollout", evicted)
+	}
+}
+
+func TestMigrateLeavesStatefulSetPodsToItsRollout(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
+		Spec: appsv1.StatefulSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db"}},
+		},
+	}
+	matched := makePod("sts1-0", testNS, "homelab-1", corev1.PodRunning)
+	matched.Labels = map[string]string{"app": "db"}
+
+	kc := fake.NewSimpleClientset(node, sts, matched)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if evicted := evictionNames(kc); len(evicted) != 0 {
+		t.Errorf("evicted = %v, want none: the statefulset's own pod belongs to its rollout", evicted)
+	}
+}
+
+func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "app",
+			Namespace:   testNS,
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
+			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+		},
+	}
+	matched := makePod("app-pod", testNS, "burst-1", corev1.PodRunning)
+	matched.Labels = map[string]string{"app": "web"}
+	unmatched := makePod("other-pod", testNS, "burst-1", corev1.PodRunning)
+
+	kc := fake.NewSimpleClientset(dep, matched, unmatched)
+	evictAndDelete(kc)
+
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+
+	evicted := evictionNames(kc)
+	if len(evicted) != 1 || evicted[0] != "other-pod" {
+		t.Errorf("evicted = %v, want [other-pod]: the deployment's own pod belongs to its rollout", evicted)
+	}
+}
+
 func TestMigrateDoesNotRelabelNode(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
 	kc := fake.NewSimpleClientset(node)
