@@ -92,7 +92,7 @@ func TestADeadlineBeyondTheNodeBackstopIsHeldAtTheBackstop(t *testing.T) {
 	if created == nil {
 		t.Fatal("the instance carries no creation instant to anchor the backstop on")
 	}
-	if want := created.Time.Add(shortMaxLifetime); !h.latchedBackstop(name).Equal(want) {
+	if want := created.Add(shortMaxLifetime); !h.latchedBackstop(name).Equal(want) {
 		t.Errorf("the instance latched %s, want its creation plus maxLifetime %s", h.latchedBackstop(name), want)
 	}
 	if !h.deadline().Equal(h.latchedBackstop(name)) {
@@ -195,7 +195,7 @@ func TestALeaseWhoseDurationNeverChangesKeepsItsAcceptedDeadline(t *testing.T) {
 		t.Fatal("the lease was never accepted")
 	}
 	deadline := h.deadline()
-	if want := accepted.Time.Add(testLeaseDuration); !deadline.Equal(want) {
+	if want := accepted.Add(testLeaseDuration); !deadline.Equal(want) {
 		t.Fatalf("deadline is %s, want acceptance plus the requested duration %s", deadline, want)
 	}
 	h.assertCondition(v1alpha1.ConditionExpiryClamped, metav1.ConditionFalse)

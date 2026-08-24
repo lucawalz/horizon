@@ -22,11 +22,11 @@ func latchBackstop(entry *v1alpha1.InstanceStatus, policy v1alpha1.WatchdogPolic
 	if entry.BackstopAt != nil || entry.CreatedAt.IsZero() || policy.MaxLifetime.Duration <= 0 {
 		return
 	}
-	entry.BackstopAt = &metav1.Time{Time: wholeSeconds(entry.CreatedAt.Time.Add(policy.MaxLifetime.Duration))}
+	entry.BackstopAt = &metav1.Time{Time: wholeSeconds(entry.CreatedAt.Add(policy.MaxLifetime.Duration))}
 }
 
 func deriveDeadline(lease *v1alpha1.CapacityLease) leaseDeadline {
-	requested := wholeSeconds(lease.Status.AcceptedAt.Time.Add(lease.Spec.Duration.Duration))
+	requested := wholeSeconds(lease.Status.AcceptedAt.Add(lease.Spec.Duration.Duration))
 	backstop := lease.Status.LifetimeBackstop()
 	switch {
 	case backstop != nil && backstop.Time.Before(requested):
