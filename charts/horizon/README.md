@@ -35,6 +35,8 @@ kubectl apply -f charts/horizon/crds/
 
 ## Values
 
+Every key below is set with `--set` or a values file, and the default column is what `values.yaml` ships.
+
 ### Image
 
 | Key | Default | Description |
@@ -59,14 +61,12 @@ kubectl apply -f charts/horizon/crds/
 
 The Deployment uses the `Recreate` strategy rather than a rolling update, and that is not configurable. The controller writes lease status with a full update, so a replica running the older image would strip any status field its own types do not carry. Recreate stops the old pod before the new one starts, so the two never write the same lease.
 
-Upgrading an existing release across the change of strategy needs one manual step, which a fresh install does not. Releases before 0.8.0 left the strategy unset, so the API server defaulted it to `RollingUpdate` and wrote a `strategy.rollingUpdate` block that no field manager owned. Server-side apply does not prune a defaulted field it never owned, so the upgrade to 0.8.0 was rejected for holding `rollingUpdate` alongside `type: Recreate`. Clearing the stale block and setting the new type in the same merge patch resolves it:
+A release installed before 0.8.0 left the strategy unset, so the API server defaulted a `strategy.rollingUpdate` block that no field manager owned and server-side apply cannot prune. The upgrade is rejected for holding `rollingUpdate` alongside `type: Recreate` until the stale block and the new type are set in one merge patch:
 
 ```
 kubectl patch deployment horizon --namespace horizon-system --type merge \
   -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
 ```
-
-The patch is needed once, on releases installed before 0.8.0. A release installed at 0.8.0 or later never carries the defaulted block.
 
 ### Networking
 
@@ -136,22 +136,9 @@ The NetworkPolicy restricts ingress only. It selects the interface pods by `app.
 
 #### Identity separation
 
-The interface runs under its own ServiceAccount, and that account is the only subject of the only role in the chart that grants `impersonate`. That verb is the whole of the interface's own authorisation: it reads and writes nothing under its own name. Every request it serves is made as the identity the token named, and the apiserver applies that identity's permissions to it.
+The interface runs under its own ServiceAccount, and that account is the only subject of the only role in this chart that grants `impersonate`. The controller ClusterRole is untouched by `ui.enabled` and never gains it, so neither role widens the other. The chart refuses to render when `ui.serviceAccount.name` resolves to the controller account, because one shared identity would hand the controller impersonation and hand the interface the permission to delete nodes.
 
-The controller ClusterRole is untouched by `ui.enabled` and never gains `impersonate`. The two workloads hold separate accounts with separate bindings, so neither role widens the other. The chart also refuses to render when `ui.serviceAccount.name` resolves to the controller account, because one shared identity would hand the controller impersonation and hand the interface the permission to delete nodes.
-
-Unrestricted, `impersonate` on `users` and `groups` lets the interface act as any identity in the cluster, including a cluster administrator, which makes the interface pod the most valuable target in the namespace. Restricting it in production is strongly advised. `ui.rbac.impersonateUsers` and `ui.rbac.impersonateGroups` become the `resourceNames` of the `users` rule and the `groups` rule respectively, so only the listed names may be impersonated:
-
-```
-ui:
-  rbac:
-    impersonateUsers:
-      - alice@example.com
-    impersonateGroups:
-      - platform
-```
-
-Each list is independent, and a list left empty leaves that resource unrestricted. The default is both lists empty, because the set of names is rarely known before install, and a chart that refused to render without them could not be installed at all.
+Why `ui.rbac.impersonateUsers` and `ui.rbac.impersonateGroups` matter, and why leaving both empty is not a production value, is in [docs/serving-the-interface.md](../../docs/serving-the-interface.md#narrow-the-impersonation-permission).
 
 ### Permissions
 
