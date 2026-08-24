@@ -44,6 +44,8 @@ See [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) for the
 
 Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. See [Node join contract](#node-join-contract) for how a node identifies itself once it joins.
 
+The operator writes back to `ProviderConfig.status`. A `Ready` condition says whether the config can serve a lease, and it is false with a named reason when a referenced Secret does not resolve, when nothing guarantees teardown, when the resolved configuration cannot build a provider, or when the provider answers with no instance type at all. Readiness runs the same provider build the first lease runs, so a cloud-init that resolves but carries no pool label is reported here rather than passing and failing at admission. A `CataloguePublished` condition says whether the list in status is the whole list, and `status.instanceTypes` carries the types the provider offered at the last refresh, so the interface lists them wherever it runs rather than only inside the controller process. Status is written only when its content changes.
+
 ```mermaid
 flowchart LR
   lease[CapacityLease] --> controller[horizon controller]
@@ -199,7 +201,6 @@ Report a suspected vulnerability privately, through the "Report a vulnerability"
 ## Roadmap
 
 - Provider credential writing from the interface. Lease creation and release have landed. Writing a `ProviderConfig` and the Secrets behind it is the half of the mutating surface that stays unbuilt, so configuring a provider is still a `kubectl` job.
-- `ProviderConfig` status conditions. The status subresource exists on the type and stays empty, so a misconfigured provider is diagnosed from a lease's conditions rather than from the object that is actually wrong.
 - A better answer for a node that never joins. `InstancesReady` reports a count and does not separate a machine still booting from one that booted a quarter of an hour ago and is never going to join.
 - A second provider behind the conformance suite. `spec.type` accepts `hetzner` and nothing else today. The seam and the contract suite in `internal/provider/conformance/` exist so that a second implementation is a package satisfying an interface rather than a rewrite; none has been written.
 - A second cloud-init flavour. `--flavor` accepts `k3s` and nothing else, on the same shape: one file per flavour under `internal/cloudinit/`.
