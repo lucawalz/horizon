@@ -95,6 +95,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /api/leases/{name}", s.leaseDetail)
 	mux.HandleFunc("DELETE /api/leases/{name}", s.mutating(s.leaseRelease))
 	mux.HandleFunc("GET /api/machines", s.machines)
+	mux.HandleFunc("GET /api/namespaces", s.namespaces)
 	mux.HandleFunc("GET /api/", apiNotFound)
 	mux.Handle("GET "+assetPrefix, bundleFiles(site.DistDirFS))
 	mux.Handle("GET /", siteHandler(site.DistDirFS))

@@ -125,7 +125,7 @@ func TestTheServedInterfaceRefusesAReadCarryingNoVerifiedIdentity(t *testing.T) 
 	clients := refusingClients()
 	server := newServedServer(t, clients)
 
-	for _, target := range []string{leasesEndpoint, leaseEndpoint("unreachable"), machinesEndpoint} {
+	for _, target := range []string{leasesEndpoint, leaseEndpoint("unreachable"), machinesEndpoint, namespacesEndpoint} {
 		t.Run(target, func(t *testing.T) {
 			response := get(t, server, target)
 
@@ -251,9 +251,10 @@ func TestAClusterRefusalAnswersAsAnAuthorisationFailureNamingTheUser(t *testing.
 	server := newServedServer(t, clients)
 
 	for name, response := range map[string]*httptest.ResponseRecorder{
-		"list":    getAs(server, servedIdentity(), leasesEndpoint),
-		"detail":  getAs(server, servedIdentity(), leaseEndpoint("named")),
-		"machine": getAs(server, servedIdentity(), machinesEndpoint),
+		"list":      getAs(server, servedIdentity(), leasesEndpoint),
+		"detail":    getAs(server, servedIdentity(), leaseEndpoint("named")),
+		"machine":   getAs(server, servedIdentity(), machinesEndpoint),
+		"namespace": getAs(server, servedIdentity(), namespacesEndpoint),
 		"create": send(server, asIdentity(
 			newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")), servedIdentity())),
 		"release": send(server, asIdentity(

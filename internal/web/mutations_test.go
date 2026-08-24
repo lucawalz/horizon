@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	gibibyte         = 4 * 1024 * 1024 * 1024
-	gigabyte         = 4_000_000_000
-	leasesEndpoint   = "/api/leases"
-	machinesEndpoint = "/api/machines"
+	gibibyte           = 4 * 1024 * 1024 * 1024
+	gigabyte           = 4_000_000_000
+	leasesEndpoint     = "/api/leases"
+	machinesEndpoint   = "/api/machines"
+	namespacesEndpoint = "/api/namespaces"
 )
 
 func leaseEndpoint(name string) string { return leasesEndpoint + "/" + name }
