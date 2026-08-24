@@ -67,6 +67,11 @@ type rejectedCandidates struct {
 	Count  int32  `json:"count"`
 }
 
+type migrationWarning struct {
+	Workload string   `json:"workload"`
+	Reasons  []string `json:"reasons"`
+}
+
 type leaseSelection struct {
 	Strategy   v1alpha1.SizingStrategy `json:"strategy"`
 	Chosen     string                  `json:"chosen"`
@@ -89,6 +94,7 @@ type leaseDetailResponse struct {
 	TeardownGraceSeconds *int64             `json:"teardownGraceSeconds"`
 	WorkloadNamespace    *string            `json:"workloadNamespace"`
 	MigratedWorkloads    []string           `json:"migratedWorkloads"`
+	MigrationWarnings    []migrationWarning `json:"migrationWarnings"`
 	AcceptedAt           *string            `json:"acceptedAt"`
 	WatchdogDeadline     *string            `json:"watchdogDeadline"`
 	ObservedGeneration   int64              `json:"observedGeneration"`
@@ -132,6 +138,7 @@ func newLeaseDetailResponse(lease *v1alpha1.CapacityLease, now time.Time) leaseD
 		TeardownGraceSeconds: teardownGraceSeconds(lease.Spec.TeardownGrace),
 		WorkloadNamespace:    workloadNamespace(lease.Spec.Workload),
 		MigratedWorkloads:    orEmpty(lease.Status.MigratedWorkloads),
+		MigrationWarnings:    newMigrationWarnings(lease.Status.MigrationWarnings),
 		AcceptedAt:           instant(lease.Status.AcceptedAt),
 		WatchdogDeadline:     instant(lease.Status.WatchdogDeadline),
 		ObservedGeneration:   lease.Status.ObservedGeneration,
@@ -139,6 +146,14 @@ func newLeaseDetailResponse(lease *v1alpha1.CapacityLease, now time.Time) leaseD
 		Instances:            newLeaseInstances(lease.Status.Instances),
 		ObservedAt:           rfc3339(now),
 	}
+}
+
+func newMigrationWarnings(warnings []v1alpha1.MigrationWarning) []migrationWarning {
+	entries := make([]migrationWarning, 0, len(warnings))
+	for _, warning := range warnings {
+		entries = append(entries, migrationWarning{Workload: warning.Workload, Reasons: orEmpty(warning.Reasons)})
+	}
+	return entries
 }
 
 func newLeaseRequirements(requirements *v1alpha1.SizeRequirements) *leaseRequirements {

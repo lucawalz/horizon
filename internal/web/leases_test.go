@@ -47,6 +47,10 @@ func activeStatus(now time.Time) v1alpha1.CapacityLeaseStatus {
 			CreatedAt:  &moment,
 		}},
 		MigratedWorkloads: []string{"batch/worker"},
+		MigrationWarnings: []v1alpha1.MigrationWarning{{
+			Workload: "batch/worker",
+			Reasons:  []string{"RecreateStrategy"},
+		}},
 		Conditions: []metav1.Condition{
 			condition(v1alpha1.ConditionInstancesReady, metav1.ConditionTrue, now),
 			condition(v1alpha1.ConditionWatchdogArmed, metav1.ConditionTrue, now),
@@ -154,6 +158,14 @@ func TestLeaseDetailRendersStatusConditionsAndInstances(t *testing.T) {
 
 	if len(detail.MigratedWorkloads) != 1 || detail.MigratedWorkloads[0] != "batch/worker" {
 		t.Errorf("migratedWorkloads = %v, want [batch/worker]", detail.MigratedWorkloads)
+	}
+
+	if len(detail.MigrationWarnings) != 1 {
+		t.Fatalf("migrationWarnings = %+v, want one entry", detail.MigrationWarnings)
+	}
+	warning := detail.MigrationWarnings[0]
+	if warning.Workload != "batch/worker" || len(warning.Reasons) != 1 || warning.Reasons[0] != "RecreateStrategy" {
+		t.Errorf("migrationWarnings[0] = %+v, want batch/worker flagged as RecreateStrategy", warning)
 	}
 }
 
@@ -289,6 +301,9 @@ func TestLeaseDetailRendersAPendingLease(t *testing.T) {
 	}
 	if detail.MigratedWorkloads == nil || len(detail.MigratedWorkloads) != 0 {
 		t.Errorf("migratedWorkloads = %v, want an empty list rather than null", detail.MigratedWorkloads)
+	}
+	if detail.MigrationWarnings == nil || len(detail.MigrationWarnings) != 0 {
+		t.Errorf("migrationWarnings = %v, want an empty list rather than null", detail.MigrationWarnings)
 	}
 }
 

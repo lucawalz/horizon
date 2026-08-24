@@ -21,6 +21,7 @@ const (
 		`"offered":0,"qualified":0,"rejected":[],"decidedAt":` + zeroInstantJSON + `}`
 	zeroDetailJSON = `{"summary":` + zeroSummaryJSON + `,"providerRef":"","size":null,"requirements":null,` +
 		`"selection":null,"durationSeconds":0,"teardownGraceSeconds":null,"workloadNamespace":null,"migratedWorkloads":[],` +
+		`"migrationWarnings":[],` +
 		`"acceptedAt":null,"watchdogDeadline":null,"observedGeneration":0,"conditions":[],"instances":[],` +
 		`"observedAt":"2026-08-21T12:00:00Z"}`
 	zeroCatalogueJSON = `{"configs":[],"config":"","region":"","state":"NoSelection","detail":null,` +
