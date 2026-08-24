@@ -132,16 +132,34 @@ func TestPublishableCatalogueTruncatesOnlyBeyondTheCap(t *testing.T) {
 	}
 }
 
-func TestPublishableCatalogueOrdersEntriesThatShareARegionAndName(t *testing.T) {
-	small := fetchedType("cx22", "nbg1")
-	large := fetchedType("cx22", "nbg1")
-	large.MemoryBytes = 8 << 30
+func TestPublishableCatalogueOrdersOnEveryFieldItPublishes(t *testing.T) {
+	tests := map[string]func(*provider.InstanceType){
+		"region":       func(it *provider.InstanceType) { it.Region = "fsn1" },
+		"name":         func(it *provider.InstanceType) { it.Name = "cx42" },
+		"architecture": func(it *provider.InstanceType) { it.Architecture = "arm" },
+		"cpu type":     func(it *provider.InstanceType) { it.CPUType = "dedicated" },
+		"cpu cores":    func(it *provider.InstanceType) { it.CPUCores = 4 },
+		"memory":       func(it *provider.InstanceType) { it.MemoryBytes = 8 << 30 },
+		"disk":         func(it *provider.InstanceType) { it.DiskBytes = 80 << 30 },
+		"hourly rate":  func(it *provider.InstanceType) { it.HourlyRate.Amount = 0.0148 },
+		"currency":     func(it *provider.InstanceType) { it.HourlyRate.Currency = "USD" },
+		"availability": func(it *provider.InstanceType) { it.Available = false },
+		"deprecation":  func(it *provider.InstanceType) { it.Deprecated = true },
+	}
 
-	forward, _ := publishableCatalogue([]provider.InstanceType{small, large})
-	reverse, _ := publishableCatalogue([]provider.InstanceType{large, small})
+	for name, vary := range tests {
+		t.Run(name, func(t *testing.T) {
+			one := fetchedType("cx22", "nbg1")
+			other := fetchedType("cx22", "nbg1")
+			vary(&other)
 
-	if !slices.Equal(forward, reverse) {
-		t.Errorf("the same catalogue in a different order published %+v then %+v, want one order", forward, reverse)
+			forward, _ := publishableCatalogue([]provider.InstanceType{one, other})
+			reverse, _ := publishableCatalogue([]provider.InstanceType{other, one})
+
+			if !slices.Equal(forward, reverse) {
+				t.Errorf("the same catalogue in a different order published %+v then %+v, want one order", forward, reverse)
+			}
+		})
 	}
 }
 
@@ -296,7 +314,8 @@ func TestPublishWritesNothingWhenNothingChanged(t *testing.T) {
 	api := apiServerClient(t)
 	config := guaranteedProviderConfig(objectName(t))
 	assertCreate(t, api, config, false)
-	publisher := newPublisher(api, publisherSecrets()...)
+	clock := newStubClock()
+	publisher := newPublisherWithClock(api, clock, publisherSecrets()...)
 
 	fetched := []provider.InstanceType{fetchedType("cx22", "nbg1")}
 	if err := publisher.Publish(t.Context(), config, fetched, nil); err != nil {
@@ -304,6 +323,8 @@ func TestPublishWritesNothingWhenNothingChanged(t *testing.T) {
 	}
 	settled := publishedConfig(t, api, config.Name).ResourceVersion
 
+	// a second publish computing a later instant must still find nothing to write, or the gate is only masked by an identical payload
+	clock.Advance(time.Second)
 	if err := publisher.Publish(t.Context(), config, fetched, nil); err != nil {
 		t.Fatalf("second Publish: %v", err)
 	}

@@ -314,6 +314,21 @@ func TestHetznerProviderReportsEveryConstructionFailure(t *testing.T) {
 			}),
 			wantErr: `hetzner: cloud-init missing node-label "` + poolLabelAssignment + `"`,
 		},
+		{
+			name: "cloud-init needs a node token the spec does not configure",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.CloudInitSecretRef = secretKeyRef(sentinelInitName, "user-data")
+			}),
+			wantErr: "cloud-init needs " + hetzner.NodeTokenSentinel + " but spec.hetzner sets no nodeCredentialSecretRef",
+		},
+		{
+			name: "an unreadable secret is reported before a sentinel with no supplier",
+			spec: hetznerSpec(func(s *v1alpha1.HetznerProviderSpec) {
+				s.CloudInitSecretRef = secretKeyRef(sentinelInitName, "user-data")
+				s.JoinTokenSecretRef = secretRefPtr("absent", "token")
+			}),
+			wantErr: `read secret ` + testOperatorNS + `/absent: secrets "absent" not found`,
+		},
 	}
 
 	for _, tc := range tests {
