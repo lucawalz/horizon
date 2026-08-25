@@ -463,6 +463,45 @@ func TestReplicateCopiesAWorkloadWhoseSpreadIsOnlyAPreference(t *testing.T) {
 	}
 }
 
+func TestReplicateReadsWhatAnAutoscalerTargetsBeforeSkipping(t *testing.T) {
+	tests := []struct {
+		name       string
+		kind       string
+		apiVersion string
+		wantCopies int
+	}{
+		{"an unqualified deployment reference", "Deployment", "", 0},
+		{"a deployment of another group", "Deployment", "keda.sh/v1alpha1", 1},
+		{"another kind of the same name", "StatefulSet", "apps/v1", 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			original := originalDeployment()
+			autoscaler := autoscalerFor(original.Name)
+			autoscaler.Spec.ScaleTargetRef.Kind = tc.kind
+			autoscaler.Spec.ScaleTargetRef.APIVersion = tc.apiVersion
+			kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), original, autoscaler)
+
+			if _, err := replicate(t, kc, testNS); err != nil {
+				t.Fatalf("Replicate: %v", err)
+			}
+
+			if got := len(burstCopiesIn(t, kc, testNS)); got != tc.wantCopies {
+				t.Errorf("the namespace holds %d burst copies, want %d", got, tc.wantCopies)
+			}
+		})
+	}
+}
+
+func TestReplicationReasonTextFallsBackToTheReasonItself(t *testing.T) {
+	const unworded = "AShapeThisBuildHasNoWordingFor"
+
+	if got := k8s.ReplicationReasonText(unworded); got != unworded {
+		t.Errorf("an unknown reason reads %q, want the reason itself rather than a blank skip", got)
+	}
+}
+
 func TestReplicateSkipsAStatefulSet(t *testing.T) {
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), plainStatefulSet("db"), originalDeployment())
 

@@ -220,6 +220,27 @@ func TestReplicateModeDeletesTheCopyAtTeardown(t *testing.T) {
 	}
 }
 
+func TestReplicateModeDeletesTheCopyWhenTheLeaseExpires(t *testing.T) {
+	h := replicated(t)
+	h.seedWorkload()
+	h.settle()
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 1 {
+		t.Fatalf("the namespace holds %d burst copies before the deadline, want one", got)
+	}
+
+	h.clock.Advance(testLeaseDuration + overtime)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionExpired, metav1.ConditionTrue)
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 0 {
+		t.Errorf("an expired lease left %d burst copies pinned to nodes it no longer holds", got)
+	}
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadReplicable, reasonCopiesDeleted, "burst copies deleted")
+	if h.deploymentIn(testWorkloadNS, "api") == nil {
+		t.Error("expiry deleted the original alongside the copy")
+	}
+}
+
 func TestReplicateModeDegradesWhenACopyOutlivesTheDelete(t *testing.T) {
 	h := replicated(t)
 	h.seedWorkload()
