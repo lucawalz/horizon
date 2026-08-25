@@ -10,6 +10,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -24,6 +25,7 @@ const (
 	ReasonStatefulSetCopy    = "StatefulSetNotCopyable"
 	ReasonBudgetSpansCopy    = "DisruptionBudgetSpansCopy"
 	ReasonSpreadSpansCopy    = "TopologySpreadSpansCopy"
+	ReasonSelectorUnchanged  = "CopySelectorMatchesOriginal"
 
 	opReplicate         = "replicate"
 	opDeleteCopies      = "delete-burst-copies"
@@ -38,6 +40,7 @@ var replicationReasons = map[string]string{
 	ReasonAutoscalerTargeted: "a HorizontalPodAutoscaler targets it, and it would read the copy's pods as the workload being over-provisioned and scale the original down; move mode changes no replica count, so it bursts this workload without fighting the autoscaler",
 	ReasonStatefulSetCopy:    "a copy of a StatefulSet mints empty volumes rather than carrying the data the workload holds; move mode bursts this workload as it stands",
 	ReasonBudgetSpansCopy:    "its PodDisruptionBudget selects the copy's pods as well, so the budget counts pods it was not written for until the lease ends",
+	ReasonSelectorUnchanged:  "its own selector already carries this lease's burst-copy label, so the copy's selector would name the original's pods too and the two replica sets would contend over one set of pods",
 	ReasonSpreadSpansCopy:    "it spreads its pods over topology domains and refuses to schedule where the spread is unmet, and the copy's pods carry its labels, so they count into its own domains and its next pod can be left Pending; move mode adds no second set of pods, so it bursts this workload without skewing the spread",
 }
 
@@ -222,7 +225,7 @@ func replicateNamespace(ctx context.Context, kc kubernetes.Interface, namespace 
 			return replicated, fmt.Errorf("%s: %w", opReplicate, err)
 		}
 		// the copy is what does the damage in each of these, so the skip creates nothing rather than warning and proceeding
-		if reason := copyHarmsOriginal(original, autoscaled); reason != "" {
+		if reason := copyHarmsOriginal(original, replication.Lease.Name, autoscaled); reason != "" {
 			replicated.skip(namespace, kindDeployment, original.Name, reason)
 			continue
 		}
@@ -241,14 +244,21 @@ func replicateNamespace(ctx context.Context, kc kubernetes.Interface, namespace 
 	return replicated, nil
 }
 
-func copyHarmsOriginal(original *appsv1.Deployment, autoscaled map[string]bool) string {
+func copyHarmsOriginal(original *appsv1.Deployment, leaseName string, autoscaled map[string]bool) string {
 	switch {
 	case autoscaled[original.Name]:
 		return ReasonAutoscalerTargeted
 	case enforcesSpread(original.Spec.Template.Spec.TopologySpreadConstraints):
 		return ReasonSpreadSpansCopy
+	case selectorUnchangedByCopy(original.Spec.Selector, leaseName):
+		return ReasonSelectorUnchanged
 	}
 	return ""
+}
+
+func selectorUnchangedByCopy(original *metav1.LabelSelector, leaseName string) bool {
+	// the extra label in the copy's selector is the whole of what keeps the two replica sets from contending over one set of pods
+	return apiequality.Semantic.DeepEqual(burstCopySelector(original, leaseName), original)
 }
 
 func enforcesSpread(constraints []corev1.TopologySpreadConstraint) bool {

@@ -375,6 +375,30 @@ func TestReplicateSkipsAnAutoscaledWorkloadAndSignpostsMoveMode(t *testing.T) {
 	}
 }
 
+func TestReplicateSkipsAWorkloadTheCopyCouldNotBeToldApartFrom(t *testing.T) {
+	original := originalDeployment(func(d *appsv1.Deployment) {
+		d.Spec.Selector.MatchLabels[k8s.BurstCopyLabelKey] = testLease.Name
+		d.Spec.Template.Labels[k8s.BurstCopyLabelKey] = testLease.Name
+	})
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), original)
+
+	result, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if got := len(burstCopiesIn(t, kc, testNS)); got != 0 {
+		t.Errorf("a workload whose selector the copy cannot narrow was copied %d times", got)
+	}
+	if len(result.Copies) != 0 {
+		t.Errorf("Replicate reports copies %v whose selector names the original's pods as well", result.Copies)
+	}
+	reasons := warningReasons(result.Skipped, testNS+"/deployment/"+original.Name)
+	if !slices.Equal(reasons, []string{k8s.ReasonSelectorUnchanged}) {
+		t.Errorf("the skip reports reasons %v, want [%s]", reasons, k8s.ReasonSelectorUnchanged)
+	}
+}
+
 func spreadOver(topologyKey string, whenUnsatisfiable corev1.UnsatisfiableConstraintAction) func(*appsv1.Deployment) {
 	return func(d *appsv1.Deployment) {
 		d.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{

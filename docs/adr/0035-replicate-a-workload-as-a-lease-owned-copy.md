@@ -69,7 +69,12 @@ The copy's pods carry the original's labels plus `horizon.dev/burst-copy`, and t
 selector is the original's plus the same label. A pod matches a selector when its labels are
 a superset of it, so a Service that selects the original reaches the burst replicas without
 being told about them, which is the point of the mode. The extra label in the copy's selector
-is what keeps the two ReplicaSets from contending over one set of pods.
+is what keeps the two ReplicaSets from contending over one set of pods, so the selector is
+built and compared against the original's before anything is created, and a workload whose
+selector already carries this lease's burst-copy label is skipped rather than copied into a
+pair that names one set of pods twice. Nothing else establishes that invariant: the guard
+against copying a copy reads the Deployment's own labels, which say nothing about its
+selector.
 
 The copy's pod spec is the original's with four changes, and each one is scoped as narrowly
 as it can be. The node affinity is replaced by the lease's own and the node selector is
@@ -87,7 +92,7 @@ the target set names nothing or with `EveryWorkloadSkipped` when every matched w
 skipped, because renting machines for a typo or for a namespace nothing in it can be copied
 is worth reporting loudly rather than sitting Active beside idle capacity.
 
-Three shapes are skipped rather than copied, each named in `status.migrationWarnings` with
+Four shapes are skipped rather than copied, each named in `status.migrationWarnings` with
 its reason while its neighbours are replicated as usual. The line between a skip and a
 warning is where the damage lands: a skip is for a shape where the copy harms the original,
 and a warning is for a shape where the cost falls on the copy or on an accounting an operator

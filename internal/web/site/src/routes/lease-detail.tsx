@@ -783,6 +783,8 @@ const migrationReasons: Record<string, string> = {
     'a copy would mint empty volumes rather than carry the data the workload holds; move mode bursts a StatefulSet as it stands',
   DisruptionBudgetSpansCopy:
     'a PodDisruptionBudget on the original selects the copy pods as well, so its accounting is wrong for the life of the lease',
+  CopySelectorMatchesOriginal:
+    'the selector of the original already carries the burst-copy label of this lease, so the copy could not be told apart from it and the two replica sets would contend over one set of pods',
   TopologySpreadSpansCopy:
     'the copy pods count into the topology spread of the original, which refuses to schedule where the spread is unmet, so the next pod of the original can be left Pending; move mode adds no second set of pods',
 }

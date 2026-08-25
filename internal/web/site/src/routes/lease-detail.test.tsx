@@ -89,6 +89,10 @@ const replicationCopy: [string, string][] = [
     'so its accounting is wrong for the life of the lease',
   ],
   [
+    'CopySelectorMatchesOriginal',
+    'the two replica sets would contend over one set of pods',
+  ],
+  [
     'TopologySpreadSpansCopy',
     'so the next pod of the original can be left Pending',
   ],
