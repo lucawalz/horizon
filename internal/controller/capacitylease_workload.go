@@ -23,14 +23,17 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 		return r.nextPoll(lease, policy), nil
 	}
 
-	namespace := lease.Spec.Workload.Namespace
 	if !conditionTrue(lease, v1alpha1.ConditionWorkloadMigrated) {
-		return r.migrateWorkload(ctx, lease, namespace)
+		return r.migrateWorkload(ctx, lease)
 	}
 
-	placed, err := k8s.WorkloadOnBurstNodes(ctx, r.Kube, namespace, leaseIdentity(lease))
+	namespaces, err := workloadNamespaces(lease)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("check workload placement in %q: %w", namespace, err)
+		return ctrl.Result{}, err
+	}
+	placed, err := k8s.WorkloadOnBurstNodes(ctx, r.Kube, namespaces, leaseIdentity(lease))
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("check workload placement: %w", err)
 	}
 	if !placed {
 		return r.nextPoll(lease, policy), nil
@@ -38,27 +41,53 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 	return ctrl.Result{}, nil
 }
 
-func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, namespace string) (ctrl.Result, error) {
-	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, namespace, leaseIdentity(lease))
-	r.recordMigratability(lease, assessments, classifyErr)
+func workloadNamespaces(lease *v1alpha1.CapacityLease) (k8s.TargetSet, error) {
+	namespaces, err := k8s.NewNamespaceSet(lease.Spec.Workload.Namespaces)
+	if err != nil {
+		return k8s.TargetSet{}, fmt.Errorf("read the workload target set of lease %q: %w", lease.Name, err)
+	}
+	return namespaces, nil
+}
 
-	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, leaseIdentity(lease))
-	if migrateErr != nil {
-		migrateErr = fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr)
-		r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())
-		if err := r.writeStatus(ctx, lease); err != nil {
-			return ctrl.Result{}, errors.Join(migrateErr, err)
-		}
-		return ctrl.Result{}, migrateErr
+func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+	targets, err := k8s.NewTargetSet(lease.Spec.Workload.Namespaces, lease.Spec.Workload.Selector)
+	if err != nil {
+		return r.failMigration(ctx, lease, reasonMigrateFailed, fmt.Errorf("read the workload target set: %w", err))
 	}
 
-	lease.Status.MigratedWorkloads = migrated
+	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, targets, leaseIdentity(lease))
+	r.recordMigratability(lease, assessments, classifyErr)
+
+	result, migrateErr := k8s.Migrate(ctx, r.Kube, targets, leaseIdentity(lease), teardownGrace(lease))
+	// a namespace that failed must not discard what the others moved, because teardown restores from this list
+	lease.Status.MigratedWorkloads = result.Workloads
+	if migrateErr != nil {
+		reason, cause := migrationOutcome(result, len(lease.Spec.Workload.Namespaces), migrateErr)
+		return r.failMigration(ctx, lease, reason, cause)
+	}
+
 	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue, reasonMigrated,
-		fmt.Sprintf("%d workloads moved onto burst capacity", len(migrated)))
+		fmt.Sprintf("%d workloads moved onto burst capacity", len(result.Workloads)))
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+}
+
+func migrationOutcome(result k8s.MigrationResult, targeted int, cause error) (string, error) {
+	if len(result.MigratedNamespaces) == 0 {
+		return reasonMigrateFailed, fmt.Errorf("migrate workload: %w", cause)
+	}
+	return reasonPartialMigration, fmt.Errorf("migrated %d of %d namespaces, leaving %d workloads moved: %w",
+		len(result.MigratedNamespaces), targeted, len(result.Workloads), cause)
+}
+
+func (r *CapacityLeaseReconciler) failMigration(ctx context.Context, lease *v1alpha1.CapacityLease, reason string, cause error) (ctrl.Result, error) {
+	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reason, cause.Error())
+	if err := r.writeStatus(ctx, lease); err != nil {
+		return ctrl.Result{}, errors.Join(cause, err)
+	}
+	return ctrl.Result{}, cause
 }
 
 func (r *CapacityLeaseReconciler) recordMigratability(lease *v1alpha1.CapacityLease, assessments []k8s.WorkloadMigratability, classifyErr error) {
@@ -108,13 +137,17 @@ func migratabilitySummary(warnings []v1alpha1.MigrationWarning, total int) strin
 }
 
 func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
-	if lease.Spec.Workload == nil || !conditionTrue(lease, v1alpha1.ConditionWorkloadMigrated) {
+	// a migration that failed part way still moved workloads, so the list of what moved decides this rather than a condition that is no longer True
+	if lease.Spec.Workload == nil || len(lease.Status.MigratedWorkloads) == 0 {
 		return ctrl.Result{}, nil
 	}
 
-	namespace := lease.Spec.Workload.Namespace
-	if _, restoreErr := k8s.RestorePlacement(ctx, r.Kube, namespace, leaseIdentity(lease)); restoreErr != nil {
-		restoreErr = fmt.Errorf("restore placement in %q: %w", namespace, restoreErr)
+	namespaces, err := workloadNamespaces(lease)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if _, restoreErr := k8s.RestorePlacement(ctx, r.Kube, namespaces, leaseIdentity(lease)); restoreErr != nil {
+		restoreErr = fmt.Errorf("restore placement: %w", restoreErr)
 		r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonRestoreFailed, restoreErr.Error())
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, errors.Join(restoreErr, err)
@@ -142,23 +175,30 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	if grace <= 0 {
 		return ctrl.Result{}, nil
 	}
-	cond := meta.FindStatusCondition(lease.Status.Conditions, v1alpha1.ConditionWorkloadMigrated)
-	if cond == nil || cond.Reason != reasonPlacementRestored {
+	if !placementRestored(lease) {
 		return ctrl.Result{}, nil
 	}
 	if r.remainingTeardownBudget(lease) <= reservedDrainBudget(lease) {
 		return ctrl.Result{}, nil
 	}
 
-	namespace := lease.Spec.Workload.Namespace
-	restored, err := k8s.WorkloadOffBurstNodes(ctx, r.Kube, namespace, leaseIdentity(lease))
+	namespaces, err := workloadNamespaces(lease)
 	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("check workload restored in %q: %w", namespace, err)
+		return ctrl.Result{}, err
+	}
+	restored, err := k8s.WorkloadOffBurstNodes(ctx, r.Kube, namespaces, leaseIdentity(lease))
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("check workload restored: %w", err)
 	}
 	if restored {
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: restoreGatePoll}, nil
+}
+
+func placementRestored(lease *v1alpha1.CapacityLease) bool {
+	cond := meta.FindStatusCondition(lease.Status.Conditions, v1alpha1.ConditionWorkloadMigrated)
+	return cond != nil && cond.Reason == reasonPlacementRestored
 }
 
 func leaseIdentity(lease *v1alpha1.CapacityLease) k8s.LeaseIdentity {

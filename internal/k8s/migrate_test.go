@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -51,10 +52,46 @@ const (
 	emptyPlacementJSON  = "{}"
 	pinnedPlacementJSON = `{"nodeSelector":{"disktype":"ssd"}}`
 	hostSpreadWeight    = int32(100)
+	noEvictionRetry     = 0
 )
 
 func appSelector(app string) *metav1.LabelSelector {
 	return &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}}
+}
+
+func nsSet(t *testing.T, namespaces ...string) k8s.TargetSet {
+	t.Helper()
+	set, err := k8s.NewNamespaceSet(namespaces)
+	if err != nil {
+		t.Fatalf("NewNamespaceSet(%v): %v", namespaces, err)
+	}
+	return set
+}
+
+func migrateNS(t *testing.T, kc kubernetes.Interface, namespace string, lease k8s.LeaseIdentity) ([]string, error) {
+	t.Helper()
+	result, err := k8s.Migrate(context.Background(), kc, nsSet(t, namespace), lease, noEvictionRetry)
+	return result.Workloads, err
+}
+
+func restoreNS(t *testing.T, kc kubernetes.Interface, namespace string, lease k8s.LeaseIdentity) ([]string, error) {
+	t.Helper()
+	return k8s.RestorePlacement(context.Background(), kc, nsSet(t, namespace), lease)
+}
+
+func classifyNS(t *testing.T, kc kubernetes.Interface, namespace string, lease k8s.LeaseIdentity) ([]k8s.WorkloadMigratability, error) {
+	t.Helper()
+	return k8s.ClassifyMigratability(context.Background(), kc, nsSet(t, namespace), lease)
+}
+
+func onBurstNS(t *testing.T, kc kubernetes.Interface, namespace string, lease k8s.LeaseIdentity) (bool, error) {
+	t.Helper()
+	return k8s.WorkloadOnBurstNodes(context.Background(), kc, nsSet(t, namespace), lease)
+}
+
+func offBurstNS(t *testing.T, kc kubernetes.Interface, namespace string, lease k8s.LeaseIdentity) (bool, error) {
+	t.Helper()
+	return k8s.WorkloadOffBurstNodes(context.Background(), kc, nsSet(t, namespace), lease)
 }
 
 var testLease = k8s.LeaseIdentity{UID: "uid-a", Name: "lease-a"}
@@ -279,7 +316,7 @@ func TestMigrateEviction(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, appPod, dsPod, otherPod)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	migrated, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -306,7 +343,7 @@ func TestMigrateEvictsOnlyThePodsOfTheWorkloadsItPatched(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, owned, bare)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -333,7 +370,7 @@ func TestMigrateLeavesDeploymentPodsToItsRollout(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, rolling, stalled, matched, unmatched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -357,7 +394,7 @@ func TestMigrateLeavesStatefulSetPodsToItsRollout(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -388,7 +425,7 @@ func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
 	kc := fake.NewSimpleClientset(rolling, stalled, matched, unmatched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := restoreNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -410,7 +447,7 @@ func TestMigrateRejectsAWorkloadThatNamesNoSelectorAtAll(t *testing.T) {
 			kc := fake.NewSimpleClientset(node, workload, pod)
 			evictAndDelete(kc)
 
-			if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err == nil {
+			if _, err := migrateNS(t, kc, testNS, testLease); err == nil {
 				t.Fatal("a workload naming no pods was migrated instead of refused")
 			}
 			if evicted := evictionNames(kc); len(evicted) != 0 {
@@ -427,7 +464,7 @@ func TestWorkloadOnBurstNodesRefusesAWorkloadThatNamesNoSelector(t *testing.T) {
 		labelledPod("stray", "web", "burst-1", corev1.PodRunning),
 	)
 
-	if _, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease); err == nil {
+	if _, err := onBurstNS(t, kc, testNS, testLease); err == nil {
 		t.Fatal("an absent selector left the gate answering from every pod in the namespace instead of failing")
 	}
 }
@@ -443,7 +480,7 @@ func TestMigrateRejectsEmptyDeploymentSelector(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, pod)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err == nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err == nil {
 		t.Fatal("expected an error for a deployment with an empty selector")
 	}
 	if evicted := evictionNames(kc); len(evicted) != 0 {
@@ -462,7 +499,7 @@ func TestMigrateRejectsEmptyStatefulSetSelector(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, pod)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err == nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err == nil {
 		t.Fatal("expected an error for a statefulset with an empty selector")
 	}
 	if evicted := evictionNames(kc); len(evicted) != 0 {
@@ -485,7 +522,7 @@ func TestMigrateEvictsOnDeleteStatefulSetPods(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -514,7 +551,7 @@ func TestMigrateEvictsStatefulSetPodsBelowPartition(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -532,7 +569,7 @@ func TestMigrateEvictsPausedDeploymentPods(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -547,7 +584,7 @@ func TestMigrateDoesNotRelabelNode(t *testing.T) {
 	kc := fake.NewSimpleClientset(node)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -564,7 +601,7 @@ func TestMigrateFailsWhenNoLeaseNode(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	_, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	_, err := migrateNS(t, kc, testNS, testLease)
 	if err == nil {
 		t.Fatal("expected error when no node carries the lease-uid label")
 	}
@@ -577,16 +614,13 @@ func TestMigrateFailsWhenNoLeaseNode(t *testing.T) {
 
 func TestMigrateRejectsInvalidInput(t *testing.T) {
 	kc := fake.NewSimpleClientset()
-	if _, err := k8s.Migrate(context.Background(), kc, "Foo", testLease); err == nil {
-		t.Error("expected error for an invalid namespace")
-	}
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{}); err == nil {
+	if _, err := migrateNS(t, kc, testNS, k8s.LeaseIdentity{}); err == nil {
 		t.Error("expected error for an empty lease identity")
 	}
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{UID: "uid-a"}); err == nil {
+	if _, err := migrateNS(t, kc, testNS, k8s.LeaseIdentity{UID: "uid-a"}); err == nil {
 		t.Error("expected error for a lease identity with no name")
 	}
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{Name: "lease-a"}); err == nil {
+	if _, err := migrateNS(t, kc, testNS, k8s.LeaseIdentity{Name: "lease-a"}); err == nil {
 		t.Error("expected error for a lease identity with no uid")
 	}
 }
@@ -597,7 +631,7 @@ func TestMigrateRequiresANodeOfThisLease(t *testing.T) {
 	kc := fake.NewSimpleClientset(foreign, dep)
 	evictAndDelete(kc)
 
-	_, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{UID: "uid-a", Name: "lease-a"})
+	_, err := migrateNS(t, kc, testNS, k8s.LeaseIdentity{UID: "uid-a", Name: "lease-a"})
 	if err == nil {
 		t.Fatal("Migrate proceeded with only another lease's node present")
 	}
@@ -610,7 +644,7 @@ func TestMigrateAffinityPatch(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, sts)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	migrated, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -665,7 +699,7 @@ func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -691,7 +725,7 @@ func TestMigrateStampsTheOwningLeaseOnTheWorkload(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -710,10 +744,10 @@ func TestRestorePlacementClearsEveryPlacementMarker(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := restoreNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -745,7 +779,7 @@ func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) 
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -782,7 +816,7 @@ func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	migrated, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -805,12 +839,12 @@ func TestMigrateNeitherPatchesNorClaimsAnotherLeasesWorkload(t *testing.T) {
 	kc := fake.NewSimpleClientset(nodeA, nodeB, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate lease-a: %v", err)
 	}
 	kc.ClearActions()
 
-	claimed, err := k8s.Migrate(context.Background(), kc, testNS, leaseB)
+	claimed, err := migrateNS(t, kc, testNS, leaseB)
 	if err != nil {
 		t.Fatalf("Migrate lease-b: %v", err)
 	}
@@ -831,7 +865,7 @@ func TestMigrateReadsAnEmptyOwnerLabelAsHeldByNobody(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	claimed, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	claimed, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -848,7 +882,7 @@ func TestRestorePlacementReadsAnEmptyOwnerLabelAsHeldByNobody(t *testing.T) {
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
@@ -876,7 +910,7 @@ func TestMigrateStampsAndClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, pod)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	migrated, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -898,7 +932,7 @@ func TestMigrateStampsAndClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 		t.Errorf("evicted %v, want none: stamping an owner moves no pod", got)
 	}
 
-	placed, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	placed, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -922,7 +956,7 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	evictAndDelete(kc)
 
 	want := []string{"sentio-systems/deployment/dep1", "sentio-systems/statefulset/sts1"}
-	first, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	first, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
@@ -935,7 +969,7 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	}
 	kc.ClearActions()
 
-	second, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	second, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
@@ -959,7 +993,7 @@ func TestMigrateReportsNoWorkloadsForAnEmptyNamespace(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, elsewhere)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	migrated, err := migrateNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -988,12 +1022,12 @@ func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 	evictAndDelete(kc)
 
 	for pass := range 2 {
-		if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 			t.Fatalf("Migrate pass %d: %v", pass+1, err)
 		}
 	}
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
@@ -1032,12 +1066,12 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep1, dep2)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	kc.ClearActions()
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := restoreNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -1079,11 +1113,11 @@ func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
@@ -1109,7 +1143,7 @@ func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
 		t.Fatalf("burst label query before migrate = %v, want none", got)
 	}
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -1119,7 +1153,7 @@ func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
 		t.Errorf("burst label query = %v, want %v", got, want)
 	}
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := restoreNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 	if got := selectedNames(t, kc); len(got) != 0 {
@@ -1145,7 +1179,7 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep1, sts1)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -1159,7 +1193,7 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 	}
 	kc.ClearActions()
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := restoreNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -1197,10 +1231,10 @@ func TestRestorePlacementIsIdempotent(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, pod)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	first, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	first, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("first RestorePlacement: %v", err)
 	}
@@ -1209,7 +1243,7 @@ func TestRestorePlacementIsIdempotent(t *testing.T) {
 	}
 	kc.ClearActions()
 
-	second, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	second, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("second RestorePlacement: %v", err)
 	}
@@ -1229,7 +1263,7 @@ func TestRestorePlacementWithoutAnnotationIsNoop(t *testing.T) {
 	kc := fake.NewSimpleClientset(dep, pod)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement = %v, want nil", err)
 	}
@@ -1251,18 +1285,18 @@ func TestRestorePlacementRestoresOnlyTheWorkloadsThisLeaseOwns(t *testing.T) {
 	kc := fake.NewSimpleClientset(nodeA, nodeB, depA)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate lease-a: %v", err)
 	}
 	depB := plainDeployment("app-b")
 	if _, err := kc.AppsV1().Deployments(testNS).Create(context.Background(), depB, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create app-b: %v", err)
 	}
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, leaseB); err != nil {
+	if _, err := migrateNS(t, kc, testNS, leaseB); err != nil {
 		t.Fatalf("Migrate lease-b: %v", err)
 	}
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, leaseB)
+	restored, err := restoreNS(t, kc, testNS, leaseB)
 	if err != nil {
 		t.Fatalf("RestorePlacement lease-b: %v", err)
 	}
@@ -1295,7 +1329,7 @@ func TestRestorePlacementRescuesAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
@@ -1314,7 +1348,7 @@ func TestEvictionSparesTheWorkloadPodsOfAnotherLease(t *testing.T) {
 	kc := fake.NewSimpleClientset(nodeA, nodeB, pausedDeployment("app-a", "a"))
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate lease-a: %v", err)
 	}
 	if _, err := kc.AppsV1().Deployments(testNS).Create(context.Background(), pausedDeployment("app-b", "b"), metav1.CreateOptions{}); err != nil {
@@ -1324,7 +1358,7 @@ func TestEvictionSparesTheWorkloadPodsOfAnotherLease(t *testing.T) {
 	createPod(t, kc, "pod-b", "b", "homelab-1")
 	kc.ClearActions()
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, leaseB); err != nil {
+	if _, err := migrateNS(t, kc, testNS, leaseB); err != nil {
 		t.Fatalf("Migrate lease-b: %v", err)
 	}
 	if got := evictionNames(kc); len(got) != 1 || got[0] != "pod-b" {
@@ -1334,7 +1368,7 @@ func TestEvictionSparesTheWorkloadPodsOfAnotherLease(t *testing.T) {
 	createPod(t, kc, "pod-b", "b", "burst-b")
 	kc.ClearActions()
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, leaseB); err != nil {
+	if _, err := restoreNS(t, kc, testNS, leaseB); err != nil {
 		t.Fatalf("RestorePlacement lease-b: %v", err)
 	}
 	if got := evictionNames(kc); len(got) != 1 || got[0] != "pod-b" {
@@ -1344,15 +1378,8 @@ func TestEvictionSparesTheWorkloadPodsOfAnotherLease(t *testing.T) {
 
 func TestRestorePlacementRejectsAnEmptyIdentity(t *testing.T) {
 	kc := fake.NewSimpleClientset()
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, k8s.LeaseIdentity{}); err == nil {
+	if _, err := restoreNS(t, kc, testNS, k8s.LeaseIdentity{}); err == nil {
 		t.Fatal("RestorePlacement accepted an empty lease identity")
-	}
-}
-
-func TestRestorePlacementRejectsInvalidNamespace(t *testing.T) {
-	kc := fake.NewSimpleClientset()
-	if _, err := k8s.RestorePlacement(context.Background(), kc, "", testLease); err == nil {
-		t.Fatal("expected error for an empty namespace")
 	}
 }
 
@@ -1369,7 +1396,7 @@ func TestRestorePlacementReportsUnreadableAnnotation(t *testing.T) {
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err == nil {
 		t.Fatal("expected an error for an unreadable placement annotation")
 	}
@@ -1387,14 +1414,14 @@ func TestRestorePlacementReportsPatchFailure(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	kc.PrependReactor("patch", "statefulsets", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("forbidden")
 	})
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err == nil {
 		t.Fatal("expected the patch failure to surface")
 	}
@@ -1403,6 +1430,51 @@ func TestRestorePlacementReportsPatchFailure(t *testing.T) {
 	}
 	if len(restored) != 0 {
 		t.Errorf("restored = %v, want none", restored)
+	}
+}
+
+func TestNewNamespaceSetRefusesATargetSetNothingCouldRead(t *testing.T) {
+	cases := map[string][]string{
+		"no namespace at all":          nil,
+		"an empty name":                {""},
+		"a name with a space":          {"Not Valid"},
+		"one bad name among good ones": {"team-a", "Team-B"},
+	}
+	for name, namespaces := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := k8s.NewNamespaceSet(namespaces); err == nil {
+				t.Fatalf("NewNamespaceSet(%v) accepted a set no namespace could be read from", namespaces)
+			}
+		})
+	}
+}
+
+func TestNewTargetSetRefusesASelectorThatNamesNoWorkload(t *testing.T) {
+	broken := &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+		Key:      "tier",
+		Operator: "SortOf",
+	}}}
+	if _, err := k8s.NewTargetSet([]string{testNS}, broken); err == nil {
+		t.Fatal("NewTargetSet accepted a selector the apiserver cannot compile")
+	}
+}
+
+func TestNewTargetSetReadsAnAbsentSelectorAsEveryWorkload(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	kc := fake.NewSimpleClientset(node, plainDeployment("dep1"), plainStatefulSet("sts1"))
+	evictAndDelete(kc)
+
+	targets, err := k8s.NewTargetSet([]string{testNS}, nil)
+	if err != nil {
+		t.Fatalf("NewTargetSet: %v", err)
+	}
+	result, err := k8s.Migrate(context.Background(), kc, targets, testLease, noEvictionRetry)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	want := []string{"sentio-systems/deployment/dep1", "sentio-systems/statefulset/sts1"}
+	if !reflect.DeepEqual(result.Workloads, want) {
+		t.Errorf("migrated = %v, want %v: an absent selector names every workload in the namespace", result.Workloads, want)
 	}
 }
 
@@ -1440,7 +1512,7 @@ func TestWorkloadOnBurstNodes_SpreadAcrossNodes(t *testing.T) {
 		labelledPod("p1", "web", "burst-1", corev1.PodRunning),
 		labelledPod("p2", "web", "burst-2", corev1.PodRunning),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1456,7 +1528,7 @@ func TestWorkloadOnBurstNodes_PendingNotReady(t *testing.T) {
 		labelledPod("p1", "web", "burst-1", corev1.PodRunning),
 		labelledPod("p2", "web", "burst-1", corev1.PodPending),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1471,7 +1543,7 @@ func TestWorkloadOnBurstNodes_UnlabeledNodeNotReady(t *testing.T) {
 		ownedDeployment("app", "web", testLease),
 		labelledPod("p1", "web", "homelab-1", corev1.PodRunning),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1482,7 +1554,7 @@ func TestWorkloadOnBurstNodes_UnlabeledNodeNotReady(t *testing.T) {
 
 func TestWorkloadOnBurstNodes_NoWorkloadNotReady(t *testing.T) {
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID))
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1498,7 +1570,7 @@ func TestWorkloadOnBurstNodesWithoutAnOwnedWorkloadIsNotReady(t *testing.T) {
 		ownedDeployment("app-a", "a", testLease),
 		labelledPod("pod-a", "a", "burst-b", corev1.PodRunning),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, leaseB)
+	ready, err := onBurstNS(t, kc, testNS, leaseB)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1516,7 +1588,7 @@ func TestWorkloadOnBurstNodes_DaemonSetIgnored(t *testing.T) {
 		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
 		dsPod,
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1532,7 +1604,7 @@ func TestWorkloadOnBurstNodes_SucceededPodIgnored(t *testing.T) {
 		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
 		labelledPod("job-done", "web", "home-1", corev1.PodSucceeded),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1552,7 +1624,7 @@ func TestWorkloadOnBurstNodesIgnoresAnotherLeasesPodsInTheSameNamespace(t *testi
 		labelledPod("pod-b", "b", "burst-b", corev1.PodRunning),
 	)
 
-	readyB, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, leaseB)
+	readyB, err := onBurstNS(t, kc, testNS, leaseB)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes lease-b: %v", err)
 	}
@@ -1560,7 +1632,7 @@ func TestWorkloadOnBurstNodesIgnoresAnotherLeasesPodsInTheSameNamespace(t *testi
 		t.Error("lease-b hangs forever counting lease-a's pods against lease-b's nodes")
 	}
 
-	readyA, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	readyA, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes lease-a: %v", err)
 	}
@@ -1576,7 +1648,7 @@ func TestWorkloadOnBurstNodesIgnoresABarePod(t *testing.T) {
 		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
 		makePod("bare-pod", testNS, "homelab-1", corev1.PodRunning),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1592,7 +1664,7 @@ func TestWorkloadOnBurstNodesIgnoresAJobPod(t *testing.T) {
 		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
 		makeJobPod("batch-xyz", "homelab-1"),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1607,7 +1679,7 @@ func TestWorkloadOnBurstNodesHoldsWhileAnOwnedPodSitsElsewhere(t *testing.T) {
 		ownedDeployment("app", "web", testLease),
 		labelledPod("app-pod", "web", "homelab-1", corev1.PodRunning),
 	)
-	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1616,19 +1688,12 @@ func TestWorkloadOnBurstNodesHoldsWhileAnOwnedPodSitsElsewhere(t *testing.T) {
 	}
 }
 
-func TestWorkloadOnBurstNodes_EmptyNamespace(t *testing.T) {
-	kc := fake.NewSimpleClientset()
-	if _, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, "", testLease); err == nil {
-		t.Fatal("expected error for empty namespace, got nil")
-	}
-}
-
 func TestWorkloadOnBurstNodes_ListErrorSurfaces(t *testing.T) {
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID))
 	kc.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("forbidden")
 	})
-	if _, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease); err == nil {
+	if _, err := onBurstNS(t, kc, testNS, testLease); err == nil {
 		t.Fatal("expected the pod list failure to surface instead of a false negative")
 	}
 }
@@ -1638,7 +1703,7 @@ func TestWorkloadOnBurstNodesReportsAWorkloadListFailure(t *testing.T) {
 	kc.PrependReactor("list", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("forbidden")
 	})
-	if _, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease); err == nil {
+	if _, err := onBurstNS(t, kc, testNS, testLease); err == nil {
 		t.Fatal("expected the workload list failure to surface instead of a false negative")
 	}
 }
@@ -1650,7 +1715,7 @@ func TestWorkloadOnBurstNodesIgnoresAnotherLeasesNodes(t *testing.T) {
 		labelledPod("app-pod", "web", "burst-b", corev1.PodRunning),
 	)
 
-	placed, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	placed, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1666,7 +1731,7 @@ func TestWorkloadOnBurstNodesAcceptsOwnNodes(t *testing.T) {
 		labelledPod("app-pod", "web", "burst-a", corev1.PodRunning),
 	)
 
-	placed, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	placed, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
@@ -1680,7 +1745,7 @@ func TestWorkloadOffBurstNodes_ReportsReadyOnlyAfterLeavingBurstNodes(t *testing
 		burstNode("burst-1", testLease.UID),
 		makePod("p1", testNS, "burst-1", corev1.PodRunning),
 	)
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1697,7 +1762,7 @@ func TestWorkloadOffBurstNodes_ReportsReadyOnlyAfterLeavingBurstNodes(t *testing
 		t.Fatalf("update pod: %v", err)
 	}
 
-	ready, err = k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err = offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1712,7 +1777,7 @@ func TestWorkloadOffBurstNodes_PendingPodElsewhereIsReady(t *testing.T) {
 		makePod("p1", testNS, "home-1", corev1.PodRunning),
 		makePod("p2", testNS, "home-1", corev1.PodPending),
 	)
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1726,7 +1791,7 @@ func TestWorkloadOffBurstNodes_PendingPodOnABurstNodeIsNotReady(t *testing.T) {
 		burstNode("burst-1", testLease.UID),
 		makePod("p1", testNS, "burst-1", corev1.PodPending),
 	)
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1742,7 +1807,7 @@ func TestWorkloadOffBurstNodesIgnoresAnotherLeasesNode(t *testing.T) {
 		burstNode("burst-b", leaseB.UID),
 		makePod("pod-b", testNS, "burst-b", corev1.PodRunning),
 	)
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1753,7 +1818,7 @@ func TestWorkloadOffBurstNodesIgnoresAnotherLeasesNode(t *testing.T) {
 
 func TestWorkloadOffBurstNodes_NoWorkloadIsReady(t *testing.T) {
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID))
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1768,7 +1833,7 @@ func TestWorkloadOffBurstNodes_DaemonSetIgnored(t *testing.T) {
 		makePod("app", testNS, "home-1", corev1.PodRunning),
 		makeDSPod("ds-pod", testNS, "burst-1"),
 	)
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1783,7 +1848,7 @@ func TestWorkloadOffBurstNodes_SucceededPodIgnored(t *testing.T) {
 		makePod("app", testNS, "home-1", corev1.PodRunning),
 		makePod("job-done", testNS, "burst-1", corev1.PodSucceeded),
 	)
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	ready, err := offBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
@@ -1792,19 +1857,12 @@ func TestWorkloadOffBurstNodes_SucceededPodIgnored(t *testing.T) {
 	}
 }
 
-func TestWorkloadOffBurstNodes_EmptyNamespace(t *testing.T) {
-	kc := fake.NewSimpleClientset()
-	if _, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, "", testLease); err == nil {
-		t.Fatal("expected error for empty namespace, got nil")
-	}
-}
-
 func TestWorkloadOffBurstNodes_ListErrorSurfaces(t *testing.T) {
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID))
 	kc.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("forbidden")
 	})
-	if _, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease); err == nil {
+	if _, err := offBurstNS(t, kc, testNS, testLease); err == nil {
 		t.Fatal("expected the pod list failure to surface instead of a false negative")
 	}
 }
@@ -1823,7 +1881,7 @@ func TestMigrateClearsTheNodeSelectorAndSavesIt(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -1857,10 +1915,10 @@ func TestRestorePlacementReturnsTheNodeSelector(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := restoreNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -1883,7 +1941,7 @@ func TestRestorePlacementDropsNodeSelectorKeysAddedWhileOnBurst(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -1893,7 +1951,7 @@ func TestRestorePlacementDropsNodeSelectorKeysAddedWhileOnBurst(t *testing.T) {
 		t.Fatalf("update deployment: %v", err)
 	}
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := restoreNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -1921,7 +1979,7 @@ func TestRestorePlacementLeavesTheNodeSelectorOfAnOlderAnnotation(t *testing.T) 
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	restored, err := restoreNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
@@ -1999,10 +2057,10 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 	kc := fake.NewSimpleClientset(nodeA, nodeB, depA, depB)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate lease-a: %v", err)
 	}
-	if _, err := k8s.Migrate(context.Background(), kc, testNSB, leaseB); err != nil {
+	if _, err := migrateNS(t, kc, testNSB, leaseB); err != nil {
 		t.Fatalf("Migrate lease-b: %v", err)
 	}
 
@@ -2024,14 +2082,14 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 	assertPinnedToOwnLease(t, "app-a", gotA.Spec.Template.Spec, testLease)
 	assertPinnedToOwnLease(t, "app-b", gotB.Spec.Template.Spec, leaseB)
 
-	onA, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	onA, err := onBurstNS(t, kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes lease-a: %v", err)
 	}
 	if !onA {
 		t.Fatal("lease-a's readiness gate must count its own pod on its own node")
 	}
-	onWrongLease, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, leaseB)
+	onWrongLease, err := onBurstNS(t, kc, testNS, leaseB)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes lease-b against lease-a's namespace: %v", err)
 	}

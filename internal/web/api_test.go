@@ -20,7 +20,7 @@ const (
 	zeroSelectionJSON = `{"strategy":"","chosen":"","hourlyRate":null,"currency":null,"runnerUp":null,` +
 		`"offered":0,"qualified":0,"rejected":[],"decidedAt":` + zeroInstantJSON + `}`
 	zeroDetailJSON = `{"summary":` + zeroSummaryJSON + `,"providerRef":"","size":null,"requirements":null,` +
-		`"selection":null,"durationSeconds":0,"teardownGraceSeconds":null,"workloadNamespace":null,"migratedWorkloads":[],` +
+		`"selection":null,"durationSeconds":0,"teardownGraceSeconds":null,"workloadNamespaces":[],"workloadSelector":null,"migratedWorkloads":[],` +
 		`"migrationWarnings":[],` +
 		`"acceptedAt":null,"backstopAt":null,"watchdogDeadline":null,"observedGeneration":0,"conditions":[],"instances":[],` +
 		`"observedAt":"2026-08-21T12:00:00Z"}`

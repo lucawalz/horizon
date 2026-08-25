@@ -48,8 +48,15 @@ const (
 )
 
 type WorkloadRef struct {
-	// +kubebuilder:validation:MinLength=1
-	Namespace string `json:"namespace"`
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`
+	// +listType=set
+	Namespaces []string `json:"namespaces"`
+
+	// the selector names workloads inside the target namespaces rather than the namespaces themselves, and its absence names every one of them
+	// +optional
+	Selector *metav1.LabelSelector `json:"selector,omitempty"`
 }
 
 type Architecture string

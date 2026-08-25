@@ -22,7 +22,7 @@ func leaseFixture(name string) *v1alpha1.CapacityLease {
 			Size:        "cx22",
 			Replicas:    2,
 			Duration:    metav1.Duration{Duration: 2 * time.Hour},
-			Workload:    &v1alpha1.WorkloadRef{Namespace: "batch"},
+			Workload:    &v1alpha1.WorkloadRef{Namespaces: []string{"batch"}},
 		},
 	}
 }
@@ -333,8 +333,11 @@ func TestLeaseDetailRendersAPendingLease(t *testing.T) {
 
 	detail := newLeaseDetailResponse(lease, now)
 
-	if detail.WorkloadNamespace != nil {
-		t.Errorf("workloadNamespace = %q, want null", *detail.WorkloadNamespace)
+	if len(detail.WorkloadNamespaces) != 0 {
+		t.Errorf("workloadNamespaces = %v, want an empty list", detail.WorkloadNamespaces)
+	}
+	if detail.WorkloadSelector != nil {
+		t.Errorf("workloadSelector = %q, want null", *detail.WorkloadSelector)
 	}
 	if detail.Summary.ExpiresAt != nil {
 		t.Errorf("summary.expiresAt = %q, want null", *detail.Summary.ExpiresAt)

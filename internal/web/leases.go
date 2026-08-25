@@ -92,7 +92,8 @@ type leaseDetailResponse struct {
 	Selection            *leaseSelection    `json:"selection"`
 	DurationSeconds      int64              `json:"durationSeconds"`
 	TeardownGraceSeconds *int64             `json:"teardownGraceSeconds"`
-	WorkloadNamespace    *string            `json:"workloadNamespace"`
+	WorkloadNamespaces   []string           `json:"workloadNamespaces"`
+	WorkloadSelector     *string            `json:"workloadSelector"`
 	MigratedWorkloads    []string           `json:"migratedWorkloads"`
 	MigrationWarnings    []migrationWarning `json:"migrationWarnings"`
 	AcceptedAt           *string            `json:"acceptedAt"`
@@ -137,7 +138,8 @@ func newLeaseDetailResponse(lease *v1alpha1.CapacityLease, now time.Time) leaseD
 		Selection:            newLeaseSelection(lease.Status.Selection),
 		DurationSeconds:      seconds(lease.Spec.Duration.Duration),
 		TeardownGraceSeconds: teardownGraceSeconds(lease.Spec.TeardownGrace),
-		WorkloadNamespace:    workloadNamespace(lease.Spec.Workload),
+		WorkloadNamespaces:   workloadNamespaces(lease.Spec.Workload),
+		WorkloadSelector:     workloadSelector(lease.Spec.Workload),
 		MigratedWorkloads:    orEmpty(lease.Status.MigratedWorkloads),
 		MigrationWarnings:    newMigrationWarnings(lease.Status.MigrationWarnings),
 		AcceptedAt:           instant(lease.Status.AcceptedAt),
@@ -237,11 +239,23 @@ func teardownGraceSeconds(grace *metav1.Duration) *int64 {
 	return ptr(seconds(grace.Duration))
 }
 
-func workloadNamespace(ref *v1alpha1.WorkloadRef) *string {
+func workloadNamespaces(ref *v1alpha1.WorkloadRef) []string {
 	if ref == nil {
+		return []string{}
+	}
+	return orEmpty(ref.Namespaces)
+}
+
+// the detail names which workloads a lease moved, so a set narrowed by a selector must not read as the whole of its namespaces
+func workloadSelector(ref *v1alpha1.WorkloadRef) *string {
+	if ref == nil || ref.Selector == nil {
 		return nil
 	}
-	return nullable(ref.Namespace)
+	selector, err := metav1.LabelSelectorAsSelector(ref.Selector)
+	if err != nil {
+		return ptr(err.Error())
+	}
+	return nullable(selector.String())
 }
 
 // a name the apiserver could never carry is refused here, since client-go rejects it locally and the failure is the request's rather than the cluster's

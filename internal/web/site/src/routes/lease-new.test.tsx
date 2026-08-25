@@ -109,7 +109,7 @@ describe('the create form', () => {
       replicas: 2,
       durationSeconds: 3600,
       teardownGraceSeconds: 120,
-      workloadNamespace: '',
+      workloadNamespaces: [],
     })
 
     await view.unmount()

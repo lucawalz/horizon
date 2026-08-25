@@ -6,3 +6,10 @@ export function fieldValue(form: FormData, field: string): string {
 export function numberValue(form: FormData, field: string): number {
   return Number(fieldValue(form, field))
 }
+
+export function fieldValues(form: FormData, field: string): string[] {
+  return form
+    .getAll(field)
+    .map((held) => (typeof held === 'string' ? held.trim() : ''))
+    .filter((held) => held !== '')
+}

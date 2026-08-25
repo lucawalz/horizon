@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -57,7 +59,7 @@ type leaseCreateRequest struct {
 	Replicas             int32                     `json:"replicas"`
 	DurationSeconds      int64                     `json:"durationSeconds"`
 	TeardownGraceSeconds *int64                    `json:"teardownGraceSeconds"`
-	WorkloadNamespace    string                    `json:"workloadNamespace"`
+	WorkloadNamespaces   []string                  `json:"workloadNamespaces"`
 }
 
 type leaseExtendRequest struct {
@@ -113,7 +115,7 @@ func (r leaseCreateRequest) lease() (*v1alpha1.CapacityLease, error) {
 			Replicas:      r.Replicas,
 			Duration:      metav1.Duration{Duration: span(r.DurationSeconds)},
 			TeardownGrace: teardownGrace(r.TeardownGraceSeconds),
-			Workload:      workloadRefFor(r.WorkloadNamespace),
+			Workload:      workloadRefFor(r.WorkloadNamespaces),
 		},
 	}, nil
 }
@@ -125,11 +127,14 @@ func teardownGrace(elapsed *int64) *metav1.Duration {
 	return &metav1.Duration{Duration: span(*elapsed)}
 }
 
-func workloadRefFor(namespace string) *v1alpha1.WorkloadRef {
-	if namespace == "" {
+func workloadRefFor(namespaces []string) *v1alpha1.WorkloadRef {
+	named := slices.DeleteFunc(slices.Clone(namespaces), func(namespace string) bool {
+		return strings.TrimSpace(namespace) == ""
+	})
+	if len(named) == 0 {
 		return nil
 	}
-	return &v1alpha1.WorkloadRef{Namespace: namespace}
+	return &v1alpha1.WorkloadRef{Namespaces: named}
 }
 
 // the apiserver names the rule a rejected object broke, which is more accurate than anything this handler can restate

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,7 +108,7 @@ func createRequestFixture(name string) leaseCreateRequest {
 		Replicas:             2,
 		DurationSeconds:      seconds(90 * time.Minute),
 		TeardownGraceSeconds: ptr(int64(30)),
-		WorkloadNamespace:    "batch",
+		WorkloadNamespaces:   []string{"batch"},
 	}
 }
 
@@ -146,8 +147,9 @@ func TestLeaseCreateStoresExactlyTheSubmittedFields(t *testing.T) {
 	if grace := present(t, "teardownGrace", spec.TeardownGrace); grace.Duration != 30*time.Second {
 		t.Errorf("teardownGrace = %s, want 30s", grace.Duration)
 	}
-	if workload := present(t, "workload", spec.Workload); workload.Namespace != "batch" {
-		t.Errorf("workload namespace = %q, want %q", workload.Namespace, "batch")
+	workload := present(t, "workload", spec.Workload)
+	if want := []string{"batch"}; !reflect.DeepEqual(workload.Namespaces, want) {
+		t.Errorf("workload namespaces = %v, want %v", workload.Namespaces, want)
 	}
 
 	requirements := present(t, "requirements", spec.Requirements)

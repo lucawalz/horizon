@@ -711,8 +711,15 @@ function LeaseFacts({ lease }: { lease: LeaseDetailResponse }) {
           <Definition label="Watchdog deadline">
             <Stamp at={lease.watchdogDeadline} />
           </Definition>
-          <Definition label="Workload namespace">
-            {lease.workloadNamespace ?? <span className="text-subtle">none drained</span>}
+          <Definition label="Workload namespaces">
+            {lease.workloadNamespaces.length > 0 ? (
+              lease.workloadNamespaces.join(', ')
+            ) : (
+              <span className="text-subtle">none drained</span>
+            )}
+          </Definition>
+          <Definition label="Workload selector">
+            {lease.workloadSelector ?? <span className="text-subtle">every workload</span>}
           </Definition>
         </DefinitionGrid>
       </Panel>

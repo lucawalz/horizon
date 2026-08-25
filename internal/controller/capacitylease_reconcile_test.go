@@ -420,7 +420,7 @@ func TestTheRequeueNeverOvershootsTheDeadline(t *testing.T) {
 
 func TestWorkloadMigrationRunsOnceInstancesAreReady(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload()
 	h.settle()
@@ -441,14 +441,14 @@ func TestWorkloadMigrationRunsOnceInstancesAreReady(t *testing.T) {
 
 func TestARepeatedMigrationPassReportsTheSameWorkloads(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload()
 	h.settle()
 	h.joinNode(h.instanceName(0), true)
 	h.settle()
 
-	if _, err := h.reconciler().migrateWorkload(t.Context(), h.lease(), testWorkloadNS); err != nil {
+	if _, err := h.reconciler().migrateWorkload(t.Context(), h.lease()); err != nil {
 		t.Fatalf("second migration pass: %v", err)
 	}
 
@@ -460,7 +460,7 @@ func TestARepeatedMigrationPassReportsTheSameWorkloads(t *testing.T) {
 
 func TestAWorkloadNamespaceWithoutWorkloadsReportsNone(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.settle()
 	h.joinNode(h.instanceName(0), true)
@@ -715,7 +715,7 @@ func TestCreateInstanceRecordsTheProvidersCreationTimestamp(t *testing.T) {
 
 func TestASeamlessMigrationRecordsNoWarnings(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload()
 	h.settle()
@@ -730,7 +730,7 @@ func TestASeamlessMigrationRecordsNoWarnings(t *testing.T) {
 
 func TestADisruptiveWorkloadIsNamedBeforeItIsMoved(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload(func(deployment *appsv1.Deployment) {
 		deployment.Spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
@@ -758,7 +758,7 @@ func TestADisruptiveWorkloadIsNamedBeforeItIsMoved(t *testing.T) {
 
 func TestAWorkloadHeldByAnotherLeaseIsNotReportedAsLosingAvailability(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload(func(deployment *appsv1.Deployment) {
 		deployment.Annotations = map[string]string{k8s.PrePlacementAnnotationKey: "{}"}
@@ -779,7 +779,7 @@ func TestAWorkloadHeldByAnotherLeaseIsNotReportedAsLosingAvailability(t *testing
 
 func TestAClassificationFailureWarnsWithoutBlockingTheMigration(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload(func(deployment *appsv1.Deployment) {
 		deployment.Annotations = map[string]string{k8s.PrePlacementAnnotationKey: "{not json"}

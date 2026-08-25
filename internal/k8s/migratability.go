@@ -38,26 +38,25 @@ type WorkloadMigratability struct {
 	Reasons  []string
 }
 
-func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]WorkloadMigratability, error) {
-	if err := ValidateNamespace(namespace); err != nil {
-		return nil, fmt.Errorf("classify: %w", err)
-	}
+func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, targets TargetSet, lease LeaseIdentity) ([]WorkloadMigratability, error) {
 	if err := lease.validate(); err != nil {
 		return nil, fmt.Errorf("classify: %w", err)
 	}
 
 	var assessments []WorkloadMigratability
-	for _, wc := range workloadClients(kc, namespace) {
-		targets, err := wc.list(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("classify: list %s in %q: %w", wc.plural(), wc.namespace, err)
-		}
-		for _, t := range targets {
-			assessment, err := t.migratability(wc, lease)
+	for _, namespace := range targets.namespaces {
+		for _, wc := range workloadClients(kc, namespace, targets.selector) {
+			workloads, err := wc.list(ctx)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("classify: list %s in %q: %w", wc.plural(), wc.namespace, err)
 			}
-			assessments = append(assessments, assessment)
+			for _, t := range workloads {
+				assessment, err := t.migratability(wc, lease)
+				if err != nil {
+					return nil, err
+				}
+				assessments = append(assessments, assessment)
+			}
 		}
 	}
 	return assessments, nil

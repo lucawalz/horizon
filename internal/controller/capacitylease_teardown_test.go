@@ -151,7 +151,7 @@ func TestAnExpiredLeaseReleasesItsCapacityAndKeepsItsObject(t *testing.T) {
 
 func TestExpiryWhileTheWorkloadIsStillMigratingRestoresPlacement(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload()
 	h.settle()
@@ -421,7 +421,7 @@ func TestADrainedNodeLosesItsPodsWithinTheGrace(t *testing.T) {
 
 func TestTeardownWithholdsReleaseWhileTheWorkloadRemainsOnBurstNodes(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload()
 	h.settle()
@@ -453,7 +453,7 @@ func TestTeardownWithholdsReleaseWhileTheWorkloadRemainsOnBurstNodes(t *testing.
 
 func TestTeardownProceedsOnceTheWorkloadLeavesTheBurstNodes(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload()
 	h.settle()
@@ -480,7 +480,7 @@ func TestTeardownProceedsOnceTheWorkloadLeavesTheBurstNodes(t *testing.T) {
 
 func TestTeardownProceedsAfterTheRestoreGraceElapsesWithTheWorkloadStillNotReady(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
 	})
 	h.seedWorkload()
@@ -513,7 +513,7 @@ func TestTeardownProceedsAfterTheRestoreGraceElapsesWithTheWorkloadStillNotReady
 
 func TestAZeroTeardownGraceSkipsTheRestoreGate(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: 0}
 	})
 	h.seedWorkload()
@@ -548,7 +548,7 @@ func TestAZeroTeardownGraceSkipsTheRestoreGate(t *testing.T) {
 func TestTeardownDoesNotWaitOnAWorkloadThatNeverMigrated(t *testing.T) {
 	const shortLease = 5 * time.Minute
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 		lease.Spec.Duration = metav1.Duration{Duration: shortLease}
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: 10 * time.Minute}
 	})
@@ -693,7 +693,7 @@ func TestTeardownBoundIsSharedAcrossReplicasNotMultipliedPerInstance(t *testing.
 
 func TestTheRestoreGateAndTheDrainDrawFromTheSameBudget(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
 	})
 	h.seedWorkload()
@@ -732,7 +732,7 @@ func TestTheRestoreGateAndTheDrainDrawFromTheSameBudget(t *testing.T) {
 
 func TestTheRestoreGateLeavesTheDrainAUsableGrace(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
 	})
 	h.seedWorkload()
@@ -840,7 +840,7 @@ func TestRemainingTeardownBudgetNeverExceedsGraceOrGoesNegative(t *testing.T) {
 
 func TestRestoringPlacementClearsTheMigrationWarnings(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
-		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.seedWorkload(func(deployment *appsv1.Deployment) {
 		deployment.Spec.Paused = true

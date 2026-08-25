@@ -3,8 +3,11 @@ package k8s
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+	"time"
 
 	"github.com/lucawalz/horizon/internal/provider"
 	corev1 "k8s.io/api/core/v1"
@@ -28,9 +31,13 @@ const (
 	strategicPatchReplace     = "replace"
 	opMigrate                 = "migrate"
 	opRestore                 = "restore-placement"
-	abortOnEvictionError      = true
-	continueOnEvictionError   = false
+	// a short budget spent entirely on one wait would leave a single attempt, so the delay shrinks with the budget instead
+	evictAttemptsPerBudget = 4
 )
+
+func evictRetryDelayWithin(budget time.Duration) time.Duration {
+	return min(evictRetryDelay, budget/evictAttemptsPerBudget)
+}
 
 var namespaceNameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
@@ -223,13 +230,13 @@ func (wc workloadClient) ref(name string) string {
 	return wc.namespace + "/" + wc.kind + "/" + name
 }
 
-func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient {
+func deploymentClient(kc kubernetes.Interface, namespace string, selector labels.Selector) workloadClient {
 	api := kc.AppsV1().Deployments(namespace)
 	return workloadClient{
 		kind:      kindDeployment,
 		namespace: namespace,
 		list: func(ctx context.Context) ([]workloadTarget, error) {
-			list, err := api.List(ctx, metav1.ListOptions{})
+			list, err := api.List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
 			if err != nil {
 				return nil, err
 			}
@@ -260,13 +267,13 @@ func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient 
 	}
 }
 
-func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient {
+func statefulSetClient(kc kubernetes.Interface, namespace string, selector labels.Selector) workloadClient {
 	api := kc.AppsV1().StatefulSets(namespace)
 	return workloadClient{
 		kind:      kindStatefulSet,
 		namespace: namespace,
 		list: func(ctx context.Context) ([]workloadTarget, error) {
-			list, err := api.List(ctx, metav1.ListOptions{})
+			list, err := api.List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
 			if err != nil {
 				return nil, err
 			}
@@ -296,51 +303,97 @@ func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient
 	}
 }
 
-func workloadClients(kc kubernetes.Interface, namespace string) []workloadClient {
-	return []workloadClient{deploymentClient(kc, namespace), statefulSetClient(kc, namespace)}
+func workloadClients(kc kubernetes.Interface, namespace string, selector labels.Selector) []workloadClient {
+	return []workloadClient{deploymentClient(kc, namespace, selector), statefulSetClient(kc, namespace, selector)}
 }
 
-func Migrate(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]string, error) {
-	if err := ValidateNamespace(namespace); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
+type TargetSet struct {
+	namespaces []string
+	selector   labels.Selector
+}
+
+func NewNamespaceSet(namespaces []string) (TargetSet, error) {
+	if len(namespaces) == 0 {
+		return TargetSet{}, fmt.Errorf("target set: names no namespace")
 	}
+	for _, namespace := range namespaces {
+		if err := ValidateNamespace(namespace); err != nil {
+			return TargetSet{}, fmt.Errorf("target set: %w", err)
+		}
+	}
+	return TargetSet{namespaces: slices.Clone(namespaces), selector: labels.Everything()}, nil
+}
+
+func NewTargetSet(namespaces []string, selector *metav1.LabelSelector) (TargetSet, error) {
+	set, err := NewNamespaceSet(namespaces)
+	if err != nil {
+		return TargetSet{}, err
+	}
+	if selector == nil {
+		return set, nil
+	}
+	compiled, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		return TargetSet{}, fmt.Errorf("target set: workload selector: %w", err)
+	}
+	set.selector = compiled
+	return set, nil
+}
+
+type MigrationResult struct {
+	Workloads          []string
+	MigratedNamespaces []string
+}
+
+func Migrate(ctx context.Context, kc kubernetes.Interface, targets TargetSet, lease LeaseIdentity, evictionBudget time.Duration) (MigrationResult, error) {
 	if err := lease.validate(); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
+		return MigrationResult{}, fmt.Errorf("migrate: %w", err)
 	}
 
 	hasNode, err := leaseNodePresent(ctx, kc, lease.UID)
 	if err != nil {
-		return nil, err
+		return MigrationResult{}, err
 	}
 	if !hasNode {
-		return nil, fmt.Errorf("migrate: no node carries label %s=%s", LeaseUIDLabelKey, lease.UID)
+		return MigrationResult{}, fmt.Errorf("migrate: no node carries label %s=%s", LeaseUIDLabelKey, lease.UID)
 	}
 
+	var result MigrationResult
+	var failures error
+	for _, namespace := range targets.namespaces {
+		moved, err := migrateNamespace(ctx, kc, namespace, targets.selector, lease, evictionBudget)
+		result.Workloads = append(result.Workloads, moved...)
+		if err != nil {
+			failures = errors.Join(failures, err)
+			continue
+		}
+		result.MigratedNamespaces = append(result.MigratedNamespaces, namespace)
+	}
+	return result, failures
+}
+
+// every selector stays inside the namespace it came from, so a label two namespaces share cannot govern eviction in either from the other
+func migrateNamespace(ctx context.Context, kc kubernetes.Interface, namespace string, selector labels.Selector, lease LeaseIdentity, evictionBudget time.Duration) ([]string, error) {
 	var onBurst []string
 	var notSelfRolling []labels.Selector
-	moved := false
-	for _, wc := range workloadClients(kc, namespace) {
-		names, patched, selectors, err := migrateWorkloads(ctx, wc, lease)
+	for _, wc := range workloadClients(kc, namespace, selector) {
+		names, selectors, err := migrateWorkloads(ctx, wc, lease)
 		onBurst = append(onBurst, names...)
 		notSelfRolling = append(notSelfRolling, selectors...)
-		moved = moved || patched
 		if err != nil {
 			return onBurst, err
 		}
 	}
-	if !moved {
-		return onBurst, nil
-	}
-	if err := evictWorkloadPods(ctx, kc, namespace, notSelfRolling, opMigrate, abortOnEvictionError); err != nil {
+	if err := evictStrandedPods(ctx, kc, namespace, notSelfRolling, lease, evictionBudget); err != nil {
 		return onBurst, err
 	}
 	return onBurst, nil
 }
 
-func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentity) (onBurst []string, patched bool, notSelfRolling []labels.Selector, err error) {
+func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentity) (onBurst []string, notSelfRolling []labels.Selector, err error) {
 	targets, err := wc.list(ctx)
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
+		return nil, nil, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
 	}
 	for _, t := range targets {
 		if _, alreadyMoved := t.annotations[PrePlacementAnnotationKey]; alreadyMoved {
@@ -351,26 +404,25 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 			// a marker written before ownership was recorded names no lease, and only stamping one makes the workload countable at the readiness gate
 			if !owned {
 				if err := stampOwner(ctx, wc, t.name, lease.UID); err != nil {
-					return onBurst, patched, notSelfRolling, err
+					return onBurst, notSelfRolling, err
 				}
 			}
-			onBurst = append(onBurst, wc.ref(t.name))
-			continue
+		} else {
+			patchData, err := buildMigratePatch(t, lease)
+			if err != nil {
+				return onBurst, notSelfRolling, err
+			}
+			if err := wc.patch(ctx, t.name, patchData); err != nil {
+				return onBurst, notSelfRolling, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
+			}
 		}
-		patchData, err := buildMigratePatch(t, lease)
-		if err != nil {
-			return onBurst, patched, notSelfRolling, err
-		}
-		if err := wc.patch(ctx, t.name, patchData); err != nil {
-			return onBurst, patched, notSelfRolling, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
-		}
-		patched = true
+		onBurst = append(onBurst, wc.ref(t.name))
+		// a claimed workload counts even when this pass patched nothing, so a retry still reaches the pods a disruption budget refused
 		if !t.selfRolls() {
 			notSelfRolling = append(notSelfRolling, t.selector)
 		}
-		onBurst = append(onBurst, wc.ref(t.name))
 	}
-	return onBurst, patched, notSelfRolling, nil
+	return onBurst, notSelfRolling, nil
 }
 
 func stampOwner(ctx context.Context, wc workloadClient, name, leaseUID string) error {
@@ -429,7 +481,7 @@ func evictablePods(pods []corev1.Pod, selectors []labels.Selector) []*corev1.Pod
 	var evictable []*corev1.Pod
 	for i := range pods {
 		pod := &pods[i]
-		if isDaemonSetPod(pod) {
+		if isDaemonSetPod(pod) || isTerminalPod(pod) {
 			continue
 		}
 		if !matchedByWorkload(pod.Labels, selectors) {
@@ -450,23 +502,75 @@ func matchedByWorkload(podLabels map[string]string, selectors []labels.Selector)
 	return false
 }
 
-func evictWorkloadPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, op string, abortOnError bool) error {
+func workloadPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, op string) ([]*corev1.Pod, error) {
 	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("%s: list pods in %q: %w", op, namespace, err)
+		return nil, fmt.Errorf("%s: list pods in %q: %w", op, namespace, err)
 	}
-	var firstErr error
-	for _, pod := range evictablePods(pods.Items, selectors) {
-		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
-		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			err = fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err)
-			if abortOnError {
-				return err
-			}
-			recordFirst(&firstErr, err)
+	return evictablePods(pods.Items, selectors), nil
+}
+
+func evictWorkloadPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, op string, budget time.Duration) error {
+	pods, err := workloadPods(ctx, kc, namespace, selectors, op)
+	if err != nil {
+		return err
+	}
+	return evictPods(ctx, kc, pods, op, budget)
+}
+
+// gating on where the pods sit rather than on what this pass patched is what lets a retry finish a namespace a disruption budget left half moved
+func evictStrandedPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, lease LeaseIdentity, budget time.Duration) error {
+	if len(selectors) == 0 {
+		return nil
+	}
+	pods, err := workloadPods(ctx, kc, namespace, selectors, opMigrate)
+	if err != nil {
+		return err
+	}
+	burstNodes, err := leaseNodes(ctx, kc, lease.UID)
+	if err != nil {
+		return fmt.Errorf("%s: list nodes: %w", opMigrate, err)
+	}
+
+	var stranded []*corev1.Pod
+	for _, pod := range pods {
+		if !burstNodes[pod.Spec.NodeName] {
+			stranded = append(stranded, pod)
 		}
 	}
+	return evictPods(ctx, kc, stranded, opMigrate, budget)
+}
+
+func evictPods(ctx context.Context, kc kubernetes.Interface, pods []*corev1.Pod, op string, budget time.Duration) error {
+	deadline := time.Now().Add(budget)
+	delay := evictRetryDelayWithin(budget)
+	remaining, firstErr := evictOnce(ctx, kc, pods, op)
+	for len(remaining) > 0 && delay > 0 && time.Now().Add(delay).Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return errors.Join(firstErr, ctx.Err())
+		case <-time.After(delay):
+		}
+		remaining, firstErr = evictOnce(ctx, kc, remaining, op)
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
 	return firstErr
+}
+
+// one pod a disruption budget refuses must not abandon the rest of the namespace, so every pod is attempted before any is retried
+func evictOnce(ctx context.Context, kc kubernetes.Interface, pods []*corev1.Pod, op string) ([]*corev1.Pod, error) {
+	var refused []*corev1.Pod
+	var firstErr error
+	for _, pod := range pods {
+		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
+		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
+			refused = append(refused, pod)
+			recordFirst(&firstErr, fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err))
+		}
+	}
+	return refused, firstErr
 }
 
 func buildRestorePatch(kind, name, placement string, current map[string]string) ([]byte, error) {
@@ -495,18 +599,28 @@ func recordFirst(firstErr *error, err error) {
 	}
 }
 
-func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]string, error) {
-	if err := ValidateNamespace(namespace); err != nil {
-		return nil, fmt.Errorf("restore-placement: %w", err)
-	}
+func RestorePlacement(ctx context.Context, kc kubernetes.Interface, targets TargetSet, lease LeaseIdentity) ([]string, error) {
 	if err := lease.validate(); err != nil {
 		return nil, fmt.Errorf("restore-placement: %w", err)
 	}
 
 	var restored []string
+	var failures error
+	// a namespace whose restore failed must be reached again on the next pass, so no namespace is skipped because another one failed
+	for _, namespace := range targets.namespaces {
+		names, err := restoreNamespace(ctx, kc, namespace, lease)
+		restored = append(restored, names...)
+		failures = errors.Join(failures, err)
+	}
+	return restored, failures
+}
+
+func restoreNamespace(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]string, error) {
+	var restored []string
 	var notSelfRolling []labels.Selector
 	var firstErr error
-	for _, wc := range workloadClients(kc, namespace) {
+	// restore reads every workload rather than the target selector's, so a workload whose labels changed while it was on burst is still put back
+	for _, wc := range workloadClients(kc, namespace, labels.Everything()) {
 		names, selectors, err := restoreWorkloads(ctx, wc, lease)
 		restored = append(restored, names...)
 		notSelfRolling = append(notSelfRolling, selectors...)
@@ -515,7 +629,7 @@ func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace st
 	if len(restored) == 0 {
 		return nil, firstErr
 	}
-	recordFirst(&firstErr, evictWorkloadPods(ctx, kc, namespace, notSelfRolling, opRestore, continueOnEvictionError))
+	recordFirst(&firstErr, evictWorkloadPods(ctx, kc, namespace, notSelfRolling, opRestore, 0))
 	return restored, firstErr
 }
 
@@ -570,15 +684,33 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 	return false
 }
 
-func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) (bool, error) {
+func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, targets TargetSet, lease LeaseIdentity) (bool, error) {
 	const op = "workload-on-burst-nodes"
+	if err := lease.validate(); err != nil {
+		return false, fmt.Errorf("%s: %w", op, err)
+	}
+
+	settled := true
+	placed := 0
+	for _, namespace := range targets.namespaces {
+		count, ok, err := namespaceOnBurstNodes(ctx, kc, namespace, lease, op)
+		if err != nil {
+			return false, err
+		}
+		settled = settled && ok
+		placed += count
+	}
+	return settled && placed > 0, nil
+}
+
+func namespaceOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity, op string) (int, bool, error) {
 	burstNodes, pods, err := leaseNodesAndPods(ctx, kc, namespace, lease, op)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
 	owned, err := ownedWorkloadSelectors(ctx, kc, namespace, lease)
 	if err != nil {
-		return false, fmt.Errorf("%s: %w", op, err)
+		return 0, false, fmt.Errorf("%s: %w", op, err)
 	}
 	placed := 0
 	for i := range pods {
@@ -587,16 +719,34 @@ func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespac
 			continue
 		}
 		if p.Status.Phase != corev1.PodRunning || !burstNodes[p.Spec.NodeName] {
-			return false, nil
+			return 0, false, nil
 		}
 		placed++
 	}
-	return placed > 0, nil
+	return placed, true, nil
 }
 
-func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) (bool, error) {
+func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, targets TargetSet, lease LeaseIdentity) (bool, error) {
+	const op = "workload-off-burst-nodes"
+	if err := lease.validate(); err != nil {
+		return false, fmt.Errorf("%s: %w", op, err)
+	}
+
+	// an empty namespace reads ready, so the fold is a conjunction rather than a shortcut that lets one empty namespace mask a stuck one
+	restored := true
+	for _, namespace := range targets.namespaces {
+		off, err := namespaceOffBurstNodes(ctx, kc, namespace, lease, op)
+		if err != nil {
+			return false, err
+		}
+		restored = restored && off
+	}
+	return restored, nil
+}
+
+func namespaceOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity, op string) (bool, error) {
 	// restore clears the owner marker before this gate runs, so the node a pod sits on is all that is left to say whether it still holds this lease's capacity
-	burstNodes, pods, err := leaseNodesAndPods(ctx, kc, namespace, lease, "workload-off-burst-nodes")
+	burstNodes, pods, err := leaseNodesAndPods(ctx, kc, namespace, lease, op)
 	if err != nil {
 		return false, err
 	}
@@ -613,12 +763,6 @@ func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespa
 }
 
 func leaseNodesAndPods(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity, opName string) (map[string]bool, []corev1.Pod, error) {
-	if namespace == "" {
-		return nil, nil, fmt.Errorf("%s: namespace must not be empty", opName)
-	}
-	if err := lease.validate(); err != nil {
-		return nil, nil, fmt.Errorf("%s: %w", opName, err)
-	}
 	burstNodes, err := leaseNodes(ctx, kc, lease.UID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: list nodes: %w", opName, err)
@@ -632,7 +776,8 @@ func leaseNodesAndPods(ctx context.Context, kc kubernetes.Interface, namespace s
 
 func ownedWorkloadSelectors(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]labels.Selector, error) {
 	var owned []labels.Selector
-	for _, wc := range workloadClients(kc, namespace) {
+	// the gate counts what this lease actually moved, which the owner label already names, so the target selector adds nothing here
+	for _, wc := range workloadClients(kc, namespace, labels.Everything()) {
 		targets, err := wc.list(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("list %s in %q: %w", wc.plural(), wc.namespace, err)

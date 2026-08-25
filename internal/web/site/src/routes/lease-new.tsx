@@ -5,7 +5,7 @@ import { Button, ButtonLink, controlClass, Field, Numeric } from '@/components/c
 import type { LeaseCreateRequest, MachineCatalogueResponse, ProviderConfigSummary } from '@/lib/api'
 import { createLease, fetchMachines, fetchNamespaces, machinesPath } from '@/lib/api'
 import { errorFor } from '@/lib/errors'
-import { fieldValue, numberValue } from '@/lib/form'
+import { fieldValue, fieldValues, numberValue } from '@/lib/form'
 import { EmptyState, Loading, Notice, PageHeader, Panel } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
@@ -93,7 +93,7 @@ function requestFrom(form: FormData): LeaseCreateRequest {
     replicas: numberValue(form, field.replicas),
     durationSeconds: numberValue(form, field.duration) * secondsPerMinute,
     teardownGraceSeconds: numberValue(form, field.grace),
-    workloadNamespace: fieldValue(form, field.workload),
+    workloadNamespaces: fieldValues(form, field.workload),
   }
 }
 

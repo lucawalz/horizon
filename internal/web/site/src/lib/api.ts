@@ -106,7 +106,8 @@ export interface LeaseDetailResponse {
   selection: LeaseSelection | null
   durationSeconds: number
   teardownGraceSeconds: number | null
-  workloadNamespace: string | null
+  workloadNamespaces: string[]
+  workloadSelector: string | null
   migratedWorkloads: string[]
   migrationWarnings: MigrationWarning[]
   acceptedAt: string | null
@@ -173,7 +174,7 @@ export interface LeaseCreateRequest {
   replicas: number
   durationSeconds: number
   teardownGraceSeconds: number | null
-  workloadNamespace: string
+  workloadNamespaces: string[]
 }
 
 export interface SecretKeyRequest {
