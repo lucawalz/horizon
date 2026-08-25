@@ -47,8 +47,12 @@ type savedPlacement struct {
 }
 
 type metadataPatch struct {
-	Annotations map[string]*string `json:"annotations"`
-	Labels      map[string]*string `json:"labels"`
+	Annotations map[string]*string `json:"annotations,omitempty"`
+	Labels      map[string]*string `json:"labels,omitempty"`
+}
+
+type metadataOnlyPatch struct {
+	Metadata metadataPatch `json:"metadata"`
 }
 
 type podPlacementPatch struct {
@@ -110,6 +114,12 @@ func savedPlacementMarkers(placement, leaseUID string) metadataPatch {
 			LeaseUIDLabelKey:       &leaseUID,
 		},
 	}
+}
+
+func buildOwnershipPatch(leaseUID string) ([]byte, error) {
+	return json.Marshal(metadataOnlyPatch{Metadata: metadataPatch{
+		Labels: map[string]*string{LeaseUIDLabelKey: &leaseUID},
+	}})
 }
 
 func clearedPlacementMarkers() metadataPatch {
@@ -329,10 +339,17 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 	}
 	for _, t := range targets {
 		if _, alreadyMoved := t.annotations[PrePlacementAnnotationKey]; alreadyMoved {
-			// a marker written before ownership was recorded names no lease, so no other lease can be holding it
-			if owner, owned := placementOwner(t.labels); !owned || owner == lease.UID {
-				onBurst = append(onBurst, workloadRef(wc.kind, t.name))
+			owner, owned := placementOwner(t.labels)
+			if owned && owner != lease.UID {
+				continue
 			}
+			// a marker written before ownership was recorded names no lease, and only stamping one makes the workload countable at the readiness gate
+			if !owned {
+				if err := stampOwner(ctx, wc, t.name, lease.UID); err != nil {
+					return onBurst, patched, notSelfRolling, err
+				}
+			}
+			onBurst = append(onBurst, workloadRef(wc.kind, t.name))
 			continue
 		}
 		patchData, err := buildMigratePatch(t, lease)
@@ -349,6 +366,17 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 		onBurst = append(onBurst, workloadRef(wc.kind, t.name))
 	}
 	return onBurst, patched, notSelfRolling, nil
+}
+
+func stampOwner(ctx context.Context, wc workloadClient, name, leaseUID string) error {
+	patchData, err := buildOwnershipPatch(leaseUID)
+	if err != nil {
+		return fmt.Errorf("migrate: marshal owner patch for %s %q: %w", wc.kind, name, err)
+	}
+	if err := wc.patch(ctx, name, patchData); err != nil {
+		return fmt.Errorf("migrate: stamp owner on %s %q: %w", wc.kind, name, err)
+	}
+	return nil
 }
 
 func buildMigratePatch(t workloadTarget, lease LeaseIdentity) ([]byte, error) {

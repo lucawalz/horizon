@@ -46,10 +46,15 @@ func makeDSPod(name, ns, node string) *corev1.Pod {
 }
 
 const (
-	testNS             = "sentio-systems"
-	testNSB            = "sentio-systems-b"
-	emptyPlacementJSON = "{}"
+	testNS              = "sentio-systems"
+	testNSB             = "sentio-systems-b"
+	emptyPlacementJSON  = "{}"
+	pinnedPlacementJSON = `{"nodeSelector":{"disktype":"ssd"}}`
 )
+
+func appSelector(app string) *metav1.LabelSelector {
+	return &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}}
+}
 
 var testLease = k8s.LeaseIdentity{UID: "uid-a", Name: "lease-a"}
 
@@ -791,17 +796,23 @@ func TestMigrateNeitherPatchesNorClaimsAnotherLeasesWorkload(t *testing.T) {
 	}
 }
 
-func TestMigrateClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
+func TestMigrateStampsAndClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
+	liveAffinity := hostSpreadAffinity(100)
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "dep1",
 			Namespace:   testNS,
-			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: pinnedPlacementJSON},
 			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
 		},
+		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("web"),
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: liveAffinity}},
+		},
 	}
-	kc := fake.NewSimpleClientset(node, dep)
+	pod := labelledPod("dep1-pod", "web", "burst-1", corev1.PodRunning)
+	kc := fake.NewSimpleClientset(node, dep, pod)
 	evictAndDelete(kc)
 
 	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
@@ -811,8 +822,27 @@ func TestMigrateClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	if len(migrated) != 1 || migrated[0] != "deployment/dep1" {
 		t.Errorf("migrated = %v, want [deployment/dep1]: no other lease holds a marker that names none", migrated)
 	}
-	if got := patchCount(kc, "deployments", "dep1"); got != 0 {
-		t.Errorf("dep1 patched %d times, which would overwrite the saved placement", got)
+
+	stored := getDeployment(t, kc, "dep1")
+	if got := stored.Labels[provider.LeaseUIDLabelKey]; got != testLease.UID {
+		t.Errorf("owner label = %q, want %q: claiming without stamping leaves the workload uncountable", got, testLease.UID)
+	}
+	if got := stored.Annotations[k8s.PrePlacementAnnotationKey]; got != pinnedPlacementJSON {
+		t.Errorf("placement annotation = %q, want the pre-burst state %q left intact", got, pinnedPlacementJSON)
+	}
+	if got := stored.Spec.Template.Spec.Affinity; !reflect.DeepEqual(got, liveAffinity) {
+		t.Errorf("affinity = %+v, want the live placement %+v left alone", got, liveAffinity)
+	}
+	if got := evictionNames(kc); len(got) != 0 {
+		t.Errorf("evicted %v, want none: stamping an owner moves no pod", got)
+	}
+
+	placed, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if !placed {
+		t.Error("a claimed workload never reaches the readiness gate, so the lease waits until it expires")
 	}
 }
 
