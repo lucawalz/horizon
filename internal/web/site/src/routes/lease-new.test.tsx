@@ -25,6 +25,7 @@ const gibibyte = 4 * 1024 * 1024 * 1024
 const refused = 'CapacityLease.horizon.dev "batch-run" is invalid: spec.replicas: Invalid value: 9'
 const forbidden = 403
 const denied = 'namespaces is forbidden: User "operator" cannot list resource "namespaces"'
+const replicateChoice = 'input[name="workloadMode"][value="replicate"]'
 
 const refusedNamespaces = () =>
   jsonResponse({ status: forbidden, title: 'Forbidden', detail: denied }, forbidden)
@@ -110,7 +111,75 @@ describe('the create form', () => {
       durationSeconds: 3600,
       teardownGraceSeconds: 120,
       workloadNamespaces: [],
+      workloadSelector: '',
+      workloadMode: 'move',
+      workloadBurstReplicas: null,
     })
+
+    await view.unmount()
+  })
+
+  it('offers no burst replicas until the lease replicates its workload', async () => {
+    stubCluster(() => jsonResponse(leaseDetailBody()))
+    const { view } = await newLeaseForm()
+
+    expect(view.container.querySelector('input[name="burstReplicas"]')).toBeNull()
+
+    await click(control<HTMLInputElement>(view.container, replicateChoice))
+    const replicas = control<HTMLInputElement>(view.container, 'input[name="burstReplicas"]')
+    expect(replicas.required).toBe(true)
+    expect(replicas.min).toBe('1')
+
+    await view.unmount()
+  })
+
+  it('submits the pods a replicating lease runs beside the workload', async () => {
+    const respond = stubCluster(() => jsonResponse(leaseDetailBody(), 201))
+    const { view, form } = await newLeaseForm()
+
+    await fill(control<HTMLInputElement>(view.container, 'input[name="name"]'), 'burst-run')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="region"]'), 'nbg1')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="workload"]'), 'batch')
+    await click(control<HTMLInputElement>(view.container, replicateChoice))
+    await fill(control<HTMLInputElement>(view.container, 'input[name="burstReplicas"]'), '4')
+    await send(form)
+
+    const request = submitted(respond.mock.calls[respond.mock.calls.length - 1][1]?.body)
+    expect(request.workloadMode).toBe('replicate')
+    expect(request.workloadBurstReplicas).toBe(4)
+
+    await view.unmount()
+  })
+
+  // the apiserver refuses a count in move mode outright, so a form that sends one refuses every lease that moves
+  it('names no burst replicas on a lease that moves its workload', async () => {
+    const respond = stubCluster(() => jsonResponse(leaseDetailBody(), 201))
+    const { view, form } = await newLeaseForm()
+
+    await fill(control<HTMLInputElement>(view.container, 'input[name="name"]'), 'moved-run')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="region"]'), 'nbg1')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="workload"]'), 'batch')
+    await send(form)
+
+    const request = submitted(respond.mock.calls[respond.mock.calls.length - 1][1]?.body)
+    expect(request.workloadMode).toBe('move')
+    expect(request.workloadBurstReplicas).toBeNull()
+
+    await view.unmount()
+  })
+
+  it('submits the workload selector the form was given', async () => {
+    const respond = stubCluster(() => jsonResponse(leaseDetailBody(), 201))
+    const { view, form } = await newLeaseForm()
+
+    await fill(control<HTMLInputElement>(view.container, 'input[name="name"]'), 'narrowed-run')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="region"]'), 'nbg1')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="workload"]'), 'batch')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="workloadSelector"]'), ' tier=batch ')
+    await send(form)
+
+    const request = submitted(respond.mock.calls[respond.mock.calls.length - 1][1]?.body)
+    expect(request.workloadSelector).toBe('tier=batch')
 
     await view.unmount()
   })

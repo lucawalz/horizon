@@ -36,10 +36,15 @@ const field = {
   duration: 'duration',
   grace: 'grace',
   workload: 'workload',
+  workloadSelector: 'workloadSelector',
+  workloadMode: 'workloadMode',
+  burstReplicas: 'burstReplicas',
 } as const
 
 const requirementsMode = 'requirements'
 const sizeMode = 'size'
+const moveMode = 'move'
+const replicateMode = 'replicate'
 const namespaceListId = 'workload-namespaces'
 const addNamespaceId = 'add-workload-namespace'
 
@@ -47,6 +52,17 @@ const replicaBounds = { min: 1, max: 8, initial: 2 }
 const coreBounds = { min: 1, max: 64, initial: 2 }
 const durationBounds = { ...leaseMinutes, initial: minutesPerHour }
 const graceBounds = { min: 0, max: 15 * secondsPerMinute, initial: 2 * secondsPerMinute }
+const burstReplicaBounds = { min: 1, initial: 2 }
+
+const sizingChoices = [
+  { value: requirementsMode, label: 'By requirement' },
+  { value: sizeMode, label: 'By machine type' },
+]
+
+const workloadChoices = [
+  { value: moveMode, label: 'Move' },
+  { value: replicateMode, label: 'Replicate' },
+]
 
 const architectures = ['x86', 'arm']
 const cpuTypes = ['shared', 'dedicated']
@@ -73,6 +89,7 @@ function sizingOf(form: FormData, was: Sizing): Sizing {
 
 function requestFrom(form: FormData): LeaseCreateRequest {
   const byRequirement = fieldValue(form, field.mode) === requirementsMode
+  const replicating = fieldValue(form, field.workloadMode) === replicateMode
   const memory = fieldValue(form, field.memory)
   const cpuType = fieldValue(form, field.cpuType)
 
@@ -95,6 +112,10 @@ function requestFrom(form: FormData): LeaseCreateRequest {
     durationSeconds: numberValue(form, field.duration) * secondsPerMinute,
     teardownGraceSeconds: numberValue(form, field.grace),
     workloadNamespaces: fieldValues(form, field.workload),
+    workloadSelector: fieldValue(form, field.workloadSelector),
+    workloadMode: fieldValue(form, field.workloadMode),
+    // the apiserver refuses a count outside replicate mode, so a moving lease must name none at all
+    workloadBurstReplicas: replicating ? numberValue(form, field.burstReplicas) : null,
   }
 }
 
@@ -105,20 +126,27 @@ function memoryHint(sizing: Sizing): string {
   return `Resolves to ${formatCount(bytesFor(Number(sizing.memory), sizing.unit))} bytes.`
 }
 
-function ModeChoice({ mode }: { mode: string }) {
+function ModeChoice({
+  name,
+  legend,
+  choices,
+  chosen,
+}: {
+  name: string
+  legend: string
+  choices: { value: string; label: string }[]
+  chosen: string
+}) {
   return (
     <fieldset className="flex flex-wrap items-center gap-gutter">
-      <legend className="mb-tight text-label-12 text-subtle">Sizing</legend>
-      {[
-        { value: requirementsMode, label: 'By requirement' },
-        { value: sizeMode, label: 'By machine type' },
-      ].map((choice) => (
+      <legend className="mb-tight text-label-12 text-subtle">{legend}</legend>
+      {choices.map((choice) => (
         <label key={choice.value} className="flex items-center gap-snug text-label-13 text-ink">
           <input
             type="radio"
-            name={field.mode}
+            name={name}
             value={choice.value}
-            defaultChecked={choice.value === mode}
+            defaultChecked={choice.value === chosen}
             className="accent-brand"
           />
           {choice.label}
@@ -210,12 +238,12 @@ function useNamespaceSuggestions(): string[] {
   return names
 }
 
-function WorkloadField({ suggestions }: { suggestions: string[] }) {
+function NamespacesField({ suggestions }: { suggestions: string[] }) {
   const [entries, setEntries] = useState([0])
   const suggested = suggestions.length > 0
   return (
     <div className="flex flex-col gap-tight">
-      <Field label="Workload namespaces" hint="Optional. Their workloads are drained onto the leased nodes.">
+      <Field label="Workload namespaces" hint="Optional. The lease reaches the workloads these namespaces hold.">
         <span className="flex flex-col gap-tight">
           {entries.map((entry) => (
             <input
@@ -248,6 +276,47 @@ function WorkloadField({ suggestions }: { suggestions: string[] }) {
   )
 }
 
+function WorkloadPanel({ mode, suggestions }: { mode: string; suggestions: string[] }) {
+  return (
+    <Panel
+      title="Workload"
+      note="Move repins each matched workload onto the leased nodes and puts it back at expiry. Replicate writes to none of them and runs a lease-owned copy on the leased nodes instead"
+    >
+      <div className="space-y-gutter p-gutter">
+        <ModeChoice
+          name={field.workloadMode}
+          legend="Mode"
+          choices={workloadChoices}
+          chosen={mode}
+        />
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-gutter">
+          <NamespacesField suggestions={suggestions} />
+          <Field
+            label="Workload selector"
+            hint="Optional. It narrows the target set to the workloads carrying these labels."
+          >
+            <input
+              name={field.workloadSelector}
+              placeholder="tier=batch"
+              spellCheck={false}
+              autoComplete="off"
+              className={controlClass}
+            />
+          </Field>
+          {mode === replicateMode ? (
+            <Field
+              label="Burst replicas"
+              hint="How many pods each copy runs, a count of pods rather than machines."
+            >
+              <Numeric name={field.burstReplicas} bounds={burstReplicaBounds} />
+            </Field>
+          ) : null}
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
 function SizeField() {
   return (
     <Field label="Machine type" hint="The provider's own name for a type, such as cx23.">
@@ -265,6 +334,7 @@ function SizeField() {
 
 function CreateForm({ configs }: { configs: ProviderConfigSummary[] }) {
   const [sizing, setSizing] = useState(initialSizing)
+  const [workloadMode, setWorkloadMode] = useState(moveMode)
   const [failure, setFailure] = useState<Error | null>(null)
   const [pending, setPending] = useState(false)
   const namespaces = useNamespaceSuggestions()
@@ -272,6 +342,7 @@ function CreateForm({ configs }: { configs: ProviderConfigSummary[] }) {
   const observe = (event: FormEvent<HTMLFormElement>) => {
     const held = new FormData(event.currentTarget)
     setSizing((was) => sizingOf(held, was))
+    setWorkloadMode(fieldValue(held, field.workloadMode))
   }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -335,7 +406,6 @@ function CreateForm({ configs }: { configs: ProviderConfigSummary[] }) {
           <Field label="Teardown grace in seconds" hint="How long a drain may take before the machines go anyway.">
             <Numeric name={field.grace} bounds={graceBounds} />
           </Field>
-          <WorkloadField suggestions={namespaces} />
         </div>
       </Panel>
 
@@ -344,12 +414,19 @@ function CreateForm({ configs }: { configs: ProviderConfigSummary[] }) {
         note="A lease carries a requirement or a machine type, never both, and neither can be changed afterwards"
       >
         <div className="space-y-gutter p-gutter">
-          <ModeChoice mode={sizing.mode} />
+          <ModeChoice
+            name={field.mode}
+            legend="Sizing"
+            choices={sizingChoices}
+            chosen={sizing.mode}
+          />
           <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-gutter">
             {sizing.mode === requirementsMode ? <RequirementFields sizing={sizing} /> : <SizeField />}
           </div>
         </div>
       </Panel>
+
+      <WorkloadPanel mode={workloadMode} suggestions={namespaces} />
 
       <div className="flex flex-wrap items-center justify-between gap-gutter">
         <p className="max-w-[60ch] text-copy-13 text-subtle">

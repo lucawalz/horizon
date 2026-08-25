@@ -298,6 +298,21 @@ describe('the lease detail', () => {
     await view.unmount()
   })
 
+  it('names the mode a lease runs its workload in and the pods a copy carries', async () => {
+    stubLease(
+      leaseDetailBody({
+        workloadNamespaces: ['batch'],
+        workloadMode: 'replicate',
+        workloadBurstReplicas: 3,
+      }),
+    )
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    expect(view.container.textContent).toContain('replicate, each copy runs 3 pods')
+
+    await view.unmount()
+  })
+
   it('states the absence of a reasoning for a lease that named its own type', async () => {
     stubLease(leaseDetailBody({ size: 'cx22', selection: null }))
     const view = await mount(<LeaseDetailRoute name={leaseName} />)

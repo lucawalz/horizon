@@ -667,6 +667,22 @@ function RecordPanel({ name }: { name: string }) {
   )
 }
 
+const replicateMode = 'replicate'
+
+function replicates(lease: LeaseDetailResponse): boolean {
+  return lease.workloadMode === replicateMode
+}
+
+function WorkloadModeFact({ lease }: { lease: LeaseDetailResponse }) {
+  if (lease.workloadMode === null) return <span className="text-subtle">{absent}</span>
+  if (!replicates(lease) || lease.workloadBurstReplicas === null) return <>{lease.workloadMode}</>
+  return (
+    <>
+      {lease.workloadMode}, each copy runs {lease.workloadBurstReplicas} pods
+    </>
+  )
+}
+
 function LeaseFacts({ lease }: { lease: LeaseDetailResponse }) {
   const summary = lease.summary
   return (
@@ -715,11 +731,14 @@ function LeaseFacts({ lease }: { lease: LeaseDetailResponse }) {
             {lease.workloadNamespaces.length > 0 ? (
               lease.workloadNamespaces.join(', ')
             ) : (
-              <span className="text-subtle">none drained</span>
+              <span className="text-subtle">none targeted</span>
             )}
           </Definition>
           <Definition label="Workload selector">
             {lease.workloadSelector ?? <span className="text-subtle">every workload</span>}
+          </Definition>
+          <Definition label="Workload mode">
+            <WorkloadModeFact lease={lease} />
           </Definition>
         </DefinitionGrid>
       </Panel>

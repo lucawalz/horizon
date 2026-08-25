@@ -181,6 +181,8 @@ export function leaseDetailBody(overrides: Partial<LeaseDetailResponse> = {}): L
     teardownGraceSeconds: 120,
     workloadNamespaces: [],
     workloadSelector: null,
+    workloadMode: 'move',
+    workloadBurstReplicas: null,
     migratedWorkloads: [],
     migrationWarnings: [],
     acceptedAt: '2026-08-21T11:00:00Z',

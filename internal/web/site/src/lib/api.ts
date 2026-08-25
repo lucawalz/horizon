@@ -30,6 +30,7 @@ export type CatalogueState = Open<KnownCatalogueState>
 export type Architecture = Open<'x86' | 'arm'>
 export type CPUType = Open<'shared' | 'dedicated'>
 export type SizingStrategy = Open<'LowestPrice' | 'LowestPricePerCore'>
+export type WorkloadMode = Open<'move' | 'replicate'>
 
 export interface LeaseSummary {
   name: string
@@ -108,6 +109,8 @@ export interface LeaseDetailResponse {
   teardownGraceSeconds: number | null
   workloadNamespaces: string[]
   workloadSelector: string | null
+  workloadMode: WorkloadMode | null
+  workloadBurstReplicas: number | null
   migratedWorkloads: string[]
   migrationWarnings: MigrationWarning[]
   acceptedAt: string | null
@@ -175,6 +178,9 @@ export interface LeaseCreateRequest {
   durationSeconds: number
   teardownGraceSeconds: number | null
   workloadNamespaces: string[]
+  workloadSelector: string
+  workloadMode: string
+  workloadBurstReplicas: number | null
 }
 
 export interface SecretKeyRequest {
