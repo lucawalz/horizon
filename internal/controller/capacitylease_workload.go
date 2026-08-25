@@ -49,6 +49,14 @@ func workloadNamespaces(lease *v1alpha1.CapacityLease) (k8s.TargetSet, error) {
 	return namespaces, nil
 }
 
+func migratedNamespaces(lease *v1alpha1.CapacityLease) (k8s.TargetSet, error) {
+	namespaces, err := k8s.NamespaceSetOfWorkloads(lease.Status.MigratedWorkloads)
+	if err != nil {
+		return k8s.TargetSet{}, fmt.Errorf("read the migrated workloads of lease %q: %w", lease.Name, err)
+	}
+	return namespaces, nil
+}
+
 func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
 	targets, err := k8s.NewTargetSet(lease.Spec.Workload.Namespaces, lease.Spec.Workload.Selector)
 	if err != nil {
@@ -59,19 +67,29 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	r.recordMigratability(lease, assessments, classifyErr)
 
 	result, migrateErr := k8s.Migrate(ctx, r.Kube, targets, leaseIdentity(lease), teardownGrace(lease))
-	// a namespace that failed must not discard what the others moved, because teardown restores from this list
-	lease.Status.MigratedWorkloads = result.Workloads
+	// only a successful restore may shrink this list, because it is the sole record of what teardown still has to put back
+	lease.Status.MigratedWorkloads = alsoMigrated(lease.Status.MigratedWorkloads, result.Workloads)
 	if migrateErr != nil {
 		reason, cause := migrationOutcome(result, len(lease.Spec.Workload.Namespaces), migrateErr)
 		return r.failMigration(ctx, lease, reason, cause)
 	}
 
 	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue, reasonMigrated,
-		fmt.Sprintf("%d workloads moved onto burst capacity", len(result.Workloads)))
+		fmt.Sprintf("%d workloads moved onto burst capacity", len(lease.Status.MigratedWorkloads)))
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+}
+
+func alsoMigrated(recorded, moved []string) []string {
+	union := slices.Clone(recorded)
+	for _, ref := range moved {
+		if !slices.Contains(union, ref) {
+			union = append(union, ref)
+		}
+	}
+	return union
 }
 
 func migrationOutcome(result k8s.MigrationResult, targeted int, cause error) (string, error) {
@@ -142,7 +160,8 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 		return ctrl.Result{}, nil
 	}
 
-	namespaces, err := workloadNamespaces(lease)
+	// the spec is mutable, so only what the lease recorded as moved says which namespaces it still has to put back
+	namespaces, err := migratedNamespaces(lease)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

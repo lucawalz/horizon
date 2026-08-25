@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/lucawalz/horizon/internal/provider"
@@ -32,6 +33,8 @@ const (
 	strategicPatchReplace     = "replace"
 	opMigrate                 = "migrate"
 	opRestore                 = "restore-placement"
+	// a workload reference keys a status list-map, so one name per namespace would otherwise collide across a target set
+	workloadRefSeparator = "/"
 	// one reconcile worker serves every lease, so an in-pass retry is capped far below the grace and the requeue finishes the job
 	maxEvictRetryWindow    = 2 * time.Second
 	evictAttemptsPerWindow = 4
@@ -241,9 +244,22 @@ func (wc workloadClient) plural() string {
 	return wc.kind + "s"
 }
 
-// a workload reference keys a status list-map, so one name per namespace would otherwise collide across a target set
 func (wc workloadClient) ref(name string) string {
-	return wc.namespace + "/" + wc.kind + "/" + name
+	return wc.namespace + workloadRefSeparator + wc.kind + workloadRefSeparator + name
+}
+
+func NamespaceSetOfWorkloads(refs []string) (TargetSet, error) {
+	var namespaces []string
+	for _, ref := range refs {
+		namespace, _, qualified := strings.Cut(ref, workloadRefSeparator)
+		if !qualified || namespace == "" {
+			return TargetSet{}, fmt.Errorf("target set: workload reference %q names no namespace", ref)
+		}
+		if !slices.Contains(namespaces, namespace) {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return NewNamespaceSet(namespaces)
 }
 
 func deploymentClient(kc kubernetes.Interface, namespace string, selector labels.Selector) workloadClient {

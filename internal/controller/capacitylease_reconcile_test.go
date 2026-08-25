@@ -818,6 +818,55 @@ func TestAPartialMigrationKeepsWhatItMoved(t *testing.T) {
 	}
 }
 
+func TestATransientMigrationFailureKeepsTheWorkloadsAlreadyMoved(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS, testWorkloadNSB}}
+	})
+	h.seedWorkloadIn(testWorkloadNS, "api")
+	h.seedWorkloadIn(testWorkloadNSB, "api")
+	h.refuseWorkloadPatchesIn(testWorkloadNSB)
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settleIgnoringErrors(5)
+
+	want := []string{"workloads/deployment/api"}
+	if got := h.lease().Status.MigratedWorkloads; !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated workloads are %v, want %v before the transient failure", got, want)
+	}
+
+	h.refuseNodeLists()
+	if _, err := h.reconciler().migrateWorkload(t.Context(), h.lease()); err == nil {
+		t.Fatal("migrateWorkload reported success while the node list failed")
+	}
+
+	if got := h.lease().Status.MigratedWorkloads; !reflect.DeepEqual(got, want) {
+		t.Errorf("a transient failure left the migrated workloads as %v, want %v: restore has no other record of what moved", got, want)
+	}
+}
+
+func TestTeardownRestoresANamespaceTheSpecNoLongerNames(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS, testWorkloadNSB}}
+	})
+	h.seedWorkloadIn(testWorkloadNS, "api")
+	h.seedWorkloadIn(testWorkloadNSB, "api")
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	if _, ok := h.deploymentIn(testWorkloadNSB, "api").Annotations[k8s.PrePlacementAnnotationKey]; !ok {
+		t.Fatal("the second namespace was never migrated")
+	}
+	h.retargetWorkload(testWorkloadNS)
+
+	h.deleteLease()
+	h.settleIgnoringErrors(10)
+
+	if _, ok := h.deploymentIn(testWorkloadNSB, "api").Annotations[k8s.PrePlacementAnnotationKey]; ok {
+		t.Error("a namespace dropped from the spec kept the placement of a lease that is gone")
+	}
+}
+
 func TestTeardownRestoresWhatAPartialMigrationMoved(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS, testWorkloadNSB}}

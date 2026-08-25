@@ -31,13 +31,17 @@ Each namespace is processed independently, end to end. Selectors are collected p
 
 Migration reports a per-namespace outcome. `MigrationResult` carries every workload that moved alongside the namespaces that migrated in full, so a lease that moved two of three namespaces holds `WorkloadMigrated` False with the reason `PartialMigration` and still lists what it moved. Teardown keys the restore on that list rather than on the condition, so workloads moved by a migration that never reached True are still put back.
 
+`status.migratedWorkloads` is therefore the only record of what teardown owes, and it grows monotonically to match. Each pass unions what it moved into what the lease already recorded, and only a restore that succeeded clears it. Overwriting it with the result of one pass made a single transient list failure erase the whole record, because `Migrate` returns an empty result when it cannot confirm a node of the lease, and restore then skipped a workload that was left pinned to a lease about to be deleted.
+
+Restore reads its namespaces out of that same list rather than out of `spec.workload.namespaces`. The spec is mutable while the lease lives, so a namespace narrowed out of it after the move would otherwise keep the saved placement and the owner label of a lease that no longer exists. A workload reference is `namespace/kind/name`, so the list already names every namespace the lease has to reach.
+
 Both readiness gates fold their per-namespace answers with a conjunction. `WorkloadOffBurstNodes` reads an empty namespace as ready, so any shortcut that stopped at the first ready namespace would let an empty one mask a namespace still holding capacity. `WorkloadOnBurstNodes` additionally requires that at least one pod across the whole set is placed, which keeps its previous meaning while letting an empty namespace in a set not hold the gate open forever.
 
 Eviction is gated on whether any pod of a claimed workload is not yet on one of the lease's nodes, rather than on whether the current pass patched something. It attempts every pod before retrying any, and retries only the ones a disruption budget refused, which is the single failure that clears on its own. Any other eviction error is reported at once rather than waited out.
 
 One retry window covers a whole `Migrate` call rather than each namespace in turn, and it is capped far below the teardown grace. The controller runs a single reconcile worker, so an in-pass wait freezes every other lease, including the node watchdog renewal that keeps their machines from self-destructing. The window therefore buys a quick second attempt and nothing more: a refusal that outlasts it is finished by the requeue that the reachability fix above makes work.
 
-The selector applies to migration and classification only. Restore and both gates read every workload in the target namespaces, because restore keys on the placement annotation and the owner label, and a workload whose labels changed while it sat on burst capacity must still be put back.
+The selector applies to migration and classification only. Restore and both gates read every workload in the namespaces they are given, because restore keys on the placement annotation and the owner label, and a workload whose labels changed while it sat on burst capacity must still be put back.
 
 ## Options considered
 

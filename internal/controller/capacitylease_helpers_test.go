@@ -537,6 +537,22 @@ func (h *harness) refuseWorkloadPatchesIn(namespace string) {
 	})
 }
 
+func (h *harness) refuseNodeLists() {
+	h.t.Helper()
+	h.kube.PrependReactor("list", "nodes", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewInternalError(errors.New("the apiserver is briefly unavailable"))
+	})
+}
+
+func (h *harness) retargetWorkload(namespaces ...string) {
+	h.t.Helper()
+	lease := h.lease()
+	lease.Spec.Workload.Namespaces = namespaces
+	if err := h.api.Update(h.t.Context(), lease); err != nil {
+		h.t.Fatalf("retarget the workload namespaces: %v", err)
+	}
+}
+
 func (h *harness) deploymentIn(namespace, name string) *appsv1.Deployment {
 	h.t.Helper()
 	deployment, err := h.kube.AppsV1().Deployments(namespace).Get(h.t.Context(), name, metav1.GetOptions{})
