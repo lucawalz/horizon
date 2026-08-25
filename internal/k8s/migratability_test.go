@@ -68,7 +68,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 		{
 			name:    "a rolling deployment on its defaults",
 			object:  deploymentWith("dep1", 3, func(*appsv1.DeploymentSpec) {}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: nil,
 		},
 		{
@@ -76,31 +76,31 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: deploymentWith("dep1", 3, func(spec *appsv1.DeploymentSpec) {
 				spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 			}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: []string{k8s.ReasonRecreateStrategy},
 		},
 		{
 			name:    "a rolling deployment that may not surge",
 			object:  deploymentWith("dep1", 3, rollingUpdateSurge(intstr.FromInt32(0))),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: []string{k8s.ReasonNoSurgeCapacity},
 		},
 		{
 			name:    "a rolling deployment whose surge percentage rounds to nothing",
 			object:  deploymentWith("dep1", 3, rollingUpdateSurge(intstr.FromString("0%"))),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: []string{k8s.ReasonNoSurgeCapacity},
 		},
 		{
 			name:    "a rolling deployment whose surge percentage rounds up to one pod",
 			object:  deploymentWith("dep1", 3, rollingUpdateSurge(intstr.FromString("1%"))),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: nil,
 		},
 		{
 			name:    "a deployment scaled to zero",
 			object:  deploymentWith("dep1", 0, rollingUpdateSurge(intstr.FromString("25%"))),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: nil,
 		},
 		{
@@ -108,7 +108,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: deploymentWith("dep1", 3, func(spec *appsv1.DeploymentSpec) {
 				spec.Paused = true
 			}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: []string{k8s.ReasonRolloutPaused},
 		},
 		{
@@ -116,7 +116,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: deploymentWith("dep1", 3, func(spec *appsv1.DeploymentSpec) {
 				spec.Template.Spec.NodeSelector = map[string]string{"disktype": "ssd"}
 			}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: []string{k8s.ReasonNodeSelectorPinned},
 		},
 		{
@@ -126,7 +126,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 				spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 				spec.Template.Spec.NodeSelector = map[string]string{"disktype": "ssd"}
 			}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: []string{k8s.ReasonRolloutPaused, k8s.ReasonRecreateStrategy, k8s.ReasonNodeSelectorPinned},
 		},
 		{
@@ -134,7 +134,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: statefulSetWith("sts1", 3, func(spec *appsv1.StatefulSetSpec) {
 				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType}
 			}),
-			ref:     "statefulset/sts1",
+			ref:     "sentio-systems/statefulset/sts1",
 			reasons: nil,
 		},
 		{
@@ -142,7 +142,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: statefulSetWith("sts1", 3, func(spec *appsv1.StatefulSetSpec) {
 				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.OnDeleteStatefulSetStrategyType}
 			}),
-			ref:     "statefulset/sts1",
+			ref:     "sentio-systems/statefulset/sts1",
 			reasons: []string{k8s.ReasonManualRollout},
 		},
 		{
@@ -153,7 +153,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 					RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition},
 				}
 			}),
-			ref:     "statefulset/sts1",
+			ref:     "sentio-systems/statefulset/sts1",
 			reasons: []string{k8s.ReasonPartitionedRollout},
 		},
 		{
@@ -161,7 +161,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: deploymentWith("dep1", 0, func(spec *appsv1.DeploymentSpec) {
 				spec.Strategy = appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}
 			}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: nil,
 		},
 		{
@@ -169,7 +169,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: deploymentWith("dep1", 0, func(spec *appsv1.DeploymentSpec) {
 				spec.Paused = true
 			}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: nil,
 		},
 		{
@@ -177,7 +177,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: deploymentWith("dep1", 0, func(spec *appsv1.DeploymentSpec) {
 				spec.Template.Spec.NodeSelector = map[string]string{"disktype": "ssd"}
 			}),
-			ref:     "deployment/dep1",
+			ref:     "sentio-systems/deployment/dep1",
 			reasons: nil,
 		},
 		{
@@ -185,7 +185,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: statefulSetWith("sts1", 0, func(spec *appsv1.StatefulSetSpec) {
 				spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.OnDeleteStatefulSetStrategyType}
 			}),
-			ref:     "statefulset/sts1",
+			ref:     "sentio-systems/statefulset/sts1",
 			reasons: nil,
 		},
 		{
@@ -196,7 +196,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 					RollingUpdate: &appsv1.RollingUpdateStatefulSetStrategy{Partition: &partition},
 				}
 			}),
-			ref:     "statefulset/sts1",
+			ref:     "sentio-systems/statefulset/sts1",
 			reasons: nil,
 		},
 		{
@@ -204,7 +204,7 @@ func TestClassifyMigratabilityNamesEveryDisruptiveShape(t *testing.T) {
 			object: statefulSetWith("sts1", 3, func(spec *appsv1.StatefulSetSpec) {
 				spec.Template.Spec.NodeSelector = map[string]string{"disktype": "ssd"}
 			}),
-			ref:     "statefulset/sts1",
+			ref:     "sentio-systems/statefulset/sts1",
 			reasons: []string{k8s.ReasonNodeSelectorPinned},
 		},
 	}
@@ -243,11 +243,38 @@ func TestClassifyMigratabilityCoversBothWorkloadKinds(t *testing.T) {
 	}
 
 	want := []k8s.WorkloadMigratability{
-		{Workload: "deployment/dep1", Verdict: k8s.VerdictSeamless},
-		{Workload: "statefulset/sts1", Verdict: k8s.VerdictDisruptive, Reasons: []string{k8s.ReasonManualRollout}},
+		{Workload: "sentio-systems/deployment/dep1", Verdict: k8s.VerdictSeamless},
+		{Workload: "sentio-systems/statefulset/sts1", Verdict: k8s.VerdictDisruptive, Reasons: []string{k8s.ReasonManualRollout}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("assessments = %+v, want %+v", got, want)
+	}
+}
+
+func TestClassifyMigratabilityQualifiesAWorkloadReferenceByNamespace(t *testing.T) {
+	here := deploymentWith("api", 1, func(*appsv1.DeploymentSpec) {})
+	there := here.DeepCopy()
+	there.Namespace = testNSB
+
+	kc := fake.NewSimpleClientset(here, there)
+	got := map[string]string{}
+	for _, namespace := range []string{testNS, testNSB} {
+		assessments, err := k8s.ClassifyMigratability(context.Background(), kc, namespace, testLease)
+		if err != nil {
+			t.Fatalf("ClassifyMigratability in %q: %v", namespace, err)
+		}
+		if len(assessments) != 1 {
+			t.Fatalf("assessments in %q = %+v, want exactly one", namespace, assessments)
+		}
+		got[namespace] = assessments[0].Workload
+	}
+
+	want := map[string]string{
+		testNS:  "sentio-systems/deployment/api",
+		testNSB: "sentio-systems-b/deployment/api",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("workloads = %v, want %v: one name per namespace collides on the status list-map key", got, want)
 	}
 }
 

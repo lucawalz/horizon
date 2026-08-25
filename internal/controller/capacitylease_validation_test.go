@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/k8s"
 )
 
 func quantity(value string) *resource.Quantity {
@@ -233,6 +234,38 @@ func TestCapacityLeaseRefusesEveryChangeToWhatItAlreadyHolds(t *testing.T) {
 
 			tc.change(&lease.Spec)
 			assertUpdate(t, c, lease, tc.wantRejected)
+		})
+	}
+}
+
+func TestCapacityLeaseStatusRefusesTwoWarningsUnderOneWorkloadKey(t *testing.T) {
+	tests := []struct {
+		name         string
+		workloads    []string
+		wantRejected bool
+	}{
+		{"one name per namespace", []string{"team-a/deployment/api", "team-b/deployment/api"}, false},
+		{"one name unqualified", []string{"deployment/api", "deployment/api"}, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := apiServerClient(t)
+			lease := validLease(t)
+			assertCreate(t, c, lease, false)
+
+			for _, workload := range tc.workloads {
+				lease.Status.MigrationWarnings = append(lease.Status.MigrationWarnings,
+					v1alpha1.MigrationWarning{Workload: workload, Reasons: []string{k8s.ReasonRecreateStrategy}})
+			}
+
+			err := c.Status().Update(t.Context(), lease)
+			switch {
+			case tc.wantRejected && err == nil:
+				t.Fatal("the apiserver accepted duplicate workload keys, so the list-map key carries no constraint")
+			case !tc.wantRejected && err != nil:
+				t.Fatalf("the apiserver rejected one workload name per namespace: %v", err)
+			}
 		})
 	}
 }

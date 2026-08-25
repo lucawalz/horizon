@@ -431,8 +431,8 @@ func TestWorkloadMigrationRunsOnceInstancesAreReady(t *testing.T) {
 	h.settle()
 
 	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue)
-	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "deployment/api" {
-		t.Errorf("migrated workloads are %v, want [deployment/api]", got)
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "workloads/deployment/api" {
+		t.Errorf("migrated workloads are %v, want [workloads/deployment/api]", got)
 	}
 	if _, ok := h.deploymentAnnotations()[k8s.PrePlacementAnnotationKey]; !ok {
 		t.Error("the deployment carries no saved placement annotation")
@@ -452,8 +452,8 @@ func TestARepeatedMigrationPassReportsTheSameWorkloads(t *testing.T) {
 		t.Fatalf("second migration pass: %v", err)
 	}
 
-	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "deployment/api" {
-		t.Errorf("migrated workloads are %v after a second pass, want [deployment/api]", got)
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "workloads/deployment/api" {
+		t.Errorf("migrated workloads are %v after a second pass, want [workloads/deployment/api]", got)
 	}
 	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrated, "1 workloads moved onto burst capacity")
 }
@@ -744,15 +744,15 @@ func TestADisruptiveWorkloadIsNamedBeforeItIsMoved(t *testing.T) {
 	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigratable, reasonDisruptiveMigration, "1 of 1 workloads")
 
 	warnings := h.lease().Status.MigrationWarnings
-	if len(warnings) != 1 || warnings[0].Workload != "deployment/api" {
-		t.Fatalf("migration warnings are %+v, want one for deployment/api", warnings)
+	if len(warnings) != 1 || warnings[0].Workload != "workloads/deployment/api" {
+		t.Fatalf("migration warnings are %+v, want one for workloads/deployment/api", warnings)
 	}
 	want := []string{k8s.ReasonRecreateStrategy, k8s.ReasonNodeSelectorPinned}
 	if !reflect.DeepEqual(warnings[0].Reasons, want) {
 		t.Errorf("warning reasons are %v, want %v", warnings[0].Reasons, want)
 	}
-	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "deployment/api" {
-		t.Errorf("migrated workloads are %v, want [deployment/api]: a warning must not block the move", got)
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "workloads/deployment/api" {
+		t.Errorf("migrated workloads are %v, want [workloads/deployment/api]: a warning must not block the move", got)
 	}
 }
 
@@ -792,8 +792,8 @@ func TestAClassificationFailureWarnsWithoutBlockingTheMigration(t *testing.T) {
 	h.assertCondition(v1alpha1.ConditionWorkloadMigratable, metav1.ConditionUnknown)
 	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigratable, reasonClassificationFailed, "unmarshal placement")
 
-	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "deployment/api" {
-		t.Errorf("migrated workloads are %v, want [deployment/api]: classification must never block the move", got)
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "workloads/deployment/api" {
+		t.Errorf("migrated workloads are %v, want [workloads/deployment/api]: classification must never block the move", got)
 	}
 	if got := h.lease().Status.MigrationWarnings; len(got) != 0 {
 		t.Errorf("migration warnings are %+v, want none while the classification is unknown", got)

@@ -53,7 +53,7 @@ func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespa
 			return nil, fmt.Errorf("classify: list %s in %q: %w", wc.plural(), wc.namespace, err)
 		}
 		for _, t := range targets {
-			assessment, err := t.migratability(wc.kind, lease)
+			assessment, err := t.migratability(wc, lease)
 			if err != nil {
 				return nil, err
 			}
@@ -63,8 +63,8 @@ func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespa
 	return assessments, nil
 }
 
-func (t workloadTarget) migratability(kind string, lease LeaseIdentity) (WorkloadMigratability, error) {
-	ref := workloadRef(kind, t.name)
+func (t workloadTarget) migratability(wc workloadClient, lease LeaseIdentity) (WorkloadMigratability, error) {
+	ref := wc.ref(t.name)
 	// a workload another lease holds is never moved, so the impediments to moving it say nothing useful
 	if owner, owned := placementOwner(t.labels); owned && owner != lease.UID {
 		return WorkloadMigratability{
@@ -77,7 +77,7 @@ func (t workloadTarget) migratability(kind string, lease LeaseIdentity) (Workloa
 		return WorkloadMigratability{Workload: ref, Verdict: VerdictSeamless}, nil
 	}
 
-	pinned, err := t.preBurstNodeSelector(kind)
+	pinned, err := t.preBurstNodeSelector(wc.kind)
 	if err != nil {
 		return WorkloadMigratability{}, err
 	}

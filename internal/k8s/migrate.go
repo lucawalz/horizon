@@ -196,10 +196,6 @@ func (t workloadTarget) selfRolls() bool {
 	return t.rolloutReason == ""
 }
 
-func workloadRef(kind, name string) string {
-	return kind + "/" + name
-}
-
 func workloadSelector(kind, name string, sel *metav1.LabelSelector) (labels.Selector, error) {
 	if sel == nil || len(sel.MatchLabels)+len(sel.MatchExpressions) == 0 {
 		return nil, fmt.Errorf("selector for %s %q: empty selector cannot name the pods of this workload", kind, name)
@@ -220,6 +216,11 @@ type workloadClient struct {
 
 func (wc workloadClient) plural() string {
 	return wc.kind + "s"
+}
+
+// a workload reference keys a status list-map, so one name per namespace would otherwise collide across a target set
+func (wc workloadClient) ref(name string) string {
+	return wc.namespace + "/" + wc.kind + "/" + name
 }
 
 func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient {
@@ -353,7 +354,7 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 					return onBurst, patched, notSelfRolling, err
 				}
 			}
-			onBurst = append(onBurst, workloadRef(wc.kind, t.name))
+			onBurst = append(onBurst, wc.ref(t.name))
 			continue
 		}
 		patchData, err := buildMigratePatch(t, lease)
@@ -367,7 +368,7 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 		if !t.selfRolls() {
 			notSelfRolling = append(notSelfRolling, t.selector)
 		}
-		onBurst = append(onBurst, workloadRef(wc.kind, t.name))
+		onBurst = append(onBurst, wc.ref(t.name))
 	}
 	return onBurst, patched, notSelfRolling, nil
 }
@@ -544,7 +545,7 @@ func restoreWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 			recordFirst(&firstErr, fmt.Errorf("restore-placement: patch %s %q: %w", wc.kind, t.name, err))
 			continue
 		}
-		restored = append(restored, workloadRef(wc.kind, t.name))
+		restored = append(restored, wc.ref(t.name))
 		if !t.selfRolls() {
 			notSelfRolling = append(notSelfRolling, t.selector)
 		}

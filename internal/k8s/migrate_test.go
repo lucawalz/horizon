@@ -181,14 +181,14 @@ func selectedNames(t *testing.T, kc *fake.Clientset) []string {
 		t.Fatalf("list deployments by burst label: %v", err)
 	}
 	for i := range deps.Items {
-		names = append(names, "deployment/"+deps.Items[i].Name)
+		names = append(names, deps.Items[i].Namespace+"/deployment/"+deps.Items[i].Name)
 	}
 	stss, err := kc.AppsV1().StatefulSets(metav1.NamespaceAll).List(ctx, opts)
 	if err != nil {
 		t.Fatalf("list statefulsets by burst label: %v", err)
 	}
 	for i := range stss.Items {
-		names = append(names, "statefulset/"+stss.Items[i].Name)
+		names = append(names, stss.Items[i].Namespace+"/statefulset/"+stss.Items[i].Name)
 	}
 	return names
 }
@@ -283,8 +283,8 @@ func TestMigrateEviction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if len(migrated) != 1 || migrated[0] != "deployment/app" {
-		t.Errorf("migrated = %v, want [deployment/app]", migrated)
+	if len(migrated) != 1 || migrated[0] != "sentio-systems/deployment/app" {
+		t.Errorf("migrated = %v, want [sentio-systems/deployment/app]", migrated)
 	}
 
 	evicted := evictionNames(kc)
@@ -614,8 +614,8 @@ func TestMigrateAffinityPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if len(migrated) != 2 || migrated[0] != "deployment/dep1" || migrated[1] != "statefulset/sts1" {
-		t.Errorf("migrated = %v, want [deployment/dep1 statefulset/sts1]", migrated)
+	if len(migrated) != 2 || migrated[0] != "sentio-systems/deployment/dep1" || migrated[1] != "sentio-systems/statefulset/sts1" {
+		t.Errorf("migrated = %v, want [sentio-systems/deployment/dep1 statefulset/sts1]", migrated)
 	}
 
 	cases := []struct {
@@ -786,8 +786,8 @@ func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if len(migrated) != 1 || migrated[0] != "deployment/dep1" {
-		t.Errorf("migrated = %v, want [deployment/dep1]: the workload sits on burst capacity", migrated)
+	if len(migrated) != 1 || migrated[0] != "sentio-systems/deployment/dep1" {
+		t.Errorf("migrated = %v, want [sentio-systems/deployment/dep1]: the workload sits on burst capacity", migrated)
 	}
 	if got := patchCount(kc, "deployments", "dep1"); got != 0 {
 		t.Errorf("dep1 patched %d times, which would overwrite the saved placement", got)
@@ -835,8 +835,8 @@ func TestMigrateReadsAnEmptyOwnerLabelAsHeldByNobody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if len(claimed) != 1 || claimed[0] != "deployment/dep1" {
-		t.Fatalf("claimed = %v, want [deployment/dep1]: an owner label naming nobody strands the workload for every lease", claimed)
+	if len(claimed) != 1 || claimed[0] != "sentio-systems/deployment/dep1" {
+		t.Fatalf("claimed = %v, want [sentio-systems/deployment/dep1]: an owner label naming nobody strands the workload for every lease", claimed)
 	}
 	if got := getDeployment(t, kc, "dep1").Labels[provider.LeaseUIDLabelKey]; got != testLease.UID {
 		t.Errorf("owner label = %q, want %q", got, testLease.UID)
@@ -852,8 +852,8 @@ func TestRestorePlacementReadsAnEmptyOwnerLabelAsHeldByNobody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
-	if len(restored) != 1 || restored[0] != "deployment/dep1" {
-		t.Fatalf("restored = %v, want [deployment/dep1]: an owner label naming nobody leaves the workload pinned for good", restored)
+	if len(restored) != 1 || restored[0] != "sentio-systems/deployment/dep1" {
+		t.Fatalf("restored = %v, want [sentio-systems/deployment/dep1]: an owner label naming nobody leaves the workload pinned for good", restored)
 	}
 }
 
@@ -880,8 +880,8 @@ func TestMigrateStampsAndClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if len(migrated) != 1 || migrated[0] != "deployment/dep1" {
-		t.Errorf("migrated = %v, want [deployment/dep1]: no other lease holds a marker that names none", migrated)
+	if len(migrated) != 1 || migrated[0] != "sentio-systems/deployment/dep1" {
+		t.Errorf("migrated = %v, want [sentio-systems/deployment/dep1]: no other lease holds a marker that names none", migrated)
 	}
 
 	stored := getDeployment(t, kc, "dep1")
@@ -921,7 +921,7 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, sts, pod)
 	evictAndDelete(kc)
 
-	want := []string{"deployment/dep1", "statefulset/sts1"}
+	want := []string{"sentio-systems/deployment/dep1", "sentio-systems/statefulset/sts1"}
 	first, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("first Migrate: %v", err)
@@ -997,8 +997,8 @@ func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
-	if len(restored) != 1 || restored[0] != "deployment/dep1" {
-		t.Fatalf("restored = %v, want [deployment/dep1]", restored)
+	if len(restored) != 1 || restored[0] != "sentio-systems/deployment/dep1" {
+		t.Fatalf("restored = %v, want [sentio-systems/deployment/dep1]", restored)
 	}
 
 	stored := getDeployment(t, kc, "dep1")
@@ -1087,8 +1087,8 @@ func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
-	if len(restored) != 1 || restored[0] != "deployment/dep1" {
-		t.Fatalf("restored = %v, want [deployment/dep1]", restored)
+	if len(restored) != 1 || restored[0] != "sentio-systems/deployment/dep1" {
+		t.Fatalf("restored = %v, want [sentio-systems/deployment/dep1]", restored)
 	}
 
 	got := getDeployment(t, kc, "dep1").Spec.Template.Spec.Affinity
@@ -1114,7 +1114,7 @@ func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
 	}
 
 	got := selectedNames(t, kc)
-	want := []string{"deployment/dep1", "statefulset/sts1"}
+	want := []string{"sentio-systems/deployment/dep1", "sentio-systems/statefulset/sts1"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("burst label query = %v, want %v", got, want)
 	}
@@ -1266,8 +1266,8 @@ func TestRestorePlacementRestoresOnlyTheWorkloadsThisLeaseOwns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestorePlacement lease-b: %v", err)
 	}
-	if len(restored) != 1 || restored[0] != "deployment/app-b" {
-		t.Fatalf("restored = %v, want [deployment/app-b]", restored)
+	if len(restored) != 1 || restored[0] != "sentio-systems/deployment/app-b" {
+		t.Fatalf("restored = %v, want [sentio-systems/deployment/app-b]", restored)
 	}
 
 	held := getDeployment(t, kc, "app-a")
@@ -1299,8 +1299,8 @@ func TestRestorePlacementRescuesAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
-	if len(restored) != 1 || restored[0] != "deployment/dep1" {
-		t.Fatalf("restored = %v, want [deployment/dep1]: no live lease claims that workload", restored)
+	if len(restored) != 1 || restored[0] != "sentio-systems/deployment/dep1" {
+		t.Fatalf("restored = %v, want [sentio-systems/deployment/dep1]: no live lease claims that workload", restored)
 	}
 	if _, ok := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]; ok {
 		t.Error("an unowned workload stayed pinned to a lease that no longer exists")
@@ -1925,8 +1925,8 @@ func TestRestorePlacementLeavesTheNodeSelectorOfAnOlderAnnotation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
-	if len(restored) != 1 || restored[0] != "deployment/dep1" {
-		t.Fatalf("restored = %v, want [deployment/dep1]", restored)
+	if len(restored) != 1 || restored[0] != "sentio-systems/deployment/dep1" {
+		t.Fatalf("restored = %v, want [sentio-systems/deployment/dep1]", restored)
 	}
 
 	stored := getDeployment(t, kc, "dep1")
