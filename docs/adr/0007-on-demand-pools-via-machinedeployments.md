@@ -17,7 +17,7 @@ Mode A, on-demand nodes, scales an existing worker MachineDeployment (the `burst
 
 Mode B, on-demand clusters, creates a separate CAPI-managed cluster through `cluster create`, which renders a Cluster, a KThreesControlPlane, and a worker MachineDeployment. That cluster owns its control plane, so no nudge applies, and it auto-imports to Rancher.
 
-Workload placement is contract, not mechanism owned by horizon. Nodes are labeled `horizon.dev/pool=<value>` at join time by bedrock's KThreesConfigTemplate, and that label remains the contract for what counts as burst capacity at all; bedrock owns applying it. `burst` migrates a workload by rewriting node affinity onto the lease-uid label carried by the node granted to that lease, so a workload lands only on that lease's own nodes rather than any node the pool label marks as burst capacity. horizon never labels nodes itself.
+Workload placement is contract, not mechanism owned by horizon. Nodes are labeled `horizon.dev/pool=<value>` at join time by bedrock's KThreesConfigTemplate, and that label remains the contract for what counts as burst capacity at all; bedrock owns applying it. `burst` migrates a workload by rewriting node affinity onto the lease-uid label carried by the node granted to that lease, so a workload lands only on that lease's own nodes rather than any node the pool label marks as burst capacity. horizon labels a node with its lease identity at adoption, but the pool label itself stays bedrock's to write; horizon never touches it.
 
 Durable pools and clusters can be rendered into the bedrock git tree (manifest rendering plus a kustomization write) so Flux reconciles them as GitOps. horizon writes the tree but never commits or pushes it.
 
