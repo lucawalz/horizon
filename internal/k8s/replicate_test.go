@@ -156,11 +156,12 @@ func TestBurstCopyIsPinnedToTheLeasesNodes(t *testing.T) {
 	if got := *copied.Spec.Replicas; got != testBurstReplicas {
 		t.Errorf("the copy runs %d pods, want %d", got, testBurstReplicas)
 	}
-	if want := k8s.LeaseNodeAffinity(testLease.UID); !reflect.DeepEqual(podSpec.Affinity, want) {
-		t.Errorf("the copy's affinity is %+v, want it pinned to the lease's nodes", podSpec.Affinity)
+	if want := burstNodeAffinity(); !reflect.DeepEqual(podSpec.Affinity, want) {
+		t.Errorf("the copy's affinity is %+v, want %+v pinning it to the lease's nodes", podSpec.Affinity, want)
 	}
-	if want := k8s.WithBurstToleration(original.Spec.Template.Spec.Tolerations, testLease.Name); !reflect.DeepEqual(podSpec.Tolerations, want) {
-		t.Errorf("the copy's tolerations %+v do not tolerate the burst taint", podSpec.Tolerations)
+	want := []corev1.Toleration{{Key: "existing", Operator: corev1.TolerationOpExists}, burstToleration()}
+	if !reflect.DeepEqual(podSpec.Tolerations, want) {
+		t.Errorf("the copy's tolerations are %+v, want %+v", podSpec.Tolerations, want)
 	}
 	if podSpec.NodeSelector != nil {
 		t.Errorf("the copy keeps the node selector %v, which no leased node carries", podSpec.NodeSelector)
