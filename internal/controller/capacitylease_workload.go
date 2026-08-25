@@ -26,7 +26,7 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 		return r.migrateWorkload(ctx, lease, namespace)
 	}
 
-	placed, err := k8s.WorkloadOnBurstNodes(ctx, r.Kube, namespace)
+	placed, err := k8s.WorkloadOnBurstNodes(ctx, r.Kube, namespace, k8s.LeaseIdentity{UID: string(lease.UID), Name: lease.Name})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("check workload placement in %q: %w", namespace, err)
 	}
@@ -132,7 +132,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	}
 
 	namespace := lease.Spec.Workload.Namespace
-	restored, err := k8s.WorkloadOffBurstNodes(ctx, r.Kube, namespace)
+	restored, err := k8s.WorkloadOffBurstNodes(ctx, r.Kube, namespace, k8s.LeaseIdentity{UID: string(lease.UID), Name: lease.Name})
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("check workload restored in %q: %w", namespace, err)
 	}

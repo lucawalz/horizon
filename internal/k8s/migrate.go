@@ -527,20 +527,23 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 	return false
 }
 
-func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string) (bool, error) {
-	return workloadNodeMembership(ctx, kc, namespace, true, false, "workload-on-burst-nodes")
+func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) (bool, error) {
+	return workloadNodeMembership(ctx, kc, namespace, lease, true, false, "workload-on-burst-nodes")
 }
 
-func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string) (bool, error) {
+func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) (bool, error) {
 	// an empty namespace has nothing left on a burst node to drain, and restore already patched placement back so nothing new can land there
-	return workloadNodeMembership(ctx, kc, namespace, false, true, "workload-off-burst-nodes")
+	return workloadNodeMembership(ctx, kc, namespace, lease, false, true, "workload-off-burst-nodes")
 }
 
-func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namespace string, wantBurst, emptyIsReady bool, opName string) (bool, error) {
+func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity, wantBurst, emptyIsReady bool, opName string) (bool, error) {
 	if namespace == "" {
 		return false, fmt.Errorf("%s: namespace must not be empty", opName)
 	}
-	burstNodes, err := poolNodes(ctx, kc)
+	if err := lease.validate(); err != nil {
+		return false, fmt.Errorf("%s: %w", opName, err)
+	}
+	burstNodes, err := leaseNodes(ctx, kc, lease.UID)
 	if err != nil {
 		return false, fmt.Errorf("%s: list nodes: %w", opName, err)
 	}
@@ -551,8 +554,10 @@ func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namesp
 	return spread, nil
 }
 
-func poolNodes(ctx context.Context, kc kubernetes.Interface) (map[string]bool, error) {
-	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{LabelSelector: PoolLabelKey})
+func leaseNodes(ctx context.Context, kc kubernetes.Interface, leaseUID string) (map[string]bool, error) {
+	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: LeaseUIDLabelKey + "=" + leaseUID,
+	})
 	if err != nil {
 		return nil, err
 	}
