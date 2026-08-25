@@ -428,6 +428,9 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 		return nil, nil, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
 	}
 	for _, t := range targets {
+		if isBurstCopy(t.labels) {
+			continue
+		}
 		if _, alreadyMoved := t.annotations[PrePlacementAnnotationKey]; alreadyMoved {
 			owner, owned := placementOwner(t.labels)
 			if owned && owner != lease.UID {

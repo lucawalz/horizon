@@ -450,6 +450,52 @@ func TestDeleteBurstCopiesLeavesAnotherLeasesCopyRunning(t *testing.T) {
 	}
 }
 
+func TestMoveModeLeavesAnotherLeasesBurstCopyAlone(t *testing.T) {
+	mover := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), burstNode("burst-2", mover.UID), originalDeployment())
+	replication, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	copyName := burstCopiesIn(t, kc, testNS)[0].Name
+
+	moved, err := migrateNS(t, kc, testNS, mover)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	if slices.Contains(moved, replication.Copies[0]) {
+		t.Errorf("the mover reports %v, which claims a copy another lease owns and deletes", moved)
+	}
+	stored, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), copyName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get the burst copy: %v", err)
+	}
+	if _, patched := stored.Annotations[k8s.PrePlacementAnnotationKey]; patched {
+		t.Error("the mover saved a placement onto a burst copy, so teardown will restore a workload that no longer exists")
+	}
+	if got := stored.Labels[provider.LeaseUIDLabelKey]; got != testLease.UID {
+		t.Errorf("the burst copy now names lease %q as its owner, want %q", got, testLease.UID)
+	}
+}
+
+func TestClassifyMigratabilityIgnoresABurstCopy(t *testing.T) {
+	mover := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), originalDeployment())
+	if _, err := replicate(t, kc, testNS); err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	assessments, err := k8s.ClassifyMigratability(context.Background(), kc, nsSet(t, testNS), mover)
+	if err != nil {
+		t.Fatalf("ClassifyMigratability: %v", err)
+	}
+
+	if len(assessments) != 1 || assessments[0].Workload != testNS+"/deployment/api" {
+		t.Errorf("the classifier assessed %+v, want the original alone", assessments)
+	}
+}
+
 func TestReplicateRefusesAnIncompleteRequest(t *testing.T) {
 	tests := []struct {
 		name        string

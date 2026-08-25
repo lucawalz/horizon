@@ -51,6 +51,10 @@ func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, targets
 				return nil, fmt.Errorf("classify: list %s in %q: %w", wc.plural(), wc.namespace, err)
 			}
 			for _, t := range workloads {
+				// a burst copy is created and deleted by the lease that owns it, so no other lease ever moves it
+				if isBurstCopy(t.labels) {
+					continue
+				}
 				assessment, err := t.migratability(wc, lease)
 				if err != nil {
 					return nil, err
