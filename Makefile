@@ -33,6 +33,9 @@ endef
 
 verify: tidy-check adr-check vet build manifests-check chart-lint lint release-check test test-race site
 
+print-%:
+	@echo $($*)
+
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o horizon ./cmd/horizon
 

@@ -85,9 +85,11 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - id: tools
+        run: echo "goreleaser=$(make -s print-GORELEASER_VERSION)" >> "$GITHUB_OUTPUT"
       - uses: goreleaser/goreleaser-action@v7
         with:
-          version: "~> v2"
+          version: ${{ steps.tools.outputs.goreleaser }}
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
