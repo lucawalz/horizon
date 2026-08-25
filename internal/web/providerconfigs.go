@@ -10,15 +10,24 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
 
 const (
-	providerConfigKind = "provider config"
-	unreadableConfig   = "the request body is not a provider config this interface can submit"
-	configCreateFailed = "the provider config could not be created in the cluster"
+	providerConfigKind  = "provider config"
+	unreadableConfig    = "the request body is not a provider config this interface can submit"
+	configCreateFailed  = "the provider config could not be created in the cluster"
+	configReplaceFailed = "the provider config could not be replaced in the cluster"
+	configDeleteFailed  = "the provider config could not be deleted"
+	deleteRequested     = "the controller was asked to delete this provider config. it holds the object back until no " +
+		"capacity lease names it, because horizon tears a lease down with the credentials this configuration resolves"
+	replaceRaced = "another change to this provider config landed first, so this replacement was measured against a spec " +
+		"the config no longer carries. reading it again and submitting the change against what it now holds is the way through"
+	deleteRefused = "releasing those leases is what frees this configuration. horizon tears each of them down with the " +
+		"credentials resolved from here, so a configuration deleted first leaves their machines billing until the watchdog on each node powers it off"
 )
 
 type secretKeyRequest struct {
@@ -42,11 +51,20 @@ type watchdogRequest struct {
 	MaxLifetimeSeconds   int64 `json:"maxLifetimeSeconds"`
 }
 
-type providerConfigCreateRequest struct {
-	Name     string                  `json:"name"`
+type providerConfigSpecRequest struct {
 	Type     string                  `json:"type"`
 	Hetzner  *hetznerProviderRequest `json:"hetzner"`
 	Watchdog watchdogRequest         `json:"watchdog"`
+}
+
+type providerConfigCreateRequest struct {
+	Name string `json:"name"`
+	providerConfigSpecRequest
+}
+
+type providerConfigDeleteResponse struct {
+	Name   string `json:"name"`
+	Detail string `json:"detail"`
 }
 
 func (r secretKeyRequest) selector() corev1.SecretKeySelector {
@@ -63,6 +81,17 @@ func (r *secretKeyRequest) optionalSelector() *corev1.SecretKeySelector {
 	return ptr(r.selector())
 }
 
+func newSecretKeyRequest(ref corev1.SecretKeySelector) secretKeyRequest {
+	return secretKeyRequest{Name: ref.Name, Key: ref.Key}
+}
+
+func newOptionalSecretKeyRequest(ref *corev1.SecretKeySelector) *secretKeyRequest {
+	if ref == nil {
+		return nil
+	}
+	return ptr(newSecretKeyRequest(*ref))
+}
+
 func (r *hetznerProviderRequest) providerSpec() *v1alpha1.HetznerProviderSpec {
 	if r == nil {
 		return nil
@@ -75,6 +104,22 @@ func (r *hetznerProviderRequest) providerSpec() *v1alpha1.HetznerProviderSpec {
 		Image:                   namedImage(r.Image),
 		SSHKeys:                 r.SSHKeys,
 		Firewalls:               r.Firewalls,
+	}
+}
+
+func newHetznerProviderRequest(spec *v1alpha1.HetznerProviderSpec) *hetznerProviderRequest {
+	// this interface submits a named image and nothing else, so a configuration written any other way is reported as one this shape cannot carry
+	if spec == nil || len(spec.ImageSelector) > 0 || spec.Image == nil || spec.Image.Name == "" {
+		return nil
+	}
+	return &hetznerProviderRequest{
+		CredentialsSecretRef:    newSecretKeyRequest(spec.CredentialsSecretRef),
+		NodeCredentialSecretRef: newOptionalSecretKeyRequest(spec.NodeCredentialSecretRef),
+		JoinTokenSecretRef:      newOptionalSecretKeyRequest(spec.JoinTokenSecretRef),
+		CloudInitSecretRef:      newSecretKeyRequest(spec.CloudInitSecretRef),
+		Image:                   spec.Image.Name,
+		SSHKeys:                 orEmpty(spec.SSHKeys),
+		Firewalls:               orEmpty(spec.Firewalls),
 	}
 }
 
@@ -105,6 +150,14 @@ func (r watchdogRequest) policy() (v1alpha1.WatchdogPolicy, error) {
 	}, nil
 }
 
+func newWatchdogRequest(policy v1alpha1.WatchdogPolicy) watchdogRequest {
+	return watchdogRequest{
+		RenewIntervalSeconds: seconds(policy.RenewInterval.Duration),
+		SlackSeconds:         seconds(policy.Slack.Duration),
+		MaxLifetimeSeconds:   seconds(policy.MaxLifetime.Duration),
+	}
+}
+
 // past this bound a count of seconds no longer survives the conversion, and the apiserver would quote back a duration nobody asked for
 func watchdogSpan(field string, requested int64) (time.Duration, error) {
 	if requested <= 0 || requested > maxDurationSeconds {
@@ -113,19 +166,36 @@ func watchdogSpan(field string, requested int64) (time.Duration, error) {
 	return span(requested), nil
 }
 
-func (r providerConfigCreateRequest) config() (*v1alpha1.ProviderConfig, error) {
+func (r providerConfigSpecRequest) spec() (v1alpha1.ProviderConfigSpec, error) {
 	watchdog, err := r.Watchdog.policy()
+	if err != nil {
+		return v1alpha1.ProviderConfigSpec{}, err
+	}
+	return v1alpha1.ProviderConfigSpec{
+		Type:     r.Type,
+		Hetzner:  r.Hetzner.providerSpec(),
+		Watchdog: watchdog,
+	}, nil
+}
+
+func newProviderConfigSpecRequest(spec v1alpha1.ProviderConfigSpec) *providerConfigSpecRequest {
+	hetzner := newHetznerProviderRequest(spec.Hetzner)
+	if hetzner == nil {
+		return nil
+	}
+	return &providerConfigSpecRequest{
+		Type:     spec.Type,
+		Hetzner:  hetzner,
+		Watchdog: newWatchdogRequest(spec.Watchdog),
+	}
+}
+
+func (r providerConfigCreateRequest) config() (*v1alpha1.ProviderConfig, error) {
+	spec, err := r.spec()
 	if err != nil {
 		return nil, err
 	}
-	return &v1alpha1.ProviderConfig{
-		ObjectMeta: metav1.ObjectMeta{Name: r.Name},
-		Spec: v1alpha1.ProviderConfigSpec{
-			Type:     r.Type,
-			Hetzner:  r.Hetzner.providerSpec(),
-			Watchdog: watchdog,
-		},
-	}, nil
+	return &v1alpha1.ProviderConfig{ObjectMeta: metav1.ObjectMeta{Name: r.Name}, Spec: spec}, nil
 }
 
 type secretKeyReference struct {
@@ -262,19 +332,39 @@ func (s *Server) providerConfigDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newProviderConfigDetailResponse(&config, time.Now()))
 }
 
+func decodeConfigBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	var submitted T
+	if err := decoder.Decode(&submitted); err != nil {
+		writeAPIError(w, http.StatusBadRequest, unreadableConfig+": "+err.Error())
+		var unread T
+		return unread, false
+	}
+	return submitted, true
+}
+
+func writeConfigRefusal(w http.ResponseWriter, r *http.Request, err error, name, fallback string) {
+	if apierrors.IsNotFound(err) {
+		writeNotFound(w, providerConfigKind, name)
+		return
+	}
+	if refusedByCluster(w, r, err) {
+		return
+	}
+	slog.Error("mutate the provider config", "config", name, "error", err)
+	writeAPIError(w, http.StatusBadGateway, fallback)
+}
+
 // the form names the secrets it references and creates none, so nothing here reaches the namespace holding the controller's own credentials
 func (s *Server) providerConfigCreate(w http.ResponseWriter, r *http.Request) {
 	writer, held := requestClient(w, r, s.writers.configs)
 	if !held {
 		return
 	}
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	var submitted providerConfigCreateRequest
-	if err := decoder.Decode(&submitted); err != nil {
-		writeAPIError(w, http.StatusBadRequest, unreadableConfig+": "+err.Error())
+	submitted, readable := decodeConfigBody[providerConfigCreateRequest](w, r)
+	if !readable {
 		return
 	}
 
@@ -293,4 +383,83 @@ func (s *Server) providerConfigCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, newProviderConfigSummary(config))
+}
+
+func (s *Server) providerConfigReplace(w http.ResponseWriter, r *http.Request) {
+	// a lease bound to this config reads the replaced spec on the controller's next pass, which is what makes rotating a credential possible while capacity is held
+	writer, held := requestClient(w, r, s.writers.configs)
+	if !held {
+		return
+	}
+	name := r.PathValue("name")
+	if refusedAsAnInvalidName(w, providerConfigKind, name) {
+		return
+	}
+	submitted, readable := decodeConfigBody[providerConfigSpecRequest](w, r)
+	if !readable {
+		return
+	}
+
+	spec, err := submitted.spec()
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	replaced, err := writer.Replace(r.Context(), name, spec)
+	if err != nil {
+		if apierrors.IsConflict(err) {
+			writeAPIError(w, http.StatusConflict,
+				fmt.Sprintf("%q changed while this replacement was in flight. %s", name, replaceRaced))
+			return
+		}
+		writeConfigRefusal(w, r, err, name, configReplaceFailed)
+		return
+	}
+	writeJSON(w, http.StatusOK, newProviderConfigSummary(replaced))
+}
+
+func (s *Server) providerConfigDelete(w http.ResponseWriter, r *http.Request) {
+	writer, held := requestClient(w, r, s.writers.configs)
+	if !held {
+		return
+	}
+	name := r.PathValue("name")
+	if refusedAsAnInvalidName(w, providerConfigKind, name) {
+		return
+	}
+	bound, read := s.leasesBoundTo(w, r, name)
+	if !read {
+		return
+	}
+	// the finalizer in the controller is what holds a bound config back whatever the client, and this answers for the interface rather than describing a deletion that will not happen
+	if len(bound) > 0 {
+		writeAPIError(w, http.StatusConflict,
+			fmt.Sprintf("%q is still named by %s. %s", name, strings.Join(bound, ", "), deleteRefused))
+		return
+	}
+
+	if err := writer.Delete(r.Context(), name); err != nil {
+		writeConfigRefusal(w, r, err, name, configDeleteFailed)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, providerConfigDeleteResponse{Name: name, Detail: deleteRequested})
+}
+
+func (s *Server) leasesBoundTo(w http.ResponseWriter, r *http.Request, config string) ([]string, bool) {
+	reader, held := requestClient(w, r, s.readers)
+	if !held {
+		return nil, false
+	}
+
+	var leases v1alpha1.CapacityLeaseList
+	if err := reader.List(r.Context(), &leases); err != nil {
+		if refusedByAuthorisation(w, r, err) {
+			return nil, false
+		}
+		slog.Error("list the capacity leases bound to the provider config", "config", config, "error", err)
+		writeAPIError(w, http.StatusBadGateway, leaseReadFailed)
+		return nil, false
+	}
+	return leases.NamesBoundTo(config), true
 }

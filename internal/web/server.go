@@ -29,9 +29,11 @@ type LeaseWriter interface {
 	Extend(ctx context.Context, name string, duration time.Duration) error
 }
 
-// the parameter is the object itself rather than a client.Object, so this seam reaches no other kind
+// every parameter names the kind or the field it reaches rather than a client.Object, so this seam touches no other kind and no other part of a config
 type ProviderConfigWriter interface {
 	Create(ctx context.Context, config *v1alpha1.ProviderConfig) error
+	Replace(ctx context.Context, name string, spec v1alpha1.ProviderConfigSpec) (*v1alpha1.ProviderConfig, error)
+	Delete(ctx context.Context, name string) error
 }
 
 type Options struct {

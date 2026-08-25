@@ -97,6 +97,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/leases/{name}", mutating(s, s.writers.leases, s.leaseRelease))
 	mux.HandleFunc("POST /api/providerconfigs", mutating(s, s.writers.configs, s.providerConfigCreate))
 	mux.HandleFunc("GET /api/providerconfigs/{name}", s.providerConfigDetail)
+	mux.HandleFunc("PUT /api/providerconfigs/{name}", mutating(s, s.writers.configs, s.providerConfigReplace))
+	mux.HandleFunc("DELETE /api/providerconfigs/{name}", mutating(s, s.writers.configs, s.providerConfigDelete))
 	mux.HandleFunc("GET /api/machines", s.machines)
 	mux.HandleFunc("GET /api/namespaces", s.namespaces)
 	mux.HandleFunc("GET /api/", apiNotFound)

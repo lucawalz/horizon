@@ -56,6 +56,14 @@ func (f failingConfigWriter) Create(context.Context, *v1alpha1.ProviderConfig) e
 	return f.err
 }
 
+func (f failingConfigWriter) Replace(context.Context, string, v1alpha1.ProviderConfigSpec) (*v1alpha1.ProviderConfig, error) {
+	return nil, f.err
+}
+
+func (f failingConfigWriter) Delete(context.Context, string) error {
+	return f.err
+}
+
 type identityClients struct {
 	mu          sync.Mutex
 	asked       []Identity

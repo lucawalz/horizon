@@ -59,7 +59,7 @@ func TestZeroValuedResponsesEncodeNullsAndEmptyLists(t *testing.T) {
 		"provider config": {
 			newProviderConfigSummaries([]v1alpha1.ProviderConfig{{}})[0],
 			`{"name":"","type":"","ready":null,"reason":null,"message":null,"cataloguePublished":null,` +
-				`"createdAt":` + zeroInstantJSON + `}`,
+				`"spec":null,"createdAt":` + zeroInstantJSON + `}`,
 		},
 		"machine type": {newMachineType(provider.InstanceType{}), zeroMachineTypeJSON},
 		"money":        {money{}, `{"amount":0,"currency":""}`},

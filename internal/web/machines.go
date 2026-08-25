@@ -52,7 +52,9 @@ type providerConfigSummary struct {
 	Reason             *string                 `json:"reason"`
 	Message            *string                 `json:"message"`
 	CataloguePublished *metav1.ConditionStatus `json:"cataloguePublished"`
-	CreatedAt          string                  `json:"createdAt"`
+	// the spec is carried in the shape a write accepts, so an edit form fills from exactly what it submits and a config this shape cannot carry is null rather than reshaped
+	Spec      *providerConfigSpecRequest `json:"spec"`
+	CreatedAt string                     `json:"createdAt"`
 }
 
 type money struct {
@@ -94,6 +96,7 @@ func newProviderConfigSummary(config *v1alpha1.ProviderConfig) providerConfigSum
 		Name:               config.Name,
 		Type:               config.Spec.Type,
 		CataloguePublished: conditionStatus(config.Status.Conditions, v1alpha1.ConditionCataloguePublished),
+		Spec:               newProviderConfigSpecRequest(config.Spec),
 		CreatedAt:          rfc3339(config.CreationTimestamp.Time),
 	}
 	if ready := findCondition(config.Status.Conditions, v1alpha1.ConditionReady); ready != nil {

@@ -36,14 +36,33 @@ func (w clusterWriter) Delete(ctx context.Context, obj client.Object, opts ...cl
 	return w.api.Delete(ctx, obj, opts...)
 }
 
-func ProviderConfigWriterFor(api client.Writer) ProviderConfigWriter {
+func ProviderConfigWriterFor(api ClusterReadWriter) ProviderConfigWriter {
 	return providerConfigWriter{api: api}
 }
 
-type providerConfigWriter struct{ api client.Writer }
+type providerConfigWriter struct{ api ClusterReadWriter }
 
 func (w providerConfigWriter) Create(ctx context.Context, config *v1alpha1.ProviderConfig) error {
 	return w.api.Create(ctx, config)
+}
+
+func (w providerConfigWriter) Replace(ctx context.Context, name string, spec v1alpha1.ProviderConfigSpec) (*v1alpha1.ProviderConfig, error) {
+	config := &v1alpha1.ProviderConfig{}
+	if err := w.api.Get(ctx, client.ObjectKey{Name: name}, config); err != nil {
+		return nil, err
+	}
+
+	// the patch carries the resourceVersion this read saw, so a config that moved in between is refused rather than overwritten by a spec measured against one it no longer holds
+	patch := client.MergeFromWithOptions(config.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	config.Spec = spec
+	if err := w.api.Patch(ctx, config, patch); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+func (w providerConfigWriter) Delete(ctx context.Context, name string) error {
+	return w.api.Delete(ctx, &v1alpha1.ProviderConfig{ObjectMeta: metav1.ObjectMeta{Name: name}})
 }
 
 func (w clusterWriter) Extend(ctx context.Context, name string, duration time.Duration) error {
