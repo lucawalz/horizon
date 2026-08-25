@@ -127,7 +127,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	if cond == nil || cond.Reason != reasonPlacementRestored {
 		return ctrl.Result{}, nil
 	}
-	if r.remainingTeardownBudget(lease) <= 0 {
+	if r.remainingTeardownBudget(lease) <= reservedDrainBudget(lease) {
 		return ctrl.Result{}, nil
 	}
 

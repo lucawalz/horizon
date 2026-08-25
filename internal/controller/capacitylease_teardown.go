@@ -206,6 +206,10 @@ func (r *CapacityLeaseReconciler) remainingTeardownBudget(lease *v1alpha1.Capaci
 	return max(grace-elapsed, 0)
 }
 
+func reservedDrainBudget(lease *v1alpha1.CapacityLease) time.Duration {
+	return time.Duration(float64(teardownGrace(lease)) * drainBudgetShare)
+}
+
 func (r *CapacityLeaseReconciler) instanceReleaseRecord(lease *v1alpha1.CapacityLease, entry v1alpha1.InstanceStatus, path metrics.Path) func() {
 	if !existedAtProvider(entry) {
 		return nil

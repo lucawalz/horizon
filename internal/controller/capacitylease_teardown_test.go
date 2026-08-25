@@ -730,6 +730,40 @@ func TestTheRestoreGateAndTheDrainDrawFromTheSameBudget(t *testing.T) {
 	}
 }
 
+func TestTheRestoreGateLeavesTheDrainAUsableGrace(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
+	})
+	h.seedWorkload()
+	h.settle()
+	name := h.instanceName(0)
+	h.joinNode(name, true)
+	h.settle()
+
+	h.clock.Advance(testLeaseDuration + time.Millisecond)
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("expire and restore pass: %v", err)
+	}
+	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse)
+	h.seedPod("stuck", testWorkloadNS, name)
+
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("gate poll: %v", err)
+	}
+	if got := len(h.providerInstances()); got != 1 {
+		t.Fatalf("provider holds %d instances while the gate waits, want the release withheld", got)
+	}
+
+	h.clock.Advance(40 * time.Second)
+	h.settle()
+
+	h.assertProviderEmpty()
+	if h.podExists("stuck", testWorkloadNS) {
+		t.Error("the node went away undrained because the restore gate had spent the whole teardown budget")
+	}
+}
+
 func TestASpentTeardownBudgetSkipsTheDrainAndReleasesAnyway(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}

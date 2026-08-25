@@ -38,6 +38,8 @@ const (
 	restoreGatePoll     = time.Second
 
 	defaultTeardownGrace = 2 * time.Minute
+	// the restore gate and the drain draw on one teardown budget, so the drain keeps this share of it whatever the gate spends
+	drainBudgetShare = 0.5
 )
 
 const (
