@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/provider"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -476,6 +477,21 @@ func TestMigrateAffinityPatch(t *testing.T) {
 		if !reflect.DeepEqual(spec.Tolerations, []corev1.Toleration{burstToleration()}) {
 			t.Errorf("%s tolerations = %+v, want only the burst toleration", c.resource, spec.Tolerations)
 		}
+	}
+}
+
+func TestLeaseNodeAffinityKeysOnLeaseUID(t *testing.T) {
+	got := k8s.LeaseNodeAffinity("uid-a")
+	terms := got.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) != 1 || len(terms[0].MatchExpressions) != 1 {
+		t.Fatalf("affinity shape = %+v", terms)
+	}
+	expr := terms[0].MatchExpressions[0]
+	if expr.Key != provider.LeaseUIDLabelKey {
+		t.Errorf("key = %q, want %q", expr.Key, provider.LeaseUIDLabelKey)
+	}
+	if len(expr.Values) != 1 || expr.Values[0] != "uid-a" {
+		t.Errorf("values = %v, want [uid-a]", expr.Values)
 	}
 }
 
