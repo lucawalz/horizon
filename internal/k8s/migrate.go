@@ -116,10 +116,26 @@ func clearedPlacementMarkers() metadataPatch {
 	}
 }
 
-func burstToleration() corev1.Toleration {
+type LeaseIdentity struct {
+	UID  string
+	Name string
+}
+
+func (l LeaseIdentity) validate() error {
+	if l.UID == "" {
+		return fmt.Errorf("lease uid must not be empty")
+	}
+	if l.Name == "" {
+		return fmt.Errorf("lease name must not be empty")
+	}
+	return nil
+}
+
+func burstToleration(leaseName string) corev1.Toleration {
 	return corev1.Toleration{
 		Key:      BurstTaintKey,
-		Operator: corev1.TolerationOpExists,
+		Operator: corev1.TolerationOpEqual,
+		Value:    leaseName,
 		Effect:   burstTaintEffect,
 	}
 }
@@ -323,7 +339,7 @@ func buildMigratePatch(t workloadTarget, affinity *corev1.Affinity) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	moved := podPlacementPatch{Affinity: affinity, Tolerations: withBurstToleration(t.podSpec.Tolerations)}
+	moved := podPlacementPatch{Affinity: affinity, Tolerations: withBurstToleration(t.podSpec.Tolerations, "")}
 	if len(t.podSpec.NodeSelector) > 0 {
 		moved.NodeSelector = nodeSelectorPatch(nil, t.podSpec.NodeSelector)
 	}
@@ -334,13 +350,14 @@ func buildMigratePatch(t workloadTarget, affinity *corev1.Affinity) ([]byte, err
 	return patchData, nil
 }
 
-func withBurstToleration(existing []corev1.Toleration) []corev1.Toleration {
+func withBurstToleration(existing []corev1.Toleration, leaseName string) []corev1.Toleration {
 	for _, t := range existing {
-		if t.Key == BurstTaintKey && t.Effect == burstTaintEffect && t.Operator == corev1.TolerationOpExists {
+		if t.Key == BurstTaintKey && t.Effect == burstTaintEffect &&
+			t.Operator == corev1.TolerationOpEqual && t.Value == leaseName {
 			return existing
 		}
 	}
-	return append(append([]corev1.Toleration{}, existing...), burstToleration())
+	return append(append([]corev1.Toleration{}, existing...), burstToleration(leaseName))
 }
 
 func marshalPlacement(podSpec *corev1.PodSpec, name string) (string, error) {

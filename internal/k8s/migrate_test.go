@@ -132,7 +132,7 @@ func burstNodeAffinity() *corev1.Affinity {
 func burstToleration() corev1.Toleration {
 	return corev1.Toleration{
 		Key:      k8s.BurstTaintKey,
-		Operator: corev1.TolerationOpExists,
+		Operator: corev1.TolerationOpEqual,
 		Effect:   corev1.TaintEffectNoSchedule,
 	}
 }
@@ -1332,5 +1332,31 @@ func TestRestorePlacementLeavesTheNodeSelectorOfAnOlderAnnotation(t *testing.T) 
 	}
 	if len(stored.Spec.Template.Spec.Tolerations) != 1 {
 		t.Errorf("tolerations = %v, want the one the older annotation saved", stored.Spec.Template.Spec.Tolerations)
+	}
+}
+
+func TestWithBurstTolerationIsValued(t *testing.T) {
+	got := k8s.WithBurstToleration(nil, "lease-a")
+	if len(got) != 1 {
+		t.Fatalf("toleration count = %d, want 1", len(got))
+	}
+	if got[0].Operator != corev1.TolerationOpEqual {
+		t.Errorf("operator = %v, want Equal", got[0].Operator)
+	}
+	if got[0].Value != "lease-a" {
+		t.Errorf("value = %q, want %q", got[0].Value, "lease-a")
+	}
+}
+
+func TestWithBurstTolerationRejectsForeignLease(t *testing.T) {
+	foreign := []corev1.Toleration{{
+		Key:      k8s.BurstTaintKey,
+		Operator: corev1.TolerationOpEqual,
+		Value:    "lease-b",
+		Effect:   corev1.TaintEffectNoSchedule,
+	}}
+	got := k8s.WithBurstToleration(foreign, "lease-a")
+	if len(got) != 2 {
+		t.Fatalf("toleration count = %d, want 2, a foreign lease's toleration must not satisfy this lease", len(got))
 	}
 }
