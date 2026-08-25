@@ -58,57 +58,30 @@ The `Host` a browser reaches and the address the interface bound are different t
 
 The interface holds no permissions over horizon's own resources and never acts under its own name. Every call it makes to the apiserver impersonates the identity the token named, so an operator who has not been granted anything sees the apiserver's refusal. Access is granted in the cluster, with ordinary RBAC, and revoked the same way.
 
-`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. This role covers everything the interface can do: list and read leases, create one, extend a running one by patching its duration, release one by deleting it, delete the leftover record of one already released, and read the provider configurations the create form offers.
+`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. The chart renders the role itself, as [`templates/interface-operator-clusterrole.yaml`](../charts/horizon/templates/interface-operator-clusterrole.yaml), whenever `ui.enabled` and `ui.rbac.create` are both set. It is named `<release>-interface-operator` and it covers everything the interface can do: list and read leases, create one, extend a running one by patching its duration, release one by deleting it, delete the leftover record of one already released, and read and create provider configurations.
 
 The `namespaces` rule is the one optional entry. With it, the create form suggests the namespaces the signed-in operator may list. Without it the apiserver refuses that one call, the field stays a plain text box, and nothing else changes.
 
+The chart renders no binding, because the identities an install should trust are not knowable at packaging time. Binding the role is one object:
+
 ```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: horizon-lease-operator
-rules:
-  - apiGroups:
-      - horizon.dev
-    resources:
-      - capacityleases
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - patch
-      - delete
-  - apiGroups:
-      - horizon.dev
-    resources:
-      - providerconfigs
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - list
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: horizon-lease-operator
+  name: horizon-interface-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: horizon-lease-operator
+  name: horizon-interface-operator
 subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: Group
     name: platform
 ```
 
-Dropping `create` and `delete` from the first rule leaves a read-only operator: the interface serves every view and answers a create or a release with the apiserver's refusal. The two directions are worth separating, since a create is a machine that is billed and a delete is a lease released early.
+A read-only operator is a role of the adopter's own with `create`, `patch` and `delete` left out, bound instead of the rendered one: the interface serves every view and answers a create, an extension or a release with the apiserver's refusal. The directions are worth separating, since a create is a machine that is billed and a delete is a lease released early.
+
+Creating a provider configuration needs `create` on `providerconfigs` and nothing more. The form references the Secrets a configuration points at and never creates one, so no rule anywhere grants the impersonated identity anything over Secrets, and the Secrets themselves are made with `kubectl` in the namespace the controller runs in. The reasoning is recorded in [ADR 0033](adr/0033-create-a-provider-config-from-the-interface.md).
 
 ### Narrow the impersonation permission
 
@@ -135,4 +108,4 @@ The two lists are independent, and a list left empty leaves that resource unrest
 | `401` reporting a token that could not be verified | A token arrived and failed verification: wrong issuer, wrong audience, expired, signed with an algorithm that is not accepted, or missing the username claim. |
 | `403` from the interface, on a create or a release only | The cross-origin guard refused. Usually `ui.externalOrigin` is unset or does not match the origin the browser used, scheme included. |
 | `403` from the apiserver, naming a resource | The impersonated identity is not permitted to do this, or the interface is not permitted to impersonate that identity. Both are RBAC. |
-| `501` on a create or a release | The process serves a read-only interface and holds no client that may write. `horizon serve` always supplies one, so this belongs to an embedder rather than to a chart install. |
+| `501` on a mutating route | The process holds no writer for that route. The lease routes and the provider config route are served through separate writers, so a build can hold one and not the other. `horizon serve` supplies both, so this belongs to an embedder rather than to a chart install. |

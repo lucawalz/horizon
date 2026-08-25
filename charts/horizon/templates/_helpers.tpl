@@ -59,6 +59,10 @@ app.kubernetes.io/component: {{ include "horizon.controllerComponent" . }}
 {{- printf "%s-%s" (include "horizon.fullname" .) (include "horizon.interfaceComponent" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "horizon.interfaceOperatorRoleName" -}}
+{{- printf "%s-operator" (include "horizon.interfaceFullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
 {{- define "horizon.interfaceSelectorLabels" -}}
 {{ include "horizon.selectorLabels" . }}
 app.kubernetes.io/component: {{ include "horizon.interfaceComponent" . }}

@@ -127,7 +127,7 @@ The table below is the single reference for the `ui.*` values; no other document
 | `ui.serviceAccount.create` | `true` | Create the interface ServiceAccount. |
 | `ui.serviceAccount.name` | `""` | Interface ServiceAccount name; defaults to the release full name with `-interface` appended. |
 | `ui.serviceAccount.annotations` | `{}` | Interface ServiceAccount annotations. |
-| `ui.rbac.create` | `true` | Create the interface ClusterRole and its binding. |
+| `ui.rbac.create` | `true` | Create the interface ClusterRole and its binding, and the operator ClusterRole an adopter binds signed-in identities to. |
 | `ui.rbac.impersonateUsers` | `[]` | Usernames the interface may impersonate. Empty leaves the rule unrestricted. |
 | `ui.rbac.impersonateGroups` | `[]` | Groups the interface may impersonate. Empty leaves the rule unrestricted. |
 | `ui.service.type` | `ClusterIP` | Interface Service type. |
@@ -146,6 +146,8 @@ The NetworkPolicy restricts ingress only. It selects the interface pods by `app.
 #### Identity separation
 
 The interface runs under its own ServiceAccount, and that account is the only subject of the only role in this chart that grants `impersonate`. The controller ClusterRole is untouched by `ui.enabled` and never gains it, so neither role widens the other. The chart refuses to render when `ui.serviceAccount.name` resolves to the controller account, because one shared identity would hand the controller impersonation and hand the interface the permission to delete nodes.
+
+The operator ClusterRole, named after the release with `-interface-operator` appended, is the role a signed-in identity is granted rather than one the interface holds. It is rendered with no binding, since the identities to trust are not knowable at packaging time, and it grants nothing until an adopter binds it. What each rule buys is in [docs/serving-the-interface.md](../../docs/serving-the-interface.md#granting-the-impersonated-identity-its-rights).
 
 Why `ui.rbac.impersonateUsers` and `ui.rbac.impersonateGroups` matter, and why leaving both empty is not a production value, is in [docs/serving-the-interface.md](../../docs/serving-the-interface.md#narrow-the-impersonation-permission).
 

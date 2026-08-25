@@ -1,0 +1,35 @@
+{{- if and .Values.ui.enabled .Values.ui.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "horizon.interfaceOperatorRoleName" . }}
+  labels:
+    {{- include "horizon.interfaceLabels" . | nindent 4 }}
+rules:
+  - apiGroups:
+      - horizon.dev
+    resources:
+      - capacityleases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  - apiGroups:
+      - horizon.dev
+    resources:
+      - providerconfigs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - list
+{{- end }}
