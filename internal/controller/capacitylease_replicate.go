@@ -112,7 +112,7 @@ func replicationOutcome(result k8s.ReplicationResult, targeted int, cause error)
 }
 
 func replicationSummary(result k8s.ReplicationResult) string {
-	summary := fmt.Sprintf("%d workloads replicated onto burst capacity", len(result.Copies))
+	summary := fmt.Sprintf("%s replicated onto burst capacity", workloadCount(len(result.Copies)))
 	if len(result.Skipped) == 0 {
 		return summary
 	}

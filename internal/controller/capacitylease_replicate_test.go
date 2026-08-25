@@ -30,7 +30,7 @@ func TestReplicateModeRunsACopyAndLeavesTheOriginalAlone(t *testing.T) {
 	h.settle()
 
 	h.assertCondition(v1alpha1.ConditionWorkloadReplicable, metav1.ConditionTrue)
-	h.assertConditionDetail(v1alpha1.ConditionWorkloadReplicable, reasonReplicated, "1 workloads replicated onto burst capacity")
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadReplicable, reasonReplicated, "1 workload replicated onto burst capacity")
 
 	copies := h.burstCopiesIn(testWorkloadNS)
 	if len(copies) != 1 {

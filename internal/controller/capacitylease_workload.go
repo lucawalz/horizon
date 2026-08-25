@@ -111,11 +111,18 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	}
 
 	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue, reasonMigrated,
-		fmt.Sprintf("%d workloads moved onto burst capacity", len(lease.Status.MigratedWorkloads)))
+		fmt.Sprintf("%s moved onto burst capacity", workloadCount(len(lease.Status.MigratedWorkloads))))
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+}
+
+func workloadCount(counted int) string {
+	if counted == 1 {
+		return "1 workload"
+	}
+	return fmt.Sprintf("%d workloads", counted)
 }
 
 func alsoMigrated(recorded, moved []string) []string {
@@ -170,7 +177,7 @@ func (r *CapacityLeaseReconciler) recordMigratability(lease *v1alpha1.CapacityLe
 	lease.Status.MigrationWarnings = warnings
 	if len(warnings) == 0 {
 		r.setCondition(lease, v1alpha1.ConditionWorkloadMigratable, metav1.ConditionTrue, reasonSeamlessMigration,
-			fmt.Sprintf("%d workloads move without dropping traffic", len(assessments)))
+			fmt.Sprintf("%s can move without dropping traffic", workloadCount(len(assessments))))
 		return
 	}
 	r.setCondition(lease, v1alpha1.ConditionWorkloadMigratable, metav1.ConditionFalse, reasonDisruptiveMigration,

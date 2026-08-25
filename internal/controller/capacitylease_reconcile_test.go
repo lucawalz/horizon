@@ -458,7 +458,7 @@ func TestARepeatedMigrationPassReportsTheSameWorkloads(t *testing.T) {
 	if got := h.lease().Status.MigratedWorkloads; len(got) != 1 || got[0] != "workloads/deployment/api" {
 		t.Errorf("migrated workloads are %v after a second pass, want [workloads/deployment/api]", got)
 	}
-	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrated, "1 workloads moved onto burst capacity")
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrated, "1 workload moved onto burst capacity")
 }
 
 func TestAWorkloadNamespaceWithoutWorkloadsFailsTheMigration(t *testing.T) {
