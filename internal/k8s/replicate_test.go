@@ -409,6 +409,47 @@ func TestReplicateCopiesTheNeighboursOfASkippedWorkload(t *testing.T) {
 	}
 }
 
+func TestDeleteBurstCopiesRemovesOnlyThisLeasesCopies(t *testing.T) {
+	moved := ownedDeployment("moved", "moved", testLease)
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), originalDeployment(), moved)
+	if _, err := replicate(t, kc, testNS); err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if err := k8s.DeleteBurstCopies(context.Background(), kc, nsSet(t, testNS), testLease); err != nil {
+		t.Fatalf("DeleteBurstCopies: %v", err)
+	}
+
+	if got := len(burstCopiesIn(t, kc, testNS)); got != 0 {
+		t.Errorf("%d burst copies survived the teardown", got)
+	}
+	for _, name := range []string{"api", "moved"} {
+		if _, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), name, metav1.GetOptions{}); err != nil {
+			t.Errorf("teardown deleted the workload %q it only ever read: %v", name, err)
+		}
+	}
+}
+
+func TestDeleteBurstCopiesLeavesAnotherLeasesCopyRunning(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), burstNode("burst-2", leaseB.UID), originalDeployment())
+	if _, err := replicate(t, kc, testNS); err != nil {
+		t.Fatalf("Replicate for the first lease: %v", err)
+	}
+	if _, err := k8s.Replicate(context.Background(), kc, nsSet(t, testNS), replicationOf(leaseB)); err != nil {
+		t.Fatalf("Replicate for the second lease: %v", err)
+	}
+
+	if err := k8s.DeleteBurstCopies(context.Background(), kc, nsSet(t, testNS), testLease); err != nil {
+		t.Fatalf("DeleteBurstCopies: %v", err)
+	}
+
+	copies := burstCopiesIn(t, kc, testNS)
+	if len(copies) != 1 || copies[0].Labels[k8s.BurstCopyLabelKey] != leaseB.Name {
+		t.Errorf("the namespace holds %d burst copies, want the second lease's alone", len(copies))
+	}
+}
+
 func TestReplicateRefusesAnIncompleteRequest(t *testing.T) {
 	tests := []struct {
 		name        string

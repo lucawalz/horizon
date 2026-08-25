@@ -181,7 +181,7 @@ func migratabilitySummary(warnings []v1alpha1.MigrationWarning, total int) strin
 }
 
 func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
-	// what moved decides both whether to restore and where, because a partial migration leaves the condition False and the spec is mutable
+	// what the lease placed decides both whether to act and where, because a partial placement leaves the condition False and the spec is mutable
 	if lease.Spec.Workload == nil || len(lease.Status.MigratedWorkloads) == 0 {
 		return ctrl.Result{}, nil
 	}
@@ -190,28 +190,49 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if _, restoreErr := k8s.RestorePlacement(ctx, r.Kube, namespaces, leaseIdentity(lease)); restoreErr != nil {
-		restoreErr = fmt.Errorf("restore placement: %w", restoreErr)
-		r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonRestoreFailed, restoreErr.Error())
+	if reason, releaseErr := r.releaseBurstWorkload(ctx, lease, namespaces); releaseErr != nil {
+		r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, releaseErr.Error())
 		if err := r.writeStatus(ctx, lease); err != nil {
-			return ctrl.Result{}, errors.Join(restoreErr, err)
+			return ctrl.Result{}, errors.Join(releaseErr, err)
 		}
 		// blocking past this point would strand the machines and the finalizer as well as the workload, so the drain share ends the wait
 		if r.remainingTeardownBudget(lease) > reservedDrainBudget(lease) {
-			return ctrl.Result{}, restoreErr
+			return ctrl.Result{}, releaseErr
 		}
 		return ctrl.Result{}, nil
 	}
 
 	lease.Status.MigratedWorkloads = nil
 	lease.Status.MigrationWarnings = nil
-	meta.RemoveStatusCondition(&lease.Status.Conditions, v1alpha1.ConditionWorkloadMigratable)
-	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonPlacementRestored,
-		"workload placement restored")
+	r.markWorkloadReleased(lease)
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
+}
+
+func (r *CapacityLeaseReconciler) releaseBurstWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, namespaces k8s.TargetSet) (string, error) {
+	if replicateMode(lease) {
+		if err := k8s.DeleteBurstCopies(ctx, r.Kube, namespaces, leaseIdentity(lease)); err != nil {
+			return reasonCopyDeleteFailed, fmt.Errorf("delete burst copies: %w", err)
+		}
+		return "", nil
+	}
+	if _, err := k8s.RestorePlacement(ctx, r.Kube, namespaces, leaseIdentity(lease)); err != nil {
+		return reasonRestoreFailed, fmt.Errorf("restore placement: %w", err)
+	}
+	return "", nil
+}
+
+func (r *CapacityLeaseReconciler) markWorkloadReleased(lease *v1alpha1.CapacityLease) {
+	if replicateMode(lease) {
+		r.setCondition(lease, v1alpha1.ConditionWorkloadReplicable, metav1.ConditionFalse, reasonCopiesDeleted,
+			"burst copies deleted")
+		return
+	}
+	meta.RemoveStatusCondition(&lease.Status.Conditions, v1alpha1.ConditionWorkloadMigratable)
+	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonPlacementRestored,
+		"workload placement restored")
 }
 
 func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
@@ -223,7 +244,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	if grace <= 0 {
 		return ctrl.Result{}, nil
 	}
-	if !placementRestored(lease) {
+	if !workloadReleased(lease) {
 		return ctrl.Result{}, nil
 	}
 	if r.remainingTeardownBudget(lease) <= reservedDrainBudget(lease) {
@@ -244,9 +265,19 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	return ctrl.Result{RequeueAfter: restoreGatePoll}, nil
 }
 
-func placementRestored(lease *v1alpha1.CapacityLease) bool {
-	cond := meta.FindStatusCondition(lease.Status.Conditions, v1alpha1.ConditionWorkloadMigrated)
-	return cond != nil && cond.Reason == reasonPlacementRestored
+func workloadReleased(lease *v1alpha1.CapacityLease) bool {
+	if replicateMode(lease) {
+		return conditionReason(lease, v1alpha1.ConditionWorkloadReplicable) == reasonCopiesDeleted
+	}
+	return conditionReason(lease, v1alpha1.ConditionWorkloadMigrated) == reasonPlacementRestored
+}
+
+func conditionReason(lease *v1alpha1.CapacityLease, condition string) string {
+	cond := meta.FindStatusCondition(lease.Status.Conditions, condition)
+	if cond == nil {
+		return ""
+	}
+	return cond.Reason
 }
 
 func leaseIdentity(lease *v1alpha1.CapacityLease) k8s.LeaseIdentity {

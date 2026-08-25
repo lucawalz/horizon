@@ -24,6 +24,7 @@ const (
 	ReasonBudgetSpansCopy    = "DisruptionBudgetSpansCopy"
 
 	opReplicate         = "replicate"
+	opDeleteCopies      = "delete-burst-copies"
 	burstCopyInfix      = "-burst-"
 	burstCopyHashLength = 8
 	maxObjectNameLength = 253
@@ -273,6 +274,35 @@ func disruptionBudgetSelectors(ctx context.Context, kc kubernetes.Interface, nam
 		selectors = append(selectors, selector)
 	}
 	return selectors, nil
+}
+
+func DeleteBurstCopies(ctx context.Context, kc kubernetes.Interface, targets TargetSet, lease LeaseIdentity) error {
+	if err := lease.validate(); err != nil {
+		return fmt.Errorf("%s: %w", opDeleteCopies, err)
+	}
+	var failures error
+	for _, namespace := range targets.namespaces {
+		failures = errors.Join(failures, deleteNamespaceCopies(ctx, kc, namespace, lease))
+	}
+	return failures
+}
+
+func deleteNamespaceCopies(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) error {
+	api := kc.AppsV1().Deployments(namespace)
+	// both labels are required, so a workload this lease moved rather than copied is never a candidate for deletion
+	owned := labels.SelectorFromSet(labels.Set{LeaseUIDLabelKey: lease.UID, BurstCopyLabelKey: lease.Name})
+	list, err := api.List(ctx, metav1.ListOptions{LabelSelector: owned.String()})
+	if err != nil {
+		return fmt.Errorf("%s: list deployments in %q: %w", opDeleteCopies, namespace, err)
+	}
+	var failures error
+	for i := range list.Items {
+		name := list.Items[i].Name
+		if err := api.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			failures = errors.Join(failures, fmt.Errorf("%s: delete deployment %q in %q: %w", opDeleteCopies, name, namespace, err))
+		}
+	}
+	return failures
 }
 
 func isBurstCopy(workloadLabels map[string]string) bool {

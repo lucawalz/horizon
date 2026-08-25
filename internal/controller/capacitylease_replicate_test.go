@@ -90,6 +90,57 @@ func TestReplicateModeSkipsAnAutoscaledWorkloadAndNamesMoveMode(t *testing.T) {
 	}
 }
 
+func TestReplicateModeDeletesTheCopyAtTeardown(t *testing.T) {
+	h := replicated(t)
+	h.seedWorkload()
+	h.settle()
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 1 {
+		t.Fatalf("the namespace holds %d burst copies before teardown, want one", got)
+	}
+
+	h.deleteLease()
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("teardown pass: %v", err)
+	}
+
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 0 {
+		t.Errorf("teardown left %d burst copies running on capacity the lease is about to return", got)
+	}
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 0 {
+		t.Errorf("the lease still owes %v after its copies were deleted", got)
+	}
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadReplicable, reasonCopiesDeleted, "burst copies deleted")
+	if h.deploymentIn(testWorkloadNS, "api") == nil {
+		t.Error("teardown deleted the original alongside the copy")
+	}
+}
+
+func TestReplicateModeWithholdsReleaseUntilTheCopysPodsAreGone(t *testing.T) {
+	h := replicated(t)
+	h.seedWorkload()
+	h.settle()
+	node := h.instanceName(0)
+
+	h.deleteLease()
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("teardown pass: %v", err)
+	}
+	h.seedPod("api-burst-0", testWorkloadNS, node)
+
+	for range 5 {
+		if _, err := h.reconcile(); err != nil {
+			t.Fatalf("reconcile while a copy pod sits on the burst node: %v", err)
+		}
+	}
+
+	if got := len(h.providerInstances()); got != 1 {
+		t.Errorf("provider holds %d instances, want the release withheld until the copy's pods are gone", got)
+	}
+	if _, ok := h.node(node); !ok {
+		t.Error("the burst node was drained while a copy pod still ran on it")
+	}
+}
+
 func TestReplicateModeWarnsAboutADisruptionBudgetWithoutSkipping(t *testing.T) {
 	h := replicated(t)
 	h.seedWorkload()
