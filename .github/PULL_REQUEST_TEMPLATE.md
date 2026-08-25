@@ -20,8 +20,7 @@
 
 <!-- How was this verified? -->
 
-- [ ] `go test ./...` passes
-- [ ] `golangci-lint run ./...` passes
+- [ ] `make verify` passes
 
 ## Checklist
 

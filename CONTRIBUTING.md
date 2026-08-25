@@ -4,9 +4,11 @@
 
 - Go 1.26 or newer
 - `kubectl` configured against a Kubernetes cluster, for exercising the operator outside the test suite
-- `golangci-lint` for linting
 - `helm` for the chart, and a container runtime with buildx for the image, when changing either
 - Node and npm, at the version pinned in `internal/web/site/.nvmrc`, when changing the web interface
+- `jq`, for the guard that keeps every vite server on loopback
+
+golangci-lint and goreleaser need no separate install. The Makefile runs both through `go run` at a pinned version, so the Go toolchain fetches and caches them on first use.
 
 ## Setup
 
@@ -44,25 +46,35 @@ docs/adr/           architecture decision records
 
 ## Testing
 
-Run the full test suite before opening a PR:
+`make verify` runs every gate CI runs, in ascending cost, and is the command to run before opening a PR and before tagging a release:
 
 ```bash
-# Unit and integration tests
-make test
+make verify
+```
 
-# The same suite under the race detector
+The Makefile is the single definition of that gate set and the CI jobs call the targets, so nothing is enforced in CI that cannot be run locally. [ADR 0030](docs/adr/0030-define-the-verification-gates-once-in-the-makefile.md) records why. Individual gates run on their own while iterating:
+
+```bash
+# Unit and integration tests, and the same suite under the race detector
+make test
 make test-race
 
-# Linting
-golangci-lint run ./...
+# Linting, at the version pinned in the Makefile
+make lint
 
 # Chart, including the check that crds/ matches the generated manifests
 make chart-lint
+
+# Generated manifests and deepcopy methods match the API types
+make manifests-check
+
+# The web interface, including the check that dist/ matches a fresh build
+make site
 ```
 
 `go test ./...` still exits zero, but the controller suite skips every case that needs an apiserver when it cannot find the envtest control plane binaries. `make test` downloads them into `bin/k8s` first and points the suite at them, so it is the only invocation that runs everything.
 
-Changes to the API types need `make manifests`, which regenerates the custom resource definitions and copies them into the chart. CI fails when the two copies diverge.
+Changes to the API types need `make manifests`, which regenerates the custom resource definitions and copies them into the chart, and `make generate`, which regenerates the deepcopy methods. `make manifests-check` runs both and fails when the committed output is stale.
 
 ## Web interface
 
@@ -76,11 +88,11 @@ npm ci
 npm run build
 ```
 
-The `site` job in CI rebuilds the bundle and fails when it differs from what is committed. It is not a required check, so a stale `dist` is reported rather than blocked and rebuilding stays the author's job.
+`make site` runs the same sequence the `site` job runs and fails when the rebuilt bundle differs from what is committed. That job is not a required check, so a stale `dist` is reported rather than blocked and rebuilding stays the author's job.
 
 That check is a byte comparison against a bundler, and it only holds while its inputs are pinned. `package-lock.json` pins the dependency graph and `.nvmrc` pins the Node version, which the local build and the CI job read from the same file. Building on another version can produce a difference that has nothing to do with the change.
 
-`npm run dev` serves the interface with hot reload and proxies `/api` to a `horizon dashboard` already running on its default port. The dev server binds `127.0.0.1`, and CI fails if that binding leaves `vite.config.ts`, if the file gains a `host` binding pointing anywhere else, or if an npm script passes `--host`, because the dashboard behind the proxy is unauthenticated. `npm test` runs the frontend unit tests and `npm run lint` runs oxlint.
+`npm run dev` serves the interface with hot reload and proxies `/api` to a `horizon dashboard` already running on its default port. The dev server binds `127.0.0.1`, and `make site` fails if that binding leaves `vite.config.ts`, if the file gains a `host` binding pointing anywhere else, or if an npm script passes `--host`, because the dashboard behind the proxy is unauthenticated. `npm test` runs the frontend unit tests and `npm run lint` runs oxlint.
 
 Reads work through the dev server and mutations do not. Creating and releasing a lease is refused there with a `403`, because the browser origin is the vite port and the dashboard's is its own, so the cross-origin guard can never see a matching pair; no option is added to admit the extra origin. Layout and reading work belong on the dev server, and every mutation is exercised against a built binary serving the interface from its own origin. [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) records the reasoning.
 
@@ -127,7 +139,7 @@ Significant design choices are documented as ADRs in [`docs/adr/`](docs/adr/). A
 
 ## Pull requests
 
-1. Tests and linting pass locally
+1. `make verify` passes locally
 2. Open a PR against `main`
 3. Fill in the PR template completely
 4. CI must pass before merging
