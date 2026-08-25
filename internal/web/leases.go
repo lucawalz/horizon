@@ -17,6 +17,7 @@ const (
 
 type leaseSummary struct {
 	Name         string                  `json:"name"`
+	ProviderRef  string                  `json:"providerRef"`
 	Replicas     int32                   `json:"replicas"`
 	Region       string                  `json:"region"`
 	Phase        *v1alpha1.LeasePhase    `json:"phase"`
@@ -108,6 +109,7 @@ type leaseDetailResponse struct {
 func newLeaseSummary(lease *v1alpha1.CapacityLease) leaseSummary {
 	return leaseSummary{
 		Name:         lease.Name,
+		ProviderRef:  lease.Spec.ProviderRef,
 		Replicas:     lease.Spec.Replicas,
 		Region:       lease.Spec.Region,
 		Phase:        nullable(lease.Status.Phase),

@@ -15,7 +15,7 @@ import (
 
 const (
 	zeroInstantJSON = `"0001-01-01T00:00:00Z"`
-	zeroSummaryJSON = `{"name":"","replicas":0,"region":"","phase":null,"expiresAt":null,"ready":null,` +
+	zeroSummaryJSON = `{"name":"","providerRef":"","replicas":0,"region":"","phase":null,"expiresAt":null,"ready":null,` +
 		`"armed":null,"createdAt":` + zeroInstantJSON + `,"instanceType":null,"readyAt":null,"releasedAt":null}`
 	zeroSelectionJSON = `{"strategy":"","chosen":"","hourlyRate":null,"currency":null,"runnerUp":null,` +
 		`"offered":0,"qualified":0,"rejected":[],"decidedAt":` + zeroInstantJSON + `}`
