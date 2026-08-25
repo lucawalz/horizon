@@ -681,7 +681,10 @@ func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 			Name:        "dep1",
 			Namespace:   testNS,
 			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
-			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
+			Labels: map[string]string{
+				k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue,
+				provider.LeaseUIDLabelKey:  testLease.UID,
+			},
 		},
 	}
 	kc := fake.NewSimpleClientset(node, dep)
@@ -699,6 +702,40 @@ func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 	}
 	if got := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]; got != emptyPlacementJSON {
 		t.Errorf("placement annotation = %q, want it left untouched", got)
+	}
+}
+
+func TestMigrateNeitherPatchesNorClaimsAnotherLeasesWorkload(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	nodeA := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-a",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID},
+	}}
+	nodeB := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-b",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: leaseB.UID},
+	}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(nodeA, nodeB, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate lease-a: %v", err)
+	}
+	kc.ClearActions()
+
+	claimed, err := k8s.Migrate(context.Background(), kc, testNS, leaseB)
+	if err != nil {
+		t.Fatalf("Migrate lease-b: %v", err)
+	}
+	if len(claimed) != 0 {
+		t.Errorf("lease-b claimed %v, want none: lease-a moved that workload", claimed)
+	}
+	if got := patchCount(kc, "deployments", "app"); got != 0 {
+		t.Errorf("lease-b patched app %d times, want none", got)
+	}
+	if got := getDeployment(t, kc, "app").Labels[provider.LeaseUIDLabelKey]; got != testLease.UID {
+		t.Errorf("owner label = %q, want it left at %q", got, testLease.UID)
 	}
 }
 

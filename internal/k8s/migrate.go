@@ -123,6 +123,11 @@ func clearedPlacementMarkers() metadataPatch {
 	}
 }
 
+func placementOwner(workloadLabels map[string]string) (string, bool) {
+	uid, ok := workloadLabels[LeaseUIDLabelKey]
+	return uid, ok && uid != ""
+}
+
 type LeaseIdentity struct {
 	UID  string
 	Name string
@@ -324,18 +329,22 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 		return nil, false, nil, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
 	}
 	for _, t := range targets {
-		if _, ok := t.annotations[PrePlacementAnnotationKey]; !ok {
-			patchData, err := buildMigratePatch(t, lease)
-			if err != nil {
-				return onBurst, patched, selectors, err
+		if _, alreadyMoved := t.annotations[PrePlacementAnnotationKey]; alreadyMoved {
+			if owner, _ := placementOwner(t.labels); owner == lease.UID {
+				onBurst = append(onBurst, workloadRef(wc.kind, t.name))
 			}
-			if err := wc.patch(ctx, t.name, patchData); err != nil {
-				return onBurst, patched, selectors, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
-			}
-			patched = true
-			if t.selfRolls() {
-				selectors = append(selectors, t.selector)
-			}
+			continue
+		}
+		patchData, err := buildMigratePatch(t, lease)
+		if err != nil {
+			return onBurst, patched, selectors, err
+		}
+		if err := wc.patch(ctx, t.name, patchData); err != nil {
+			return onBurst, patched, selectors, fmt.Errorf("migrate: patch %s %q: %w", wc.kind, t.name, err)
+		}
+		patched = true
+		if t.selfRolls() {
+			selectors = append(selectors, t.selector)
 		}
 		onBurst = append(onBurst, workloadRef(wc.kind, t.name))
 	}
