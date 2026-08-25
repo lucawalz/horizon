@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -35,6 +37,7 @@ const (
 	testLargeSize      = "fake-large"
 	testLeaseDuration  = time.Hour
 	testWorkloadNS     = "workloads"
+	testWorkloadNSB    = "workloads-b"
 	maxSettlePasses    = 40
 	testEventBufferLen = 16
 )
@@ -509,6 +512,38 @@ func (h *harness) seedWorkload(mutators ...func(*appsv1.Deployment)) {
 		h.t.Fatalf("create deployment: %v", err)
 	}
 	h.seedPod("api-0", testWorkloadNS, "home-0")
+}
+
+func (h *harness) seedWorkloadIn(namespace, name string) {
+	h.t.Helper()
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
+		},
+	}
+	if _, err := h.kube.AppsV1().Deployments(namespace).Create(h.t.Context(), deployment, metav1.CreateOptions{}); err != nil {
+		h.t.Fatalf("create deployment %s/%s: %v", namespace, name, err)
+	}
+}
+
+func (h *harness) refuseWorkloadPatchesIn(namespace string) {
+	h.t.Helper()
+	h.kube.PrependReactor("patch", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetNamespace() != namespace {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, action.GetNamespace(), errors.New("no"))
+	})
+}
+
+func (h *harness) deploymentIn(namespace, name string) *appsv1.Deployment {
+	h.t.Helper()
+	deployment, err := h.kube.AppsV1().Deployments(namespace).Get(h.t.Context(), name, metav1.GetOptions{})
+	if err != nil {
+		h.t.Fatalf("get deployment %s/%s: %v", namespace, name, err)
+	}
+	return deployment
 }
 
 func (h *harness) seedPod(name, namespace, nodeName string) {

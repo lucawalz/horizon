@@ -2213,3 +2213,123 @@ func TestClassifyMigratabilityCoversEveryTargetNamespace(t *testing.T) {
 		t.Errorf("assessments = %+v, want %+v", got, want)
 	}
 }
+
+func refuseIn(kc *fake.Clientset, verb, resource, namespace string) {
+	kc.PrependReactor(verb, resource, func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetNamespace() != namespace {
+			return false, nil, nil
+		}
+		return true, nil, errors.New("forbidden")
+	})
+}
+
+func TestMigrateKeepsWhatMovedWhenOneNamespaceFails(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	kc := fake.NewSimpleClientset(
+		node,
+		rollingDeploymentIn(testNS, "a-app", "a"),
+		rollingDeploymentIn(testNSB, "b-app", "b"),
+	)
+	evictAndDelete(kc)
+	refuseIn(kc, "patch", "deployments", testNSB)
+
+	result, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS, testNSB), testLease, noEvictionRetry)
+	if err == nil {
+		t.Fatal("Migrate reported success while one namespace could not be patched")
+	}
+
+	wantWorkloads := []string{"sentio-systems/deployment/a-app"}
+	if !reflect.DeepEqual(result.Workloads, wantWorkloads) {
+		t.Errorf("migrated = %v, want %v: a failing namespace must not discard what the others moved", result.Workloads, wantWorkloads)
+	}
+	wantNamespaces := []string{testNS}
+	if !reflect.DeepEqual(result.MigratedNamespaces, wantNamespaces) {
+		t.Errorf("migrated namespaces = %v, want %v", result.MigratedNamespaces, wantNamespaces)
+	}
+	if !strings.Contains(err.Error(), "b-app") {
+		t.Errorf("error = %q, want it to name the workload that stayed", err)
+	}
+}
+
+func TestRestorePlacementReachesEveryNamespaceWhenOneFails(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	kc := fake.NewSimpleClientset(
+		node,
+		rollingDeploymentIn(testNS, "a-app", "a"),
+		rollingDeploymentIn(testNSB, "b-app", "b"),
+	)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS, testNSB), testLease, noEvictionRetry); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	refuseIn(kc, "patch", "deployments", testNS)
+
+	restored, err := k8s.RestorePlacement(context.Background(), kc, nsSet(t, testNS, testNSB), testLease)
+	if err == nil {
+		t.Fatal("RestorePlacement reported success while one namespace could not be patched")
+	}
+
+	want := []string{"sentio-systems-b/deployment/b-app"}
+	if !reflect.DeepEqual(restored, want) {
+		t.Errorf("restored = %v, want %v: a namespace that failed must not stop the ones after it", restored, want)
+	}
+	stored, getErr := kc.AppsV1().Deployments(testNSB).Get(context.Background(), "b-app", metav1.GetOptions{})
+	if getErr != nil {
+		t.Fatalf("get b-app: %v", getErr)
+	}
+	if _, ok := stored.Annotations[k8s.PrePlacementAnnotationKey]; ok {
+		t.Error("the namespace after the failing one was never restored")
+	}
+}
+
+func TestWorkloadOffBurstNodesFoldsEveryNamespaceTogether(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		makePod("stuck", testNSB, "burst-1", corev1.PodRunning),
+	)
+
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, nsSet(t, testNS, testNSB), testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if ready {
+		t.Error("an empty namespace read first masked a namespace still holding burst capacity")
+	}
+
+	clear, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, nsSet(t, testNS), testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if !clear {
+		t.Error("a namespace holding nothing must still report ready on its own")
+	}
+}
+
+func TestWorkloadOnBurstNodesFoldsEveryNamespaceTogether(t *testing.T) {
+	placed := labelledPod("b-pod", "b", "burst-1", corev1.PodRunning)
+	placed.Namespace = testNSB
+	owned := ownedDeployment("b-app", "b", testLease)
+	owned.Namespace = testNSB
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), owned, placed)
+
+	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, nsSet(t, testNS, testNSB), testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("a namespace holding no workload of this lease must not hold the gate against one that is placed")
+	}
+
+	stray := labelledPod("a-pod", "a", "homelab-1", corev1.PodRunning)
+	ownedHere := ownedDeployment("a-app", "a", testLease)
+	kc = fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), owned, placed, ownedHere, stray)
+
+	ready, err = k8s.WorkloadOnBurstNodes(context.Background(), kc, nsSet(t, testNS, testNSB), testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if ready {
+		t.Error("one namespace still off the burst nodes must hold the gate whatever the others report")
+	}
+}

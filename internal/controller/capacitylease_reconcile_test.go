@@ -799,3 +799,44 @@ func TestAClassificationFailureWarnsWithoutBlockingTheMigration(t *testing.T) {
 		t.Errorf("migration warnings are %+v, want none while the classification is unknown", got)
 	}
 }
+
+func TestAPartialMigrationKeepsWhatItMoved(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS, testWorkloadNSB}}
+	})
+	h.seedWorkloadIn(testWorkloadNS, "api")
+	h.seedWorkloadIn(testWorkloadNSB, "api")
+	h.refuseWorkloadPatchesIn(testWorkloadNSB)
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settleIgnoringErrors(5)
+
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonPartialMigration, "1 of 2 namespaces")
+	want := []string{"workloads/deployment/api"}
+	if got := h.lease().Status.MigratedWorkloads; !reflect.DeepEqual(got, want) {
+		t.Fatalf("migrated workloads are %v, want %v: a failing namespace must not discard the progress of the others", got, want)
+	}
+}
+
+func TestTeardownRestoresWhatAPartialMigrationMoved(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS, testWorkloadNSB}}
+	})
+	h.seedWorkloadIn(testWorkloadNS, "api")
+	h.seedWorkloadIn(testWorkloadNSB, "api")
+	h.refuseWorkloadPatchesIn(testWorkloadNSB)
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settleIgnoringErrors(5)
+
+	if _, ok := h.deploymentIn(testWorkloadNS, "api").Annotations[k8s.PrePlacementAnnotationKey]; !ok {
+		t.Fatal("the namespace that migrated carries no saved placement")
+	}
+
+	h.deleteLease()
+	h.settleIgnoringErrors(10)
+
+	if _, ok := h.deploymentIn(testWorkloadNS, "api").Annotations[k8s.PrePlacementAnnotationKey]; ok {
+		t.Error("a migration that never reached True left its moved workload pinned to a lease that is gone")
+	}
+}
