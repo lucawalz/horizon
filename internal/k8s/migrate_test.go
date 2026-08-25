@@ -48,6 +48,7 @@ func makeDSPod(name, ns, node string) *corev1.Pod {
 const (
 	poolValue          = "burst"
 	testNS             = "sentio-systems"
+	testNSB            = "sentio-systems-b"
 	emptyPlacementJSON = "{}"
 )
 
@@ -1479,35 +1480,74 @@ func TestWithBurstTolerationRejectsForeignLease(t *testing.T) {
 	}
 }
 
+func assertPinnedToOwnLease(t *testing.T, workload string, spec corev1.PodSpec, lease k8s.LeaseIdentity) {
+	t.Helper()
+	expr := spec.Affinity.NodeAffinity.
+		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
+	if expr.Key != provider.LeaseUIDLabelKey || len(expr.Values) != 1 || expr.Values[0] != lease.UID {
+		t.Errorf("%s affinity = %s in %v, want %s in [%s]", workload, expr.Key, expr.Values, provider.LeaseUIDLabelKey, lease.UID)
+	}
+	if len(spec.Tolerations) != 1 || spec.Tolerations[0].Value != lease.Name {
+		t.Errorf("%s tolerations = %+v, want one valued %s", workload, spec.Tolerations, lease.Name)
+	}
+	for _, tol := range spec.Tolerations {
+		if tol.Key == k8s.BurstTaintKey && tol.Operator == corev1.TolerationOpExists {
+			t.Errorf("%s carries a value-blind toleration and would tolerate another lease's taint", workload)
+		}
+	}
+}
+
 func TestTwoLeasesDoNotShareNodes(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+
 	nodeA := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name:   "burst-a",
-		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: "uid-a"},
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID},
 	}}
 	nodeB := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
 		Name:   "burst-b",
-		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: "uid-b"},
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: leaseB.UID},
 	}}
 	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-a", Namespace: testNS}}
-	kc := fake.NewSimpleClientset(nodeA, nodeB, depA)
+	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-b", Namespace: testNSB}}
+	kc := fake.NewSimpleClientset(nodeA, nodeB, depA, depB)
 	evictAndDelete(kc)
 
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
-		t.Fatalf("Migrate: %v", err)
+		t.Fatalf("Migrate lease-a: %v", err)
+	}
+	if _, err := k8s.Migrate(context.Background(), kc, testNSB, leaseB); err != nil {
+		t.Fatalf("Migrate lease-b: %v", err)
 	}
 
-	got, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), "app-a", metav1.GetOptions{})
+	podA := makePod("pod-a", testNS, "burst-a", corev1.PodRunning)
+	if _, err := kc.CoreV1().Pods(testNS).Create(context.Background(), podA, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create pod-a: %v", err)
+	}
+
+	gotA, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), "app-a", metav1.GetOptions{})
 	if err != nil {
-		t.Fatalf("get deployment: %v", err)
+		t.Fatalf("get deployment app-a: %v", err)
 	}
-	expr := got.Spec.Template.Spec.Affinity.NodeAffinity.
-		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
-	if expr.Values[0] != "uid-a" {
-		t.Fatalf("lease-a pinned to %v, want [uid-a]", expr.Values)
+	gotB, err := kc.AppsV1().Deployments(testNSB).Get(context.Background(), "app-b", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment app-b: %v", err)
 	}
-	for _, tol := range got.Spec.Template.Spec.Tolerations {
-		if tol.Key == k8s.BurstTaintKey && tol.Operator == corev1.TolerationOpExists {
-			t.Fatal("lease-a carries a value-blind toleration and would tolerate lease-b's taint")
-		}
+	assertPinnedToOwnLease(t, "app-a", gotA.Spec.Template.Spec, testLease)
+	assertPinnedToOwnLease(t, "app-b", gotB.Spec.Template.Spec, leaseB)
+
+	onA, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes lease-a: %v", err)
+	}
+	if !onA {
+		t.Fatal("lease-a's readiness gate must count its own pod on its own node")
+	}
+	onWrongLease, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, leaseB)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes lease-b against lease-a's namespace: %v", err)
+	}
+	if onWrongLease {
+		t.Fatal("lease-b's readiness gate must not count a pod sitting on lease-a's node")
 	}
 }
