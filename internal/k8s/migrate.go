@@ -548,30 +548,79 @@ func isDaemonSetPod(pod *corev1.Pod) bool {
 }
 
 func WorkloadOnBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) (bool, error) {
-	return workloadNodeMembership(ctx, kc, namespace, lease, true, false, "workload-on-burst-nodes")
+	const op = "workload-on-burst-nodes"
+	burstNodes, pods, err := leaseNodesAndPods(ctx, kc, namespace, lease, op)
+	if err != nil {
+		return false, err
+	}
+	owned, err := ownedWorkloadSelectors(ctx, kc, namespace, lease)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", op, err)
+	}
+	placed := 0
+	for i := range pods {
+		p := &pods[i]
+		if isDaemonSetPod(p) || isTerminalPod(p) || !matchedByWorkload(p.Labels, owned) {
+			continue
+		}
+		if p.Status.Phase != corev1.PodRunning || !burstNodes[p.Spec.NodeName] {
+			return false, nil
+		}
+		placed++
+	}
+	return placed > 0, nil
 }
 
 func WorkloadOffBurstNodes(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) (bool, error) {
-	// an empty namespace has nothing left on a burst node to drain, and restore already patched placement back so nothing new can land there
-	return workloadNodeMembership(ctx, kc, namespace, lease, false, true, "workload-off-burst-nodes")
+	// restore clears the owner marker before this gate runs, so the node a pod sits on is all that is left to say whether it still holds this lease's capacity
+	burstNodes, pods, err := leaseNodesAndPods(ctx, kc, namespace, lease, "workload-off-burst-nodes")
+	if err != nil {
+		return false, err
+	}
+	for i := range pods {
+		p := &pods[i]
+		if isDaemonSetPod(p) || isTerminalPod(p) {
+			continue
+		}
+		if burstNodes[p.Spec.NodeName] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
-func workloadNodeMembership(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity, wantBurst, emptyIsReady bool, opName string) (bool, error) {
+func leaseNodesAndPods(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity, opName string) (map[string]bool, []corev1.Pod, error) {
 	if namespace == "" {
-		return false, fmt.Errorf("%s: namespace must not be empty", opName)
+		return nil, nil, fmt.Errorf("%s: namespace must not be empty", opName)
 	}
 	if err := lease.validate(); err != nil {
-		return false, fmt.Errorf("%s: %w", opName, err)
+		return nil, nil, fmt.Errorf("%s: %w", opName, err)
 	}
 	burstNodes, err := leaseNodes(ctx, kc, lease.UID)
 	if err != nil {
-		return false, fmt.Errorf("%s: list nodes: %w", opName, err)
+		return nil, nil, fmt.Errorf("%s: list nodes: %w", opName, err)
 	}
-	spread, err := workloadSpreadReady(ctx, kc, namespace, burstNodes, wantBurst, emptyIsReady)
+	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return false, fmt.Errorf("%s: list pods in %q: %w", opName, namespace, err)
+		return nil, nil, fmt.Errorf("%s: list pods in %q: %w", opName, namespace, err)
 	}
-	return spread, nil
+	return burstNodes, pods.Items, nil
+}
+
+func ownedWorkloadSelectors(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]labels.Selector, error) {
+	var owned []labels.Selector
+	for _, wc := range workloadClients(kc, namespace) {
+		targets, err := wc.list(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("list %s in %q: %w", wc.plural(), wc.namespace, err)
+		}
+		for _, t := range targets {
+			if owner, ok := placementOwner(t.labels); ok && owner == lease.UID {
+				owned = append(owned, t.selector)
+			}
+		}
+	}
+	return owned, nil
 }
 
 func leaseNodes(ctx context.Context, kc kubernetes.Interface, leaseUID string) (map[string]bool, error) {
@@ -590,26 +639,4 @@ func leaseNodes(ctx context.Context, kc kubernetes.Interface, leaseUID string) (
 
 func isTerminalPod(pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
-}
-
-func workloadSpreadReady(ctx context.Context, kc kubernetes.Interface, namespace string, burstNodes map[string]bool, wantBurst, emptyIsReady bool) (bool, error) {
-	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return false, err
-	}
-	counted := 0
-	for i := range pods.Items {
-		p := pods.Items[i]
-		if isDaemonSetPod(&p) || isTerminalPod(&p) {
-			continue
-		}
-		counted++
-		if p.Status.Phase != corev1.PodRunning || burstNodes[p.Spec.NodeName] != wantBurst {
-			return false, nil
-		}
-	}
-	if counted == 0 {
-		return emptyIsReady, nil
-	}
-	return true, nil
 }

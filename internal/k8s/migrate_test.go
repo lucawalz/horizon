@@ -209,13 +209,41 @@ func migratedMeta(name string) metav1.ObjectMeta {
 	}
 }
 
+func labelledPod(name, app, node string, phase corev1.PodPhase) *corev1.Pod {
+	pod := makePod(name, testNS, node, phase)
+	pod.Labels = map[string]string{"app": app}
+	return pod
+}
+
 func createPod(t *testing.T, kc *fake.Clientset, name, app, node string) {
 	t.Helper()
-	pod := makePod(name, testNS, node, corev1.PodRunning)
-	pod.Labels = map[string]string{"app": app}
+	pod := labelledPod(name, app, node, corev1.PodRunning)
 	if _, err := kc.CoreV1().Pods(testNS).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create pod %q: %v", name, err)
 	}
+}
+
+func ownedDeployment(name, app string, lease k8s.LeaseIdentity) *appsv1.Deployment {
+	meta := migratedMeta(name)
+	meta.Labels[provider.LeaseUIDLabelKey] = lease.UID
+	return &appsv1.Deployment{
+		ObjectMeta: meta,
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
+		},
+	}
+}
+
+func makeJobPod(name, node string) *corev1.Pod {
+	pod := labelledPod(name, "batch-run", node, corev1.PodRunning)
+	pod.OwnerReferences = []metav1.OwnerReference{{
+		Kind:       "Job",
+		Name:       "batch",
+		APIVersion: "batch/v1",
+		UID:        "j",
+		Controller: boolPtr(true),
+	}}
+	return pod
 }
 
 func TestMigrateEviction(t *testing.T) {
@@ -1312,8 +1340,9 @@ func TestWorkloadOnBurstNodes_SpreadAcrossNodes(t *testing.T) {
 	kc := fake.NewSimpleClientset(
 		burstNode("burst-1", testLease.UID),
 		burstNode("burst-2", testLease.UID),
-		makePod("p1", testNS, "burst-1", corev1.PodRunning),
-		makePod("p2", testNS, "burst-2", corev1.PodRunning),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("p1", "web", "burst-1", corev1.PodRunning),
+		labelledPod("p2", "web", "burst-2", corev1.PodRunning),
 	)
 	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
 	if err != nil {
@@ -1327,22 +1356,24 @@ func TestWorkloadOnBurstNodes_SpreadAcrossNodes(t *testing.T) {
 func TestWorkloadOnBurstNodes_PendingNotReady(t *testing.T) {
 	kc := fake.NewSimpleClientset(
 		burstNode("burst-1", testLease.UID),
-		makePod("p1", testNS, "burst-1", corev1.PodRunning),
-		makePod("p2", testNS, "burst-1", corev1.PodPending),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("p1", "web", "burst-1", corev1.PodRunning),
+		labelledPod("p2", "web", "burst-1", corev1.PodPending),
 	)
 	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOnBurstNodes: %v", err)
 	}
 	if ready {
-		t.Error("a pending pod must not report ready")
+		t.Error("a pending pod of an owned workload must not report ready")
 	}
 }
 
 func TestWorkloadOnBurstNodes_UnlabeledNodeNotReady(t *testing.T) {
 	kc := fake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "homelab-1"}},
-		makePod("p1", testNS, "homelab-1", corev1.PodRunning),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("p1", "web", "homelab-1", corev1.PodRunning),
 	)
 	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
 	if err != nil {
@@ -1364,11 +1395,30 @@ func TestWorkloadOnBurstNodes_NoWorkloadNotReady(t *testing.T) {
 	}
 }
 
+func TestWorkloadOnBurstNodesWithoutAnOwnedWorkloadIsNotReady(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-b", leaseB.UID),
+		ownedDeployment("app-a", "a", testLease),
+		labelledPod("pod-a", "a", "burst-a", corev1.PodRunning),
+	)
+	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, leaseB)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if ready {
+		t.Error("a lease holding no workload has moved nothing and must not report its move complete")
+	}
+}
+
 func TestWorkloadOnBurstNodes_DaemonSetIgnored(t *testing.T) {
+	dsPod := makeDSPod("ds-pod", testNS, "homelab-1")
+	dsPod.Labels = map[string]string{"app": "web"}
 	kc := fake.NewSimpleClientset(
 		burstNode("burst-1", testLease.UID),
-		makePod("app", testNS, "burst-1", corev1.PodRunning),
-		makeDSPod("ds-pod", testNS, "homelab-1"),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
+		dsPod,
 	)
 	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
 	if err != nil {
@@ -1382,8 +1432,9 @@ func TestWorkloadOnBurstNodes_DaemonSetIgnored(t *testing.T) {
 func TestWorkloadOnBurstNodes_SucceededPodIgnored(t *testing.T) {
 	kc := fake.NewSimpleClientset(
 		burstNode("burst-1", testLease.UID),
-		makePod("app", testNS, "burst-1", corev1.PodRunning),
-		makePod("job-done", testNS, "home-1", corev1.PodSucceeded),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
+		labelledPod("job-done", "web", "home-1", corev1.PodSucceeded),
 	)
 	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
 	if err != nil {
@@ -1391,6 +1442,81 @@ func TestWorkloadOnBurstNodes_SucceededPodIgnored(t *testing.T) {
 	}
 	if !ready {
 		t.Error("a succeeded pod off the burst nodes must not hold the check back")
+	}
+}
+
+func TestWorkloadOnBurstNodesIgnoresAnotherLeasesPodsInTheSameNamespace(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-a", testLease.UID),
+		burstNode("burst-b", leaseB.UID),
+		ownedDeployment("app-a", "a", testLease),
+		ownedDeployment("app-b", "b", leaseB),
+		labelledPod("pod-a", "a", "burst-a", corev1.PodRunning),
+		labelledPod("pod-b", "b", "burst-b", corev1.PodRunning),
+	)
+
+	readyB, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, leaseB)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes lease-b: %v", err)
+	}
+	if !readyB {
+		t.Error("lease-b hangs forever counting lease-a's pods against lease-b's nodes")
+	}
+
+	readyA, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes lease-a: %v", err)
+	}
+	if !readyA {
+		t.Error("lease-a must still recognise its own workload on its own node")
+	}
+}
+
+func TestWorkloadOnBurstNodesIgnoresABarePod(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
+		makePod("bare-pod", testNS, "homelab-1", corev1.PodRunning),
+	)
+	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("a pod no workload controls is never moved, so it must not hold the gate")
+	}
+}
+
+func TestWorkloadOnBurstNodesIgnoresAJobPod(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
+		makeJobPod("batch-xyz", "homelab-1"),
+	)
+	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("a job pod matches no migrated workload, so it must not hold the gate")
+	}
+}
+
+func TestWorkloadOnBurstNodesHoldsWhileAnOwnedPodSitsElsewhere(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("app-pod", "web", "homelab-1", corev1.PodRunning),
+	)
+	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOnBurstNodes: %v", err)
+	}
+	if ready {
+		t.Error("an owned workload still off the burst nodes must hold the gate")
 	}
 }
 
@@ -1411,10 +1537,22 @@ func TestWorkloadOnBurstNodes_ListErrorSurfaces(t *testing.T) {
 	}
 }
 
+func TestWorkloadOnBurstNodesReportsAWorkloadListFailure(t *testing.T) {
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID))
+	kc.PrependReactor("list", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("forbidden")
+	})
+	if _, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease); err == nil {
+		t.Fatal("expected the workload list failure to surface instead of a false negative")
+	}
+}
+
 func TestWorkloadOnBurstNodesIgnoresAnotherLeasesNodes(t *testing.T) {
-	foreign := burstNode("burst-b", "uid-b")
-	onForeign := makePod("app-pod", testNS, "burst-b", corev1.PodRunning)
-	kc := fake.NewSimpleClientset(foreign, onForeign)
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-b", "uid-b"),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("app-pod", "web", "burst-b", corev1.PodRunning),
+	)
 
 	placed, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
 	if err != nil {
@@ -1426,9 +1564,11 @@ func TestWorkloadOnBurstNodesIgnoresAnotherLeasesNodes(t *testing.T) {
 }
 
 func TestWorkloadOnBurstNodesAcceptsOwnNodes(t *testing.T) {
-	own := burstNode("burst-a", "uid-a")
-	onOwn := makePod("app-pod", testNS, "burst-a", corev1.PodRunning)
-	kc := fake.NewSimpleClientset(own, onOwn)
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-a", testLease.UID),
+		ownedDeployment("app", "web", testLease),
+		labelledPod("app-pod", "web", "burst-a", corev1.PodRunning),
+	)
 
 	placed, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease)
 	if err != nil {
@@ -1470,7 +1610,7 @@ func TestWorkloadOffBurstNodes_ReportsReadyOnlyAfterLeavingBurstNodes(t *testing
 	}
 }
 
-func TestWorkloadOffBurstNodes_PendingNotReady(t *testing.T) {
+func TestWorkloadOffBurstNodes_PendingPodElsewhereIsReady(t *testing.T) {
 	kc := fake.NewSimpleClientset(
 		burstNode("burst-1", testLease.UID),
 		makePod("p1", testNS, "home-1", corev1.PodRunning),
@@ -1480,8 +1620,56 @@ func TestWorkloadOffBurstNodes_PendingNotReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
+	if !ready {
+		t.Error("a pod slow to start away from the burst nodes has already left them and must not stall the release")
+	}
+}
+
+func TestWorkloadOffBurstNodes_PendingPodOnABurstNodeIsNotReady(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		makePod("p1", testNS, "burst-1", corev1.PodPending),
+	)
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
 	if ready {
-		t.Error("a pending pod must not report ready")
+		t.Error("a pod still bound to a burst node holds capacity whatever phase it is in")
+	}
+}
+
+func TestWorkloadOffBurstNodesIgnoresAnotherLeasesNode(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-a", testLease.UID),
+		burstNode("burst-b", leaseB.UID),
+		makePod("pod-b", testNS, "burst-b", corev1.PodRunning),
+	)
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if !ready {
+		t.Error("lease-a's capacity is clear, so another lease's node must not withhold its release")
+	}
+}
+
+func TestWorkloadOffBurstNodesHoldsForAPodOfAWorkloadItNoLongerOwns(t *testing.T) {
+	dep := ownedDeployment("app", "web", testLease)
+	dep.Labels = nil
+	dep.Annotations = nil
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		dep,
+		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
+	)
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("WorkloadOffBurstNodes: %v", err)
+	}
+	if ready {
+		t.Error("restore clears the owner marker before this gate runs, so ownership cannot be what it counts")
 	}
 }
 
@@ -1716,7 +1904,12 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 
 	nodeA := burstNode("burst-a", testLease.UID)
 	nodeB := burstNode("burst-b", leaseB.UID)
-	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-a", Namespace: testNS}}
+	depA := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-a", Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
+		},
+	}
 	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-b", Namespace: testNSB}}
 	kc := fake.NewSimpleClientset(nodeA, nodeB, depA, depB)
 	evictAndDelete(kc)
@@ -1728,10 +1921,7 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 		t.Fatalf("Migrate lease-b: %v", err)
 	}
 
-	podA := makePod("pod-a", testNS, "burst-a", corev1.PodRunning)
-	if _, err := kc.CoreV1().Pods(testNS).Create(context.Background(), podA, metav1.CreateOptions{}); err != nil {
-		t.Fatalf("create pod-a: %v", err)
-	}
+	createPod(t, kc, "pod-a", "a", "burst-a")
 
 	gotA, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), "app-a", metav1.GetOptions{})
 	if err != nil {
