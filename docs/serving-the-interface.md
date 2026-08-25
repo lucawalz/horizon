@@ -58,7 +58,7 @@ The `Host` a browser reaches and the address the interface bound are different t
 
 The interface holds no permissions over horizon's own resources and never acts under its own name. Every call it makes to the apiserver impersonates the identity the token named, so an operator who has not been granted anything sees the apiserver's refusal. Access is granted in the cluster, with ordinary RBAC, and revoked the same way.
 
-`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. The chart renders the role itself, as [`templates/interface-operator-clusterrole.yaml`](../charts/horizon/templates/interface-operator-clusterrole.yaml), whenever `ui.enabled` and `ui.rbac.create` are both set. It is named `<release>-interface-operator` and it covers everything the interface can do: list and read leases, create one, extend a running one by patching its duration, release one by deleting it, delete the leftover record of one already released, and read and create provider configurations.
+`CapacityLease` and `ProviderConfig` are cluster-scoped, so the binding is a ClusterRoleBinding. The chart renders the role itself, as [`templates/interface-operator-clusterrole.yaml`](../charts/horizon/templates/interface-operator-clusterrole.yaml), whenever `ui.enabled` and `ui.rbac.create` are both set. It is named `<release>-interface-operator` and it covers everything the interface can do: list and read leases, create one, extend a running one by patching its duration, release one by deleting it, delete the leftover record of one already released, and read, create, replace and delete provider configurations.
 
 The `namespaces` rule is the one optional entry. With it, the create form suggests the namespaces the signed-in operator may list. Without it the apiserver refuses that one call, the field stays a plain text box, and nothing else changes.
 
@@ -79,9 +79,11 @@ subjects:
     name: platform
 ```
 
-A read-only operator is a role of the adopter's own with `create`, `patch` and `delete` left out, bound instead of the rendered one: the interface serves every view and answers a create, an extension or a release with the apiserver's refusal. The directions are worth separating, since a create is a machine that is billed and a delete is a lease released early.
+A read-only operator is a role of the adopter's own with `create`, `patch` and `delete` left out, bound instead of the rendered one: the interface serves every view and answers a create, an extension, a release or a change to a provider configuration with the apiserver's refusal. The directions are worth separating, since a create is a machine that is billed and a delete is a lease released early.
 
-Creating a provider configuration needs `create` on `providerconfigs` and nothing more. The form references the Secrets a configuration points at and never creates one, so no rule anywhere grants the impersonated identity anything over Secrets, and the Secrets themselves are made with `kubectl` in the namespace the controller runs in. The reasoning is recorded in [ADR 0033](adr/0033-create-a-provider-config-from-the-interface.md).
+Creating a provider configuration needs `create` on `providerconfigs`, replacing one needs `patch`, and deleting one needs `delete`. The replacement is sent as a merge patch under the resourceVersion it was measured against, so `update` is granted to nobody. The form references the Secrets a configuration points at and never creates one, so no rule anywhere grants the impersonated identity anything over Secrets, and the Secrets themselves are made with `kubectl` in the namespace the controller runs in. The reasoning is recorded in [ADR 0033](adr/0033-create-a-provider-config-from-the-interface.md) and [ADR 0036](adr/0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md).
+
+Deleting a provider configuration a capacity lease still names is refused, and the refusal is the controller's rather than the interface's. A finalizer holds the object until no lease names it, because horizon tears a lease down with the credentials that configuration resolves, and it reports `Deletable=False` with reason `LeasesBound` so the reason is readable with `kubectl describe`. Replacing one is allowed while leases are bound, since rotating a credential during a long lease is the reason to reach for it.
 
 Viewing a provider configuration needs `get` on `providerconfigs`, which the rendered role already grants. The detail view names the Secrets a configuration references and never resolves one, so an identity that may read a configuration gains nothing over the Secrets it points at.
 
@@ -108,6 +110,6 @@ The two lists are independent, and a list left empty leaves that resource unrest
 | --- | --- |
 | `401` naming the header | No credential arrived. The proxy is not forwarding a token, or it is forwarding it in a different header from `ui.authHeader`. |
 | `401` reporting a token that could not be verified | A token arrived and failed verification: wrong issuer, wrong audience, expired, signed with an algorithm that is not accepted, or missing the username claim. |
-| `403` from the interface, on a create or a release only | The cross-origin guard refused. Usually `ui.externalOrigin` is unset or does not match the origin the browser used, scheme included. |
+| `403` from the interface, on a mutating request only | The cross-origin guard refused. Usually `ui.externalOrigin` is unset or does not match the origin the browser used, scheme included. |
 | `403` from the apiserver, naming a resource | The impersonated identity is not permitted to do this, or the interface is not permitted to impersonate that identity. Both are RBAC. |
-| `501` on a mutating route | The process holds no writer for that route. The lease routes and the provider config route are served through separate writers, so a build can hold one and not the other. `horizon serve` supplies both, so this belongs to an embedder rather than to a chart install. |
+| `501` on a mutating route | The process holds no writer for that route. The lease routes and the provider config routes are served through separate writers, so a build can hold one and not the other. `horizon serve` supplies both, so this belongs to an embedder rather than to a chart install. |

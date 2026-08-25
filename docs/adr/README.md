@@ -39,3 +39,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0033. Create a provider config from the interface, behind a second narrow writer](0033-create-a-provider-config-from-the-interface.md) (accepted)
 - [0034. Target a set of namespaces rather than one](0034-target-a-set-of-namespaces-rather-than-one.md) (accepted)
 - [0035. Replicate a workload as a lease-owned copy](0035-replicate-a-workload-as-a-lease-owned-copy.md) (accepted)
+- [0036. Edit and delete a provider config, behind a controller finalizer rather than a handler check](0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md) (accepted)

@@ -185,7 +185,7 @@ Getting an empty cluster to that point is eight steps: the chart, three Secrets,
 horizon dashboard
 ```
 
-That credential is the whole of its authentication, so the listener binds `127.0.0.1` and nothing else; only the port is a flag. The interface lists leases with a countdown that ticks in the browser rather than on the network, and opens each lease onto its reservation, timeline, conditions, instances and migrated workloads. It creates a lease from a form, releases one by deleting it, and creates a `ProviderConfig` from a second form that references Secrets and creates none. What it shows and how mutation is guarded is in [docs/usage.md](docs/usage.md#web-interface); the reasoning is in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) and [ADR 0033](docs/adr/0033-create-a-provider-config-from-the-interface.md).
+That credential is the whole of its authentication, so the listener binds `127.0.0.1` and nothing else; only the port is a flag. The interface lists leases with a countdown that ticks in the browser rather than on the network, and opens each lease onto its reservation, timeline, conditions, instances and migrated workloads. It creates a lease from a form, releases one by deleting it, and creates, replaces and deletes a `ProviderConfig` from forms that reference Secrets and create none. What it shows and how mutation is guarded is in [docs/usage.md](docs/usage.md#web-interface); the reasoning is in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md), [ADR 0033](docs/adr/0033-create-a-provider-config-from-the-interface.md) and [ADR 0036](docs/adr/0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md).
 
 `horizon serve` serves the same interface on a routable address, for a team rather than for one operator at one terminal:
 
@@ -228,7 +228,7 @@ Report a suspected vulnerability privately, through the "Report a vulnerability"
 
 ## Roadmap
 
-- Provider credential writing from the interface. Lease creation and release have landed. Writing a `ProviderConfig` and the Secrets behind it is the half of the mutating surface that stays unbuilt, so configuring a provider is still a `kubectl` job.
+- Secret writing from the interface. Leases and provider configurations are created, changed and deleted from the browser. The Secrets a configuration points at are the half of the mutating surface that stays unbuilt, because creating them would need `create secrets` in the namespace holding the controller's own credentials, so they are still a `kubectl` job.
 - A better answer for a node that never joins. `InstancesReady` reports a count and does not separate a machine still booting from one that booted a quarter of an hour ago and is never going to join.
 - A second provider behind the conformance suite. `spec.type` accepts `hetzner` and nothing else today. The seam and the contract suite in `internal/provider/conformance/` exist so that a second implementation is a package satisfying an interface rather than a rewrite; none has been written.
 - A second cloud-init flavour. `--flavor` accepts `k3s` and nothing else, on the same shape: one file per flavour under `internal/cloudinit/`.

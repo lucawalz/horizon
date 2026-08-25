@@ -67,3 +67,11 @@ It was not the answer to a different question, which is what a configuration is 
 The user-facing role is unchanged. It already granted `get`, `list` and `watch` on `providerconfigs`, so an identity bound to it can open the view with no new rule.
 
 The interface's route for creating a configuration moves from `/configs/new` to `/new-config`. The detail page is at `/configs/{name}`, so leaving the create page inside that prefix would have made `new` a name no configuration could be viewed under, and the leases half of the interface already keeps its create page out of the resource prefix at `/new`.
+
+## Update 2026-08-26, the seam gains the two verbs this record declined
+
+"Create only. No edit, no delete" held until the two acts it declined together were separated. [0036](0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md) adds `Replace` and `Delete` to `ProviderConfigWriter`, both naming what they reach in the signature rather than taking a `client.Object`, so the property this record established is unchanged. The general `Update` question stays answered the same way and no verb of that shape was added.
+
+What this record could not have weighed is where the delete guard belongs. Deleting a configuration a lease still names takes away the credentials horizon tears that lease down with, and no check in a web handler holds against `kubectl`, so the refusal is a finalizer in the controller and the endpoint's own check exists only to keep the response honest. Editing needed no guard at all, because the lifetime backstop has been latched per instance since it was made to be, so a configuration edited under a running lease moves no deadline.
+
+The edit page sits at `/configs/{name}/edit`, under the same prefix as the detail page rather than beside it. A configuration name is a DNS subdomain and carries no slash, so the suffix cannot collide with one, and the detail page it is reached from is the page an edit starts on.
