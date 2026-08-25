@@ -2476,3 +2476,110 @@ func TestMigrateLeavesAPodOnItsOwnBurstNodeAlone(t *testing.T) {
 		t.Errorf("evicted = %v, want none: a pod already where it belongs needs no eviction", got)
 	}
 }
+
+func guardedNamespaces(t *testing.T) *fake.Clientset {
+	t.Helper()
+	return fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		pausedDeploymentIn(testNS, "a-app", "a"),
+		pausedDeploymentIn(testNSB, "b-app", "b"),
+		podIn(testNS, "a-pod", "a", "homelab-1"),
+		podIn(testNSB, "b-pod", "b", "homelab-1"),
+	)
+}
+
+func evictionAttempts(kc *fake.Clientset) map[string]int {
+	attempts := map[string]int{}
+	for _, name := range evictionNames(kc) {
+		attempts[name]++
+	}
+	return attempts
+}
+
+func TestMigrateSpendsOneEvictionBudgetAcrossEveryNamespace(t *testing.T) {
+	kc := guardedNamespaces(t)
+	evictAndDelete(kc)
+	refuseEvictions(kc, func(string) bool { return true })
+
+	if _, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS, testNSB), testLease, evictionRetryBudget); err == nil {
+		t.Fatal("Migrate reported success while a disruption budget refused every pod")
+	}
+
+	attempts := evictionAttempts(kc)
+	if attempts["a-pod"] < 2 {
+		t.Fatalf("the first namespace made %d eviction attempts, want it to retry within the budget", attempts["a-pod"])
+	}
+	if got := attempts["b-pod"]; got != 1 {
+		t.Errorf("the second namespace made %d eviction attempts, want 1: one budget covers the whole call", got)
+	}
+}
+
+func TestMigrateCapsTheEvictionRetryFarBelowTheGrace(t *testing.T) {
+	kc := guardedNamespace(t)
+	evictAndDelete(kc)
+	refuseEvictions(kc, func(string) bool { return true })
+
+	start := time.Now()
+	if _, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS), testLease, time.Hour); err == nil {
+		t.Fatal("Migrate reported success while a disruption budget refused every pod")
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Errorf("Migrate held the reconcile for %s against an hour of grace, want the retry capped", elapsed)
+	}
+}
+
+func TestMigrateReportsAnEvictionFailureWithoutRetryingIt(t *testing.T) {
+	kc := guardedNamespace(t)
+	evictAndDelete(kc)
+	kc.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() != "eviction" {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewInternalError(errors.New("the eviction subresource is unavailable"))
+	})
+
+	_, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS), testLease, evictionRetryBudget)
+	if err == nil || !strings.Contains(err.Error(), "eviction subresource is unavailable") {
+		t.Fatalf("err = %v, want the eviction failure surfaced", err)
+	}
+	if got := len(evictionNames(kc)); got != 2 {
+		t.Errorf("evicted %d times, want one attempt per pod: only a disruption budget clears on a retry", got)
+	}
+}
+
+func TestMigrateLeavesAnUnscheduledPodAlone(t *testing.T) {
+	pending := podIn(testNS, "pending-pod", "settled", "")
+	pending.Status.Phase = corev1.PodPending
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		pausedDeploymentIn(testNS, "settled", "settled"),
+		pending,
+	)
+	evictAndDelete(kc)
+
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if got := evictionNames(kc); len(got) != 0 {
+		t.Errorf("evicted = %v, want none: an unscheduled pod sits on no node to be stranded on", got)
+	}
+}
+
+func TestMigrateLeavesAPodAlreadyOnItsWayOutAlone(t *testing.T) {
+	going := podIn(testNS, "going-pod", "settled", "homelab-1")
+	going.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+	going.Finalizers = []string{"horizon.dev/holds-the-pod"}
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		pausedDeploymentIn(testNS, "settled", "settled"),
+		going,
+	)
+	evictAndDelete(kc)
+
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if got := evictionNames(kc); len(got) != 0 {
+		t.Errorf("evicted = %v, want none: a pod already terminating is evicted again on every pass", got)
+	}
+}

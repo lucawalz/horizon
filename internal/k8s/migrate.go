@@ -12,6 +12,7 @@ import (
 	"github.com/lucawalz/horizon/internal/provider"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -31,12 +32,27 @@ const (
 	strategicPatchReplace     = "replace"
 	opMigrate                 = "migrate"
 	opRestore                 = "restore-placement"
-	// a short budget spent entirely on one wait would leave a single attempt, so the delay shrinks with the budget instead
-	evictAttemptsPerBudget = 4
+	// one reconcile worker serves every lease, so an in-pass retry is capped far below the grace and the requeue finishes the job
+	maxEvictRetryWindow    = 2 * time.Second
+	evictAttemptsPerWindow = 4
 )
 
-func evictRetryDelayWithin(budget time.Duration) time.Duration {
-	return min(evictRetryDelay, budget/evictAttemptsPerBudget)
+type evictionRetry struct {
+	until time.Time
+	delay time.Duration
+}
+
+func retryWithin(budget time.Duration) evictionRetry {
+	window := min(budget, maxEvictRetryWindow)
+	return evictionRetry{until: time.Now().Add(window), delay: window / evictAttemptsPerWindow}
+}
+
+func noRetry() evictionRetry {
+	return evictionRetry{}
+}
+
+func (r evictionRetry) allows() bool {
+	return r.delay > 0 && time.Now().Add(r.delay).Before(r.until)
 }
 
 var namespaceNameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -360,8 +376,10 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, targets TargetSet, le
 
 	var result MigrationResult
 	var failures error
+	// one retry window covers the whole call, so a refusal in one namespace cannot multiply the block by the size of the set
+	retry := retryWithin(evictionBudget)
 	for _, namespace := range targets.namespaces {
-		moved, err := migrateNamespace(ctx, kc, namespace, targets.selector, lease, evictionBudget)
+		moved, err := migrateNamespace(ctx, kc, namespace, targets.selector, lease, retry)
 		result.Workloads = append(result.Workloads, moved...)
 		if err != nil {
 			failures = errors.Join(failures, err)
@@ -372,8 +390,7 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, targets TargetSet, le
 	return result, failures
 }
 
-// every selector stays inside the namespace it came from, so a label two namespaces share cannot govern eviction in either from the other
-func migrateNamespace(ctx context.Context, kc kubernetes.Interface, namespace string, selector labels.Selector, lease LeaseIdentity, evictionBudget time.Duration) ([]string, error) {
+func migrateNamespace(ctx context.Context, kc kubernetes.Interface, namespace string, selector labels.Selector, lease LeaseIdentity, retry evictionRetry) ([]string, error) {
 	var onBurst []string
 	var notSelfRolling []labels.Selector
 	for _, wc := range workloadClients(kc, namespace, selector) {
@@ -384,7 +401,7 @@ func migrateNamespace(ctx context.Context, kc kubernetes.Interface, namespace st
 			return onBurst, err
 		}
 	}
-	if err := evictStrandedPods(ctx, kc, namespace, notSelfRolling, lease, evictionBudget); err != nil {
+	if err := evictStrandedPods(ctx, kc, namespace, notSelfRolling, lease, retry); err != nil {
 		return onBurst, err
 	}
 	return onBurst, nil
@@ -481,7 +498,7 @@ func evictablePods(pods []corev1.Pod, selectors []labels.Selector) []*corev1.Pod
 	var evictable []*corev1.Pod
 	for i := range pods {
 		pod := &pods[i]
-		if isDaemonSetPod(pod) || isTerminalPod(pod) {
+		if isDaemonSetPod(pod) || isTerminalPod(pod) || pod.DeletionTimestamp != nil {
 			continue
 		}
 		if !matchedByWorkload(pod.Labels, selectors) {
@@ -510,16 +527,15 @@ func workloadPods(ctx context.Context, kc kubernetes.Interface, namespace string
 	return evictablePods(pods.Items, selectors), nil
 }
 
-func evictWorkloadPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, op string, budget time.Duration) error {
+func evictWorkloadPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, op string) error {
 	pods, err := workloadPods(ctx, kc, namespace, selectors, op)
 	if err != nil {
 		return err
 	}
-	return evictPods(ctx, kc, pods, op, budget)
+	return evictPods(ctx, kc, pods, op, noRetry())
 }
 
-// gating on where the pods sit rather than on what this pass patched is what lets a retry finish a namespace a disruption budget left half moved
-func evictStrandedPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, lease LeaseIdentity, budget time.Duration) error {
+func evictStrandedPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, lease LeaseIdentity, retry evictionRetry) error {
 	if len(selectors) == 0 {
 		return nil
 	}
@@ -534,43 +550,47 @@ func evictStrandedPods(ctx context.Context, kc kubernetes.Interface, namespace s
 
 	var stranded []*corev1.Pod
 	for _, pod := range pods {
-		if !burstNodes[pod.Spec.NodeName] {
-			stranded = append(stranded, pod)
+		// an unscheduled pod holds no capacity anywhere, and evicting it deletes it without consulting any disruption budget
+		if pod.Spec.NodeName == "" || burstNodes[pod.Spec.NodeName] {
+			continue
 		}
+		stranded = append(stranded, pod)
 	}
-	return evictPods(ctx, kc, stranded, opMigrate, budget)
+	return evictPods(ctx, kc, stranded, opMigrate, retry)
 }
 
-func evictPods(ctx context.Context, kc kubernetes.Interface, pods []*corev1.Pod, op string, budget time.Duration) error {
-	deadline := time.Now().Add(budget)
-	delay := evictRetryDelayWithin(budget)
-	remaining, firstErr := evictOnce(ctx, kc, pods, op)
-	for len(remaining) > 0 && delay > 0 && time.Now().Add(delay).Before(deadline) {
+func evictPods(ctx context.Context, kc kubernetes.Interface, pods []*corev1.Pod, op string, retry evictionRetry) error {
+	refused, refusal, failure := evictOnce(ctx, kc, pods, op)
+	for failure == nil && len(refused) > 0 && retry.allows() {
 		select {
 		case <-ctx.Done():
-			return errors.Join(firstErr, ctx.Err())
-		case <-time.After(delay):
+			return errors.Join(refusal, ctx.Err())
+		case <-time.After(retry.delay):
 		}
-		remaining, firstErr = evictOnce(ctx, kc, remaining, op)
+		refused, refusal, failure = evictOnce(ctx, kc, refused, op)
 	}
-	if len(remaining) == 0 {
-		return nil
+	if failure != nil {
+		return failure
 	}
-	return firstErr
+	return refusal
 }
 
-// one pod a disruption budget refuses must not abandon the rest of the namespace, so every pod is attempted before any is retried
-func evictOnce(ctx context.Context, kc kubernetes.Interface, pods []*corev1.Pod, op string) ([]*corev1.Pod, error) {
-	var refused []*corev1.Pod
-	var firstErr error
+func evictOnce(ctx context.Context, kc kubernetes.Interface, pods []*corev1.Pod, op string) (refused []*corev1.Pod, refusal, failure error) {
 	for _, pod := range pods {
 		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
-		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			refused = append(refused, pod)
-			recordFirst(&firstErr, fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err))
+		err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev)
+		if err == nil {
+			continue
 		}
+		// only a disruption budget clears on its own, so every other failure is reported at once rather than waited out
+		if apierrors.IsTooManyRequests(err) {
+			refused = append(refused, pod)
+			recordFirst(&refusal, fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err))
+			continue
+		}
+		recordFirst(&failure, fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err))
 	}
-	return refused, firstErr
+	return refused, refusal, failure
 }
 
 func buildRestorePatch(kind, name, placement string, current map[string]string) ([]byte, error) {
@@ -629,7 +649,7 @@ func restoreNamespace(ctx context.Context, kc kubernetes.Interface, namespace st
 	if len(restored) == 0 {
 		return nil, firstErr
 	}
-	recordFirst(&firstErr, evictWorkloadPods(ctx, kc, namespace, notSelfRolling, opRestore, 0))
+	recordFirst(&firstErr, evictWorkloadPods(ctx, kc, namespace, notSelfRolling, opRestore))
 	return restored, firstErr
 }
 

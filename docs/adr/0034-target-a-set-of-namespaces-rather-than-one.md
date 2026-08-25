@@ -33,7 +33,9 @@ Migration reports a per-namespace outcome. `MigrationResult` carries every workl
 
 Both readiness gates fold their per-namespace answers with a conjunction. `WorkloadOffBurstNodes` reads an empty namespace as ready, so any shortcut that stopped at the first ready namespace would let an empty one mask a namespace still holding capacity. `WorkloadOnBurstNodes` additionally requires that at least one pod across the whole set is placed, which keeps its previous meaning while letting an empty namespace in a set not hold the gate open forever.
 
-Eviction is gated on whether any pod of a claimed workload is not yet on one of the lease's nodes, rather than on whether the current pass patched something. It attempts every pod before retrying any, and retries the refused ones on a budget the lease already declares as its teardown grace, with the delay between attempts shrinking with the budget so a short grace still gets more than one attempt. That gives migration the retry semantics the teardown drain already has through `EvictErrorRetryDelay` and `Force`.
+Eviction is gated on whether any pod of a claimed workload is not yet on one of the lease's nodes, rather than on whether the current pass patched something. It attempts every pod before retrying any, and retries only the ones a disruption budget refused, which is the single failure that clears on its own. Any other eviction error is reported at once rather than waited out.
+
+One retry window covers a whole `Migrate` call rather than each namespace in turn, and it is capped far below the teardown grace. The controller runs a single reconcile worker, so an in-pass wait freezes every other lease, including the node watchdog renewal that keeps their machines from self-destructing. The window therefore buys a quick second attempt and nothing more: a refusal that outlasts it is finished by the requeue that the reachability fix above makes work.
 
 The selector applies to migration and classification only. Restore and both gates read every workload in the target namespaces, because restore keys on the placement annotation and the owner label, and a workload whose labels changed while it sat on burst capacity must still be put back.
 
@@ -44,7 +46,8 @@ The selector applies to migration and classification only. Restore and both gate
 - Apply the selector on the restore path as well, for symmetry. Rejected. A workload whose labels changed while it was on burst capacity would then never be restored, leaving it pinned to a lease that no longer exists, which is the failure ADR 0032 exists to prevent.
 - Keep the workload reference unqualified and rely on `status.migratedWorkloads` alone. Rejected. The duplicate key breaks the status write outright rather than merely reading ambiguously, so no amount of care elsewhere makes a second namespace expressible.
 - Let a failing namespace fail the whole migration. Rejected. It discards the progress the other namespaces made and gives an operator no way to tell a total failure from a partial one, while teardown still has to put back what did move.
-- Requeue rather than retry a refused eviction in place. Rejected as the sole mechanism, because the two eviction paths would then disagree about what a disruption budget costs. The reachability fix means a requeue does retry now; the in-pass budget is what makes a transient refusal clear without waiting for one.
+- Requeue rather than retry a refused eviction in place. Rejected as the sole mechanism, because the two eviction paths would then disagree about what a disruption budget costs. The reachability fix means a requeue does retry now; the capped in-pass window is what makes a transient refusal clear without waiting for one.
+- Spend the whole teardown grace on the in-pass retry. Rejected. The grace reaches 15m at the schema cap and is spent per namespace, so five namespaces refusing one pod each would hold the only reconcile worker for over an hour. Every other lease stops renewing its node watchdog for that long, which is enough for another lease's machines to fire their dead man's switch mid-lease.
 
 ## Consequences
 
@@ -56,8 +59,8 @@ A workload reference reads `namespace/kind/name` in `status.migratedWorkloads` a
 
 The web interface carries a list of namespace entries rather than one, each keeping the autocomplete that the optional namespace-list grant provides, and the lease detail names the selector alongside the namespaces so a narrowed set does not read as the whole of them.
 
-An eviction that a disruption budget refuses now blocks the reconcile for as long as the teardown grace allows rather than returning at once. The delay between attempts scales with the budget, so a lease that declares a short grace still gets more than one attempt rather than spending its whole allowance on a single wait.
+An eviction that a disruption budget refuses blocks the reconcile for the length of the capped window rather than returning at once. The block is bounded by the window whatever the grace is and however many namespaces the lease targets, so the single reconcile worker is never held for a multiple of either.
 
-A pod that has already finished is no longer evicted by either path, because it holds no capacity to move and would otherwise be evicted again on every pass that finds it stranded.
+A pod that has already finished, a pod already terminating and a pod that has not been scheduled are all left alone by both paths. None of them holds capacity that a move would free, and the eviction API deletes an unscheduled pod without consulting any disruption budget, so evicting one is pure churn repeated on every pass.
 
 RBAC is unchanged. The controller's ClusterRole already grants deployments, statefulsets, pods and pods/eviction cluster-wide through a ClusterRoleBinding, so a set of namespaces needs no new rule.
