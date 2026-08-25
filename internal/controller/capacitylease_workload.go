@@ -11,7 +11,6 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
-	"github.com/lucawalz/horizon/internal/provider"
 )
 
 func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, policy v1alpha1.WatchdogPolicy) (ctrl.Result, error) {
@@ -41,7 +40,7 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, namespace)
 	r.recordMigratability(lease, assessments, classifyErr)
 
-	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, provider.ReservedPoolValue)
+	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, k8s.LeaseIdentity{UID: string(lease.UID), Name: lease.Name})
 	if migrateErr != nil {
 		migrateErr = fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr)
 		r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())

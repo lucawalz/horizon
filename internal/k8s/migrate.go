@@ -141,22 +141,6 @@ func burstToleration(leaseName string) corev1.Toleration {
 	}
 }
 
-func poolNodeAffinity(poolLabelValue string) *corev1.Affinity {
-	return &corev1.Affinity{
-		NodeAffinity: &corev1.NodeAffinity{
-			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-					MatchExpressions: []corev1.NodeSelectorRequirement{{
-						Key:      PoolLabelKey,
-						Operator: corev1.NodeSelectorOpIn,
-						Values:   []string{poolLabelValue},
-					}},
-				}},
-			},
-		},
-	}
-}
-
 func leaseNodeAffinity(leaseUID string) *corev1.Affinity {
 	return &corev1.Affinity{
 		NodeAffinity: &corev1.NodeAffinity{
@@ -288,29 +272,27 @@ func workloadClients(kc kubernetes.Interface, namespace string) []workloadClient
 	return []workloadClient{deploymentClient(kc, namespace), statefulSetClient(kc, namespace)}
 }
 
-func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelValue string) ([]string, error) {
+func Migrate(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]string, error) {
 	if err := ValidateNamespace(namespace); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	if poolLabelValue == "" {
-		return nil, fmt.Errorf("migrate: pool label value must not be empty")
+	if err := lease.validate(); err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	hasNode, err := poolNodePresent(ctx, kc, poolLabelValue)
+	hasNode, err := leaseNodePresent(ctx, kc, lease.UID)
 	if err != nil {
 		return nil, err
 	}
 	if !hasNode {
-		return nil, fmt.Errorf("migrate: no node carries label %s=%s", PoolLabelKey, poolLabelValue)
+		return nil, fmt.Errorf("migrate: no node carries label %s=%s", LeaseUIDLabelKey, lease.UID)
 	}
-
-	targetAffinity := poolNodeAffinity(poolLabelValue)
 
 	var onBurst []string
 	var patchedSelectors []labels.Selector
 	moved := false
 	for _, wc := range workloadClients(kc, namespace) {
-		names, patched, selectors, err := migrateWorkloads(ctx, wc, targetAffinity)
+		names, patched, selectors, err := migrateWorkloads(ctx, wc, lease)
 		onBurst = append(onBurst, names...)
 		patchedSelectors = append(patchedSelectors, selectors...)
 		moved = moved || patched
@@ -327,14 +309,14 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace, poolLabelV
 	return onBurst, nil
 }
 
-func migrateWorkloads(ctx context.Context, wc workloadClient, affinity *corev1.Affinity) (onBurst []string, patched bool, selectors []labels.Selector, err error) {
+func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentity) (onBurst []string, patched bool, selectors []labels.Selector, err error) {
 	targets, err := wc.list(ctx)
 	if err != nil {
 		return nil, false, nil, fmt.Errorf("migrate: list %s in %q: %w", wc.plural(), wc.namespace, err)
 	}
 	for _, t := range targets {
 		if _, ok := t.annotations[PrePlacementAnnotationKey]; !ok {
-			patchData, err := buildMigratePatch(t, affinity)
+			patchData, err := buildMigratePatch(t, lease)
 			if err != nil {
 				return onBurst, patched, selectors, err
 			}
@@ -351,12 +333,15 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, affinity *corev1.A
 	return onBurst, patched, selectors, nil
 }
 
-func buildMigratePatch(t workloadTarget, affinity *corev1.Affinity) ([]byte, error) {
+func buildMigratePatch(t workloadTarget, lease LeaseIdentity) ([]byte, error) {
 	placement, err := marshalPlacement(t.podSpec, t.name)
 	if err != nil {
 		return nil, err
 	}
-	moved := podPlacementPatch{Affinity: affinity, Tolerations: withBurstToleration(t.podSpec.Tolerations, "")}
+	moved := podPlacementPatch{
+		Affinity:    leaseNodeAffinity(lease.UID),
+		Tolerations: withBurstToleration(t.podSpec.Tolerations, lease.Name),
+	}
 	if len(t.podSpec.NodeSelector) > 0 {
 		moved.NodeSelector = nodeSelectorPatch(nil, t.podSpec.NodeSelector)
 	}
@@ -520,13 +505,13 @@ func evictNonDaemonSetPodsBestEffort(ctx context.Context, kc kubernetes.Interfac
 	return firstErr
 }
 
-func poolNodePresent(ctx context.Context, kc kubernetes.Interface, poolLabelValue string) (bool, error) {
+func leaseNodePresent(ctx context.Context, kc kubernetes.Interface, leaseUID string) (bool, error) {
 	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return false, fmt.Errorf("migrate: list nodes: %w", err)
 	}
 	for i := range nodes.Items {
-		if nodes.Items[i].Labels[PoolLabelKey] == poolLabelValue {
+		if nodes.Items[i].Labels[LeaseUIDLabelKey] == leaseUID {
 			return true, nil
 		}
 	}

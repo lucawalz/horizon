@@ -51,6 +51,8 @@ const (
 	emptyPlacementJSON = "{}"
 )
 
+var testLease = k8s.LeaseIdentity{UID: "uid-a", Name: "lease-a"}
+
 func patchCount(kc *fake.Clientset, resource, name string) int {
 	count := 0
 	for _, a := range kc.Actions() {
@@ -120,9 +122,9 @@ func burstNodeAffinity() *corev1.Affinity {
 			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
 				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
 					MatchExpressions: []corev1.NodeSelectorRequirement{{
-						Key:      k8s.PoolLabelKey,
+						Key:      provider.LeaseUIDLabelKey,
 						Operator: corev1.NodeSelectorOpIn,
-						Values:   []string{poolValue},
+						Values:   []string{testLease.UID},
 					}},
 				}},
 			},
@@ -134,6 +136,7 @@ func burstToleration() corev1.Toleration {
 	return corev1.Toleration{
 		Key:      k8s.BurstTaintKey,
 		Operator: corev1.TolerationOpEqual,
+		Value:    testLease.Name,
 		Effect:   corev1.TaintEffectNoSchedule,
 	}
 }
@@ -176,7 +179,7 @@ func selectedNames(t *testing.T, kc *fake.Clientset) []string {
 }
 
 func TestMigrateEviction(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
 	appPod := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
 	dsPod := makeDSPod("ds-pod", testNS, "homelab-1")
@@ -185,7 +188,7 @@ func TestMigrateEviction(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, appPod, dsPod, otherPod)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -203,7 +206,7 @@ func TestMigrateEviction(t *testing.T) {
 }
 
 func TestMigrateLeavesDeploymentPodsToItsRollout(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
@@ -217,7 +220,7 @@ func TestMigrateLeavesDeploymentPodsToItsRollout(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, matched, unmatched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -228,7 +231,7 @@ func TestMigrateLeavesDeploymentPodsToItsRollout(t *testing.T) {
 }
 
 func TestMigrateLeavesStatefulSetPodsToItsRollout(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
 		Spec: appsv1.StatefulSetSpec{
@@ -241,7 +244,7 @@ func TestMigrateLeavesStatefulSetPodsToItsRollout(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -280,7 +283,7 @@ func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
 }
 
 func TestMigrateRejectsEmptyDeploymentSelector(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
 		Spec:       appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{}},
@@ -290,7 +293,7 @@ func TestMigrateRejectsEmptyDeploymentSelector(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, pod)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err == nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err == nil {
 		t.Fatal("expected an error for a deployment with an empty selector")
 	}
 	if evicted := evictionNames(kc); len(evicted) != 0 {
@@ -299,7 +302,7 @@ func TestMigrateRejectsEmptyDeploymentSelector(t *testing.T) {
 }
 
 func TestMigrateRejectsEmptyStatefulSetSelector(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
 		Spec:       appsv1.StatefulSetSpec{Selector: &metav1.LabelSelector{}},
@@ -309,7 +312,7 @@ func TestMigrateRejectsEmptyStatefulSetSelector(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, pod)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err == nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err == nil {
 		t.Fatal("expected an error for a statefulset with an empty selector")
 	}
 	if evicted := evictionNames(kc); len(evicted) != 0 {
@@ -318,7 +321,7 @@ func TestMigrateRejectsEmptyStatefulSetSelector(t *testing.T) {
 }
 
 func TestMigrateEvictsOnDeleteStatefulSetPods(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
 		Spec: appsv1.StatefulSetSpec{
@@ -332,7 +335,7 @@ func TestMigrateEvictsOnDeleteStatefulSetPods(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -343,7 +346,7 @@ func TestMigrateEvictsOnDeleteStatefulSetPods(t *testing.T) {
 }
 
 func TestMigrateEvictsStatefulSetPodsBelowPartition(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	partition := int32(2)
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS},
@@ -361,7 +364,7 @@ func TestMigrateEvictsStatefulSetPodsBelowPartition(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, sts, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -372,7 +375,7 @@ func TestMigrateEvictsStatefulSetPodsBelowPartition(t *testing.T) {
 }
 
 func TestMigrateEvictsPausedDeploymentPods(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
@@ -386,7 +389,7 @@ func TestMigrateEvictsPausedDeploymentPods(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -397,11 +400,11 @@ func TestMigrateEvictsPausedDeploymentPods(t *testing.T) {
 }
 
 func TestMigrateDoesNotRelabelNode(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	kc := fake.NewSimpleClientset(node)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -418,7 +421,7 @@ func TestMigrateFailsWhenNoPoolNode(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	_, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	_, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err == nil {
 		t.Fatal("expected error when no node carries the pool label")
 	}
@@ -431,22 +434,78 @@ func TestMigrateFailsWhenNoPoolNode(t *testing.T) {
 
 func TestMigrateRejectsInvalidInput(t *testing.T) {
 	kc := fake.NewSimpleClientset()
-	if _, err := k8s.Migrate(context.Background(), kc, "Foo", poolValue); err == nil {
+	if _, err := k8s.Migrate(context.Background(), kc, "Foo", testLease); err == nil {
 		t.Error("expected error for an invalid namespace")
 	}
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, ""); err == nil {
-		t.Error("expected error for an empty pool label value")
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{}); err == nil {
+		t.Error("expected error for an empty lease identity")
+	}
+}
+
+func TestMigrateRefusesEmptyIdentity(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{Name: "lease-a"}); err == nil {
+		t.Fatal("Migrate accepted an identity with no uid")
+	}
+}
+
+func TestMigrateRequiresANodeOfThisLease(t *testing.T) {
+	foreign := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "burst-b",
+		Labels: map[string]string{
+			k8s.PoolLabelKey:          poolValue,
+			provider.LeaseUIDLabelKey: "uid-b",
+		},
+	}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(foreign, dep)
+	evictAndDelete(kc)
+
+	_, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{UID: "uid-a", Name: "lease-a"})
+	if err == nil {
+		t.Fatal("Migrate proceeded with only another lease's node present")
+	}
+}
+
+func TestMigratePatchesForThisLeaseOnly(t *testing.T) {
+	own := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "burst-a",
+		Labels: map[string]string{
+			k8s.PoolLabelKey:          poolValue,
+			provider.LeaseUIDLabelKey: "uid-a",
+		},
+	}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(own, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{UID: "uid-a", Name: "lease-a"}); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	got, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), "app", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	expr := got.Spec.Template.Spec.Affinity.NodeAffinity.
+		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
+	if expr.Key != provider.LeaseUIDLabelKey || expr.Values[0] != "uid-a" {
+		t.Errorf("affinity = %s in %v, want %s in [uid-a]", expr.Key, expr.Values, provider.LeaseUIDLabelKey)
+	}
+	tol := got.Spec.Template.Spec.Tolerations
+	if len(tol) != 1 || tol[0].Value != "lease-a" {
+		t.Errorf("tolerations = %+v, want one valued lease-a", tol)
 	}
 }
 
 func TestMigrateAffinityPatch(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
 	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
 	kc := fake.NewSimpleClientset(node, dep, sts)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -496,12 +555,12 @@ func TestLeaseNodeAffinityKeysOnLeaseUID(t *testing.T) {
 }
 
 func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -522,7 +581,7 @@ func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
 }
 
 func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	originalAffinity := hostSpreadAffinity(100)
 	originalToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
 	dep := &appsv1.Deployment{
@@ -536,7 +595,7 @@ func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) 
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -568,7 +627,7 @@ func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) 
 }
 
 func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "dep1",
@@ -580,7 +639,7 @@ func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -596,7 +655,7 @@ func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 }
 
 func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
@@ -609,7 +668,7 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	evictAndDelete(kc)
 
 	want := []string{"deployment/dep1", "statefulset/sts1"}
-	first, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	first, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
@@ -622,7 +681,7 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	}
 	kc.ClearActions()
 
-	second, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	second, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("second Migrate: %v", err)
 	}
@@ -641,12 +700,12 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 }
 
 func TestMigrateReportsNoWorkloadsForAnEmptyNamespace(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	elsewhere := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"}}
 	kc := fake.NewSimpleClientset(node, elsewhere)
 	evictAndDelete(kc)
 
-	migrated, err := k8s.Migrate(context.Background(), kc, testNS, poolValue)
+	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -659,7 +718,7 @@ func TestMigrateReportsNoWorkloadsForAnEmptyNamespace(t *testing.T) {
 }
 
 func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	originalAffinity := hostSpreadAffinity(100)
 	originalToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
 	dep := &appsv1.Deployment{
@@ -674,7 +733,7 @@ func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 	evictAndDelete(kc)
 
 	for pass := range 2 {
-		if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+		if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 			t.Fatalf("Migrate pass %d: %v", pass+1, err)
 		}
 	}
@@ -700,7 +759,7 @@ func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 }
 
 func TestMigrateSavesOriginalAffinity(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 
 	originalAffinity := hostSpreadAffinity(100)
 
@@ -719,7 +778,7 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep1, dep2)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	kc.ClearActions()
@@ -754,7 +813,7 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 }
 
 func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	existingAffinity := hostSpreadAffinity(50)
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
@@ -765,7 +824,7 @@ func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -784,7 +843,7 @@ func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 }
 
 func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
 	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
 	untouched := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "elsewhere", Namespace: "default"}}
@@ -795,7 +854,7 @@ func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
 		t.Fatalf("burst label query before migrate = %v, want none", got)
 	}
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -814,7 +873,7 @@ func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
 }
 
 func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 
 	existingToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
 	dep1 := &appsv1.Deployment{
@@ -830,7 +889,7 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep1, sts1)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -876,13 +935,13 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 }
 
 func TestRestorePlacementIsIdempotent(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
 	pod := makePod("app-pod", testNS, "burst-1", corev1.PodRunning)
 	kc := fake.NewSimpleClientset(node, dep, pod)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	first, err := k8s.RestorePlacement(context.Background(), kc, testNS)
@@ -960,12 +1019,12 @@ func TestRestorePlacementReportsUnreadableAnnotation(t *testing.T) {
 }
 
 func TestRestorePlacementReportsPatchFailure(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
 	kc := fake.NewSimpleClientset(node, sts)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	kc.PrependReactor("patch", "statefulsets", func(k8stesting.Action) (bool, runtime.Object, error) {
@@ -1227,7 +1286,7 @@ func TestWorkloadOffBurstNodes_ListErrorSurfaces(t *testing.T) {
 }
 
 func TestMigrateClearsTheNodeSelectorAndSavesIt(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
@@ -1239,7 +1298,7 @@ func TestMigrateClearsTheNodeSelectorAndSavesIt(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
@@ -1261,7 +1320,7 @@ func TestMigrateClearsTheNodeSelectorAndSavesIt(t *testing.T) {
 }
 
 func TestRestorePlacementReturnsTheNodeSelector(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	original := map[string]string{"disktype": "ssd"}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
@@ -1272,7 +1331,7 @@ func TestRestorePlacementReturnsTheNodeSelector(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
@@ -1285,7 +1344,7 @@ func TestRestorePlacementReturnsTheNodeSelector(t *testing.T) {
 }
 
 func TestRestorePlacementDropsNodeSelectorKeysAddedWhileOnBurst(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
@@ -1297,7 +1356,7 @@ func TestRestorePlacementDropsNodeSelectorKeysAddedWhileOnBurst(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 

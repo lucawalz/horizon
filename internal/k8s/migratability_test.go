@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/k8s"
+	"github.com/lucawalz/horizon/internal/provider"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -271,7 +272,7 @@ func TestClassifyMigratabilityReportsAListFailure(t *testing.T) {
 }
 
 func TestMigrateSkipsPodsOfWorkloadsThatRollThemselves(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue}}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
@@ -285,7 +286,7 @@ func TestMigrateSkipsPodsOfWorkloadsThatRollThemselves(t *testing.T) {
 	kc := fake.NewSimpleClientset(node, dep, matched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.Migrate(context.Background(), kc, testNS, poolValue); err != nil {
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
