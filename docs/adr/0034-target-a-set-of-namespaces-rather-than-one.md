@@ -63,6 +63,8 @@ A workload reference reads `namespace/kind/name` in `status.migratedWorkloads` a
 
 The web interface carries a list of namespace entries rather than one, each keeping the autocomplete that the optional namespace-list grant provides, and the lease detail names the selector alongside the namespaces so a narrowed set does not read as the whole of them.
 
+A target set that names no workload at all is a failed migration rather than a successful move of nothing. A selector that matches nothing is the easy way to reach that state, and reporting it as done left the placement gate false for the life of the lease with no condition naming why.
+
 A restore that keeps failing degrades the lease and lets teardown carry on once only the reserved drain share of the budget is left, which is the escape [0032](0032-identify-a-leases-migrated-workloads-by-lease-uid.md) already gives the restore gate. Keying the restore on what moved is what makes the action worth retrying at all, but retrying it forever would trade a stranded workload for stranded machines and a finalizer that never clears.
 
 An eviction that a disruption budget refuses blocks the reconcile for the length of the capped window rather than returning at once. The block is bounded by the window whatever the grace is and however many namespaces the lease targets, so the single reconcile worker is never held for a multiple of either.

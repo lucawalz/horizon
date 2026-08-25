@@ -73,6 +73,11 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 		reason, cause := migrationOutcome(result, len(lease.Spec.Workload.Namespaces), migrateErr)
 		return r.failMigration(ctx, lease, reason, cause)
 	}
+	// reporting a move of nothing as done leaves the placement gate false for the life of the lease with nothing naming the cause
+	if len(result.Workloads) == 0 {
+		return r.failMigration(ctx, lease, reasonEmptyTargetSet,
+			errors.New("the workload target set names no deployment or statefulset to move"))
+	}
 
 	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionTrue, reasonMigrated,
 		fmt.Sprintf("%d workloads moved onto burst capacity", len(lease.Status.MigratedWorkloads)))

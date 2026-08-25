@@ -50,6 +50,7 @@ const (
 	reasonWaitingForNodes     = "WaitingForNodes"
 	reasonMigrated            = "Migrated"
 	reasonMigrateFailed       = "MigrateFailed"
+	reasonEmptyTargetSet      = "EmptyTargetSet"
 	reasonPartialMigration    = "PartialMigration"
 	reasonSeamlessMigration   = "SeamlessMigration"
 	reasonDisruptiveMigration = "DisruptiveMigration"

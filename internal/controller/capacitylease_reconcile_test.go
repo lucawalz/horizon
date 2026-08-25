@@ -458,17 +458,36 @@ func TestARepeatedMigrationPassReportsTheSameWorkloads(t *testing.T) {
 	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrated, "1 workloads moved onto burst capacity")
 }
 
-func TestAWorkloadNamespaceWithoutWorkloadsReportsNone(t *testing.T) {
+func TestAWorkloadNamespaceWithoutWorkloadsFailsTheMigration(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
 	})
 	h.settle()
 	h.joinNode(h.instanceName(0), true)
-	h.settle()
+	h.settleIgnoringErrors(3)
 
-	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonMigrated, "0 workloads moved onto burst capacity")
+	h.assertCondition(v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse)
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonEmptyTargetSet, "names no deployment or statefulset")
 	if got := h.lease().Status.MigratedWorkloads; len(got) != 0 {
 		t.Errorf("the lease lists migrated workloads %v for a namespace that holds none", got)
+	}
+}
+
+func TestASelectorThatNamesNoWorkloadFailsTheMigration(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{
+			Namespaces: []string{testWorkloadNS},
+			Selector:   &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "batch"}},
+		}
+	})
+	h.seedWorkload()
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settleIgnoringErrors(3)
+
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonEmptyTargetSet, "names no deployment or statefulset")
+	if _, ok := h.deploymentAnnotations()[k8s.PrePlacementAnnotationKey]; ok {
+		t.Error("a workload the selector names not was moved anyway")
 	}
 }
 
@@ -769,7 +788,7 @@ func TestAWorkloadHeldByAnotherLeaseIsNotReportedAsLosingAvailability(t *testing
 	})
 	h.settle()
 	h.joinNode(h.instanceName(0), true)
-	h.settle()
+	h.settleIgnoringErrors(3)
 
 	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigratable, reasonDisruptiveMigration, "held by another lease")
 	if got := h.condition(v1alpha1.ConditionWorkloadMigratable).Message; strings.Contains(got, "lose availability") {
