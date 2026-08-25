@@ -1478,3 +1478,36 @@ func TestWithBurstTolerationRejectsForeignLease(t *testing.T) {
 		t.Fatalf("toleration count = %d, want 2, a foreign lease's toleration must not satisfy this lease", len(got))
 	}
 }
+
+func TestTwoLeasesDoNotShareNodes(t *testing.T) {
+	nodeA := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-a",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: "uid-a"},
+	}}
+	nodeB := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-b",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: "uid-b"},
+	}}
+	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-a", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(nodeA, nodeB, depA)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	got, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), "app-a", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get deployment: %v", err)
+	}
+	expr := got.Spec.Template.Spec.Affinity.NodeAffinity.
+		RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
+	if expr.Values[0] != "uid-a" {
+		t.Fatalf("lease-a pinned to %v, want [uid-a]", expr.Values)
+	}
+	for _, tol := range got.Spec.Template.Spec.Tolerations {
+		if tol.Key == k8s.BurstTaintKey && tol.Operator == corev1.TolerationOpExists {
+			t.Fatal("lease-a carries a value-blind toleration and would tolerate lease-b's taint")
+		}
+	}
+}
