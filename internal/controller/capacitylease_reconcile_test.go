@@ -756,6 +756,27 @@ func TestADisruptiveWorkloadIsNamedBeforeItIsMoved(t *testing.T) {
 	}
 }
 
+func TestAWorkloadHeldByAnotherLeaseIsNotReportedAsLosingAvailability(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}
+	})
+	h.seedWorkload(func(deployment *appsv1.Deployment) {
+		deployment.Annotations = map[string]string{k8s.PrePlacementAnnotationKey: "{}"}
+		deployment.Labels = map[string]string{
+			k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue,
+			LeaseUIDLabelKey:           "uid-of-another-lease",
+		}
+	})
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigratable, reasonDisruptiveMigration, "held by another lease")
+	if got := h.condition(v1alpha1.ConditionWorkloadMigratable).Message; strings.Contains(got, "lose availability") {
+		t.Errorf("condition message = %q, want a held workload described as staying put rather than as moving", got)
+	}
+}
+
 func TestAClassificationFailureWarnsWithoutBlockingTheMigration(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespace: testWorkloadNS}

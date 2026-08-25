@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,7 +87,24 @@ func (r *CapacityLeaseReconciler) recordMigratability(lease *v1alpha1.CapacityLe
 		return
 	}
 	r.setCondition(lease, v1alpha1.ConditionWorkloadMigratable, metav1.ConditionFalse, reasonDisruptiveMigration,
-		fmt.Sprintf("%d of %d workloads lose availability while moving onto burst capacity", len(warnings), len(assessments)))
+		migratabilitySummary(warnings, len(assessments)))
+}
+
+func migratabilitySummary(warnings []v1alpha1.MigrationWarning, total int) string {
+	held := 0
+	for _, warning := range warnings {
+		if slices.Contains(warning.Reasons, k8s.ReasonHeldByAnotherLease) {
+			held++
+		}
+	}
+	var parts []string
+	if moving := len(warnings) - held; moving > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d workloads lose availability while moving onto burst capacity", moving, total))
+	}
+	if held > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d workloads stay where they are, held by another lease", held, total))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
