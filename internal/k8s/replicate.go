@@ -33,9 +33,9 @@ const (
 	burstCopyHashLength = 8
 	// neither a lease UID nor an object name can hold it, so no pair of them digests to the same bytes as another
 	burstCopyDigestSeparator = "/"
-	maxObjectNameLength = 253
-	minBurstReplicas    = 1
-	deploymentKind      = "Deployment"
+	maxObjectNameLength      = 253
+	minBurstReplicas         = 1
+	deploymentAPIKind        = "Deployment"
 )
 
 var replicationReasons = map[string]string{
@@ -294,7 +294,7 @@ func autoscaledDeployments(ctx context.Context, kc kubernetes.Interface, namespa
 	targeted := map[string]bool{}
 	for i := range list.Items {
 		ref := list.Items[i].Spec.ScaleTargetRef
-		if ref.Kind == deploymentKind && scalesApps(ref.APIVersion) {
+		if ref.Kind == deploymentAPIKind && scalesApps(ref.APIVersion) {
 			targeted[ref.Name] = true
 		}
 	}
@@ -303,7 +303,7 @@ func autoscaledDeployments(ctx context.Context, kc kubernetes.Interface, namespa
 
 func scalesApps(apiVersion string) bool {
 	// an unqualified reference is read as the apps group, because the cost of skipping a workload needlessly is far below the cost of copying one an autoscaler governs
-	group := schema.FromAPIVersionAndKind(apiVersion, deploymentKind).Group
+	group := schema.FromAPIVersionAndKind(apiVersion, deploymentAPIKind).Group
 	return group == appsv1.GroupName || group == ""
 }
 
