@@ -783,6 +783,8 @@ const migrationReasons: Record<string, string> = {
     'a copy would mint empty volumes rather than carry the data the workload holds; move mode bursts a StatefulSet as it stands',
   DisruptionBudgetSpansCopy:
     'a PodDisruptionBudget on the original selects the copy pods as well, so its accounting is wrong for the life of the lease',
+  TopologySpreadSpansCopy:
+    'the copy pods count into the topology spread of the original, which refuses to schedule where the spread is unmet, so the next pod of the original can be left Pending; move mode adds no second set of pods',
 }
 
 // a newer controller can classify a shape this bundle predates, and dropping its reason would hide the warning entirely

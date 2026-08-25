@@ -87,8 +87,11 @@ the target set names nothing or with `EveryWorkloadSkipped` when every matched w
 skipped, because renting machines for a typo or for a namespace nothing in it can be copied
 is worth reporting loudly rather than sitting Active beside idle capacity.
 
-Two shapes are skipped rather than copied, each named in `status.migrationWarnings` with its
-reason while its neighbours are replicated as usual.
+Three shapes are skipped rather than copied, each named in `status.migrationWarnings` with
+its reason while its neighbours are replicated as usual. The line between a skip and a
+warning is where the damage lands: a skip is for a shape where the copy harms the original,
+and a warning is for a shape where the cost falls on the copy or on an accounting an operator
+can accept.
 
 A workload a HorizontalPodAutoscaler targets is skipped. The autoscaler reads pod metrics
 through the scale subresource's selector, which is the same subset match, so it sees the
@@ -96,6 +99,19 @@ copy's pods, concludes the workload is over-provisioned and scales the original 
 is the outage this mode exists to avoid. The skip creates nothing, because the copy is what
 does the damage, and the reason names move mode as the way to burst that workload: move mode
 changes no replica count and so does not fight an autoscaler.
+
+A workload carrying a `DoNotSchedule` topology spread constraint is skipped. The scheduler
+counts every pod in the namespace whose labels match the constraint's selector, and the
+copy's pods carry the original's labels by design, so the burst replicas count into the
+original's own domains and skew them. The original's next pod, whether from a rollout, a
+scale-up or a replacement after a drain, can then be refused a node and sit Pending for the
+life of the lease. That is the same shape of damage as the autoscaler case, landing on the
+original rather than on the copy, so it is treated the same way and is skipped rather than
+warned about. A constraint set to `ScheduleAnyway` is left alone: it only scores nodes, so it
+costs the original a preference and never a pod. Stripping the constraint from the copy was
+rejected as a fix, because the copy's pods still carry the labels the original's own
+constraint selects, so the original's domains are skewed whether or not the copy repeats the
+constraint.
 
 A StatefulSet is skipped. A copy of one mints a fresh set of PersistentVolumeClaims, which
 costs money and leaves cleanup nobody asked for, and the data the workload holds is not in
@@ -148,8 +164,9 @@ scheduler behaviour.
 
 An existing Service in front of the original load-balances across both sets of pods with no
 change to the Service, and so does anything else selecting those labels: a NetworkPolicy, a
-ServiceMonitor, a PodDisruptionBudget. The first two are the intent. The third is the cost,
-and it is reported.
+ServiceMonitor, a PodDisruptionBudget, a topology spread constraint. The first two are the
+intent. The third is the cost, and it is reported. The fourth is the one that reaches back
+into scheduling the original, and it is the reason such a workload is not copied at all.
 
 `status.migratedWorkloads` names the copies a replicate-mode lease has to delete, in the same
 `namespace/kind/name` form and with the same growth rule 0034 gave it. Teardown reads its

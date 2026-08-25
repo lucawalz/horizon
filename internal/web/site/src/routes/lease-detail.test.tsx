@@ -88,6 +88,10 @@ const replicationCopy: [string, string][] = [
     'DisruptionBudgetSpansCopy',
     'so its accounting is wrong for the life of the lease',
   ],
+  [
+    'TopologySpreadSpansCopy',
+    'so the next pod of the original can be left Pending',
+  ],
 ]
 
 function warningsFor(copy: [string, string][]): MigrationWarning[] {

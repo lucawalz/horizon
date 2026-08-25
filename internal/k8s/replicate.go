@@ -23,6 +23,7 @@ const (
 	ReasonAutoscalerTargeted = "TargetedByAutoscaler"
 	ReasonStatefulSetCopy    = "StatefulSetNotCopyable"
 	ReasonBudgetSpansCopy    = "DisruptionBudgetSpansCopy"
+	ReasonSpreadSpansCopy    = "TopologySpreadSpansCopy"
 
 	opReplicate         = "replicate"
 	opDeleteCopies      = "delete-burst-copies"
@@ -37,6 +38,7 @@ var replicationReasons = map[string]string{
 	ReasonAutoscalerTargeted: "a HorizontalPodAutoscaler targets it, and it would read the copy's pods as the workload being over-provisioned and scale the original down; move mode changes no replica count, so it bursts this workload without fighting the autoscaler",
 	ReasonStatefulSetCopy:    "a copy of a StatefulSet mints empty volumes rather than carrying the data the workload holds; move mode bursts this workload as it stands",
 	ReasonBudgetSpansCopy:    "its PodDisruptionBudget selects the copy's pods as well, so the budget counts pods it was not written for until the lease ends",
+	ReasonSpreadSpansCopy:    "it spreads its pods over topology domains and refuses to schedule where the spread is unmet, and the copy's pods carry its labels, so they count into its own domains and its next pod can be left Pending; move mode adds no second set of pods, so it bursts this workload without skewing the spread",
 }
 
 func ReplicationReasonText(reason string) string {
@@ -219,9 +221,9 @@ func replicateNamespace(ctx context.Context, kc kubernetes.Interface, namespace 
 		if _, err := workloadSelector(kindDeployment, original.Name, original.Spec.Selector); err != nil {
 			return replicated, fmt.Errorf("%s: %w", opReplicate, err)
 		}
-		// the copy is what makes an autoscaler scale the original down, so this skip creates nothing rather than warning and proceeding
-		if autoscaled[original.Name] {
-			replicated.skip(namespace, kindDeployment, original.Name, ReasonAutoscalerTargeted)
+		// the copy is what does the damage in each of these, so the skip creates nothing rather than warning and proceeding
+		if reason := copyHarmsOriginal(original, autoscaled); reason != "" {
+			replicated.skip(namespace, kindDeployment, original.Name, reason)
 			continue
 		}
 		copied := burstCopy(original, replication)
@@ -237,6 +239,26 @@ func replicateNamespace(ctx context.Context, kc kubernetes.Interface, namespace 
 		replicated.copies = append(replicated.copies, workloadRef(namespace, kindDeployment, copied.Name))
 	}
 	return replicated, nil
+}
+
+func copyHarmsOriginal(original *appsv1.Deployment, autoscaled map[string]bool) string {
+	switch {
+	case autoscaled[original.Name]:
+		return ReasonAutoscalerTargeted
+	case enforcesSpread(original.Spec.Template.Spec.TopologySpreadConstraints):
+		return ReasonSpreadSpansCopy
+	}
+	return ""
+}
+
+func enforcesSpread(constraints []corev1.TopologySpreadConstraint) bool {
+	for _, constraint := range constraints {
+		// a spread the scheduler only scores on costs the original a preference, never a node, so it is not worth refusing the capacity over
+		if constraint.WhenUnsatisfiable == corev1.DoNotSchedule {
+			return true
+		}
+	}
+	return false
 }
 
 func skipStatefulSets(ctx context.Context, kc kubernetes.Interface, namespace string, selector labels.Selector, replicated *namespaceReplication) error {

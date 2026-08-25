@@ -375,6 +375,55 @@ func TestReplicateSkipsAnAutoscaledWorkloadAndSignpostsMoveMode(t *testing.T) {
 	}
 }
 
+func spreadOver(topologyKey string, whenUnsatisfiable corev1.UnsatisfiableConstraintAction) func(*appsv1.Deployment) {
+	return func(d *appsv1.Deployment) {
+		d.Spec.Template.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
+			MaxSkew:           1,
+			TopologyKey:       topologyKey,
+			WhenUnsatisfiable: whenUnsatisfiable,
+			LabelSelector:     appSelector("api"),
+		}}
+	}
+}
+
+func TestReplicateSkipsAWorkloadWhoseSpreadTheCopyWouldSkew(t *testing.T) {
+	original := originalDeployment(spreadOver("kubernetes.io/hostname", corev1.DoNotSchedule))
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), original)
+
+	result, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if got := len(burstCopiesIn(t, kc, testNS)); got != 0 {
+		t.Errorf("a workload spreading its pods was copied %d times, and the copy's pods count into the original's own domains", got)
+	}
+	reasons := warningReasons(result.Skipped, testNS+"/deployment/"+original.Name)
+	if !slices.Equal(reasons, []string{k8s.ReasonSpreadSpansCopy}) {
+		t.Fatalf("the skip reports reasons %v, want [%s]", reasons, k8s.ReasonSpreadSpansCopy)
+	}
+	if text := k8s.ReplicationReasonText(k8s.ReasonSpreadSpansCopy); !strings.Contains(text, "move mode") {
+		t.Errorf("the spread skip reads %q, want it to name move mode as the way to burst the workload", text)
+	}
+}
+
+func TestReplicateCopiesAWorkloadWhoseSpreadIsOnlyAPreference(t *testing.T) {
+	original := originalDeployment(spreadOver("kubernetes.io/hostname", corev1.ScheduleAnyway))
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), original)
+
+	result, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if got := len(burstCopiesIn(t, kc, testNS)); got != 1 {
+		t.Errorf("the namespace holds %d burst copies, want a spread the scheduler only scores on not to cost the workload its capacity", got)
+	}
+	if len(result.Skipped) != 0 {
+		t.Errorf("Replicate skipped %v over a spread that refuses no pod a node", result.Skipped)
+	}
+}
+
 func TestReplicateSkipsAStatefulSet(t *testing.T) {
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), plainStatefulSet("db"), originalDeployment())
 
