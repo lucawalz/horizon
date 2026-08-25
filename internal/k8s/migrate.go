@@ -506,16 +506,11 @@ func evictNonDaemonSetPodsBestEffort(ctx context.Context, kc kubernetes.Interfac
 }
 
 func leaseNodePresent(ctx context.Context, kc kubernetes.Interface, leaseUID string) (bool, error) {
-	nodes, err := kc.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodes, err := leaseNodes(ctx, kc, leaseUID)
 	if err != nil {
 		return false, fmt.Errorf("migrate: list nodes: %w", err)
 	}
-	for i := range nodes.Items {
-		if nodes.Items[i].Labels[LeaseUIDLabelKey] == leaseUID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return len(nodes) > 0, nil
 }
 
 func isDaemonSetPod(pod *corev1.Pod) bool {
