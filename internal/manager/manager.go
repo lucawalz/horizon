@@ -120,6 +120,7 @@ func newManager(restConfig *rest.Config, opts Options) (ctrl.Manager, *reconcile
 
 type reconcilers struct {
 	leases    *controller.CapacityLeaseReconciler
+	configs   *controller.ProviderConfigReconciler
 	orphans   *controller.OrphanReconciler
 	refresher *catalogue.Refresher
 }
@@ -149,6 +150,7 @@ func newReconcilers(api client.Client, kube kubernetes.Interface, recorder event
 			Recorder:     recorder,
 			PollInterval: pollInterval,
 		},
+		configs: &controller.ProviderConfigReconciler{Client: api},
 		orphans: &controller.OrphanReconciler{
 			Client:   api,
 			Provider: providers,
@@ -165,6 +167,9 @@ func newReconcilers(api client.Client, kube kubernetes.Interface, recorder event
 func (p *reconcilers) setupWithManager(mgr ctrl.Manager) error {
 	if err := p.leases.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up capacity lease controller: %w", err)
+	}
+	if err := p.configs.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("set up provider config controller: %w", err)
 	}
 	if err := p.orphans.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("set up orphan controller: %w", err)

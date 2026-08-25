@@ -1,6 +1,8 @@
 package v1alpha1
 
 import (
+	"slices"
+
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -326,4 +328,15 @@ type CapacityLeaseList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 
 	Items []CapacityLease `json:"items"`
+}
+
+func (l *CapacityLeaseList) NamesBoundTo(config string) []string {
+	var bound []string
+	for i := range l.Items {
+		if l.Items[i].Spec.ProviderRef == config {
+			bound = append(bound, l.Items[i].Name)
+		}
+	}
+	slices.Sort(bound)
+	return bound
 }

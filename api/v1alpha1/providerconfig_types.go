@@ -8,6 +8,7 @@ import (
 const (
 	ConditionReady              = "Ready"
 	ConditionCataloguePublished = "CataloguePublished"
+	ConditionDeletable          = "Deletable"
 )
 
 const ProviderTypeHetzner = "hetzner"
