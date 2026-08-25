@@ -34,3 +34,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0028. Serve the interface in-cluster behind a verified token and Kubernetes impersonation](0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md) (accepted)
 - [0029. Publish a Ready condition and the instance type catalogue on ProviderConfig status](0029-publish-provider-config-readiness-and-its-catalogue.md) (accepted)
 - [0030. Define the verification gates once in the Makefile](0030-define-the-verification-gates-once-in-the-makefile.md) (accepted)
+- [0031. Identify a lease's nodes by lease UID](0031-identify-a-leases-nodes-by-lease-uid.md) (accepted)
