@@ -128,7 +128,6 @@ func (r providerConfigCreateRequest) config() (*v1alpha1.ProviderConfig, error) 
 	}, nil
 }
 
-// a reference tells a missing secret apart from a misnamed one, and resolving it would put a credential in a browser
 type secretKeyReference struct {
 	Name string `json:"name"`
 	Key  string `json:"key"`
@@ -162,7 +161,6 @@ type catalogueRegion struct {
 	Types  int    `json:"types"`
 }
 
-// a published catalogue runs to hundreds of entries, so it is tallied here and listed by the machines route
 type publishedCatalogue struct {
 	Types       int               `json:"types"`
 	Regions     []catalogueRegion `json:"regions"`
@@ -179,6 +177,7 @@ type providerConfigDetailResponse struct {
 }
 
 func newSecretKeyReference(selector corev1.SecretKeySelector) secretKeyReference {
+	// the reference tells a missing secret apart from a misnamed one, and resolving it would put a credential in a browser
 	return secretKeyReference{Name: selector.Name, Key: selector.Key}
 }
 
@@ -225,6 +224,7 @@ func newWatchdogDetail(policy v1alpha1.WatchdogPolicy) watchdogDetail {
 }
 
 func newPublishedCatalogue(status v1alpha1.ProviderConfigStatus) publishedCatalogue {
+	// a published catalogue runs to hundreds of entries, so it is tallied here and listed by the machines route
 	offered := map[string]int{}
 	for _, published := range status.InstanceTypes {
 		offered[published.Region]++

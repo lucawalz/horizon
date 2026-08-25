@@ -24,8 +24,8 @@ export function leaseHref(name: string): string {
   return leasePrefix + encodeURIComponent(name)
 }
 
-// the create page is kept out of this prefix, so every segment under it is a config name rather than a reserved word
 export function configHref(name: string): string {
+  // the create page is kept out of this prefix, so every segment under it is a config name rather than a reserved word
   return configPrefix + encodeURIComponent(name)
 }
 

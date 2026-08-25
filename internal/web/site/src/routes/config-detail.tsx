@@ -153,8 +153,8 @@ function secretRows(hetzner: HetznerProviderDetail): SecretRow[] {
   ]
 }
 
-// the reference is what tells a missing secret apart from a misnamed one, and no interface reads what a secret holds
 function SecretsPanel({ hetzner }: { hetzner: HetznerProviderDetail }) {
+  // the reference is what tells a missing secret apart from a misnamed one, and no interface reads what a secret holds
   return (
     <Panel title="Secrets">
       <p className="row-rule max-w-[70ch] px-gutter py-cell text-copy-13 text-subtle">
@@ -215,8 +215,8 @@ function WatchdogPanel({ watchdog }: { watchdog: WatchdogDetail }) {
   )
 }
 
-// a published catalogue runs to hundreds of entries, so it is tallied here and listed on the machines page
 function CataloguePanel({ name, catalogue }: { name: string; catalogue: PublishedCatalogue }) {
+  // a published catalogue runs to hundreds of entries, so it is tallied here and listed on the machines page
   return (
     <Panel
       title="Catalogue"
