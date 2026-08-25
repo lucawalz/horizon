@@ -825,15 +825,16 @@ func TestAPartialMigrationKeepsWhatItMoved(t *testing.T) {
 	})
 	h.seedWorkloadIn(testWorkloadNS, "api")
 	h.seedWorkloadIn(testWorkloadNSB, "api")
-	h.refuseWorkloadPatchesIn(testWorkloadNSB)
+	// the failing namespace is the first of the set, so a migration that aborted on it would report nothing moved
+	h.refuseWorkloadPatchesIn(testWorkloadNS)
 	h.settle()
 	h.joinNode(h.instanceName(0), true)
 	h.settleIgnoringErrors(5)
 
 	h.assertConditionDetail(v1alpha1.ConditionWorkloadMigrated, reasonPartialMigration, "1 of 2 namespaces")
-	want := []string{"workloads/deployment/api"}
+	want := []string{"workloads-b/deployment/api"}
 	if got := h.lease().Status.MigratedWorkloads; !reflect.DeepEqual(got, want) {
-		t.Fatalf("migrated workloads are %v, want %v: a failing namespace must not discard the progress of the others", got, want)
+		t.Fatalf("migrated workloads are %v, want %v: a failing namespace must not stop the ones after it", got, want)
 	}
 }
 

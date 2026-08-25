@@ -1010,10 +1010,11 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	}
 }
 
-func TestMigrateReportsNoWorkloadsForAnEmptyNamespace(t *testing.T) {
+func TestMigrateReportsNoWorkloadsForANamespaceHoldingOnlyPods(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
 	elsewhere := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"}}
-	kc := fake.NewSimpleClientset(node, elsewhere)
+	stray := podIn(testNS, "stray-pod", "stray", "homelab-1")
+	kc := fake.NewSimpleClientset(node, elsewhere, stray)
 	evictAndDelete(kc)
 
 	migrated, err := migrateNS(t, kc, testNS, testLease)
@@ -1021,10 +1022,10 @@ func TestMigrateReportsNoWorkloadsForAnEmptyNamespace(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	if len(migrated) != 0 {
-		t.Errorf("migrated = %v, want none", migrated)
+		t.Errorf("migrated = %v, want none: no workload of this lease lives here", migrated)
 	}
 	if got := evictionNames(kc); len(got) != 0 {
-		t.Errorf("evicted %v, want no eviction for a namespace without workloads", got)
+		t.Errorf("evicted %v, want none: a pod no claimed workload names is not this lease's to move", got)
 	}
 }
 
@@ -2234,23 +2235,60 @@ func TestMigrateKeepsWhatMovedWhenOneNamespaceFails(t *testing.T) {
 		rollingDeploymentIn(testNSB, "b-app", "b"),
 	)
 	evictAndDelete(kc)
-	refuseIn(kc, "patch", "deployments", testNSB)
+	// the failing namespace comes first, so a Migrate that aborted on it would report nothing rather than the same list
+	refuseIn(kc, "patch", "deployments", testNS)
 
 	result, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS, testNSB), testLease, noEvictionRetry)
 	if err == nil {
 		t.Fatal("Migrate reported success while one namespace could not be patched")
 	}
 
-	wantWorkloads := []string{"sentio-systems/deployment/a-app"}
+	wantWorkloads := []string{"sentio-systems-b/deployment/b-app"}
 	if !reflect.DeepEqual(result.Workloads, wantWorkloads) {
-		t.Errorf("migrated = %v, want %v: a failing namespace must not discard what the others moved", result.Workloads, wantWorkloads)
+		t.Errorf("migrated = %v, want %v: a failing namespace must not stop the ones after it", result.Workloads, wantWorkloads)
 	}
-	wantNamespaces := []string{testNS}
+	wantNamespaces := []string{testNSB}
 	if !reflect.DeepEqual(result.MigratedNamespaces, wantNamespaces) {
 		t.Errorf("migrated namespaces = %v, want %v", result.MigratedNamespaces, wantNamespaces)
 	}
-	if !strings.Contains(err.Error(), "b-app") {
+	if !strings.Contains(err.Error(), "a-app") {
 		t.Errorf("error = %q, want it to name the workload that stayed", err)
+	}
+}
+
+func refuseEveryPatchAfterTheFirst(kc *fake.Clientset) {
+	patched := 0
+	kc.PrependReactor("patch", "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		patched++
+		if patched == 1 {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewInternalError(errors.New("the apiserver refuses this patch"))
+	})
+}
+
+func TestMigrateKeepsTheWorkloadsANamespaceMovedBeforeItFailed(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		rollingDeploymentIn(testNS, "a-app", "a"),
+		rollingDeploymentIn(testNS, "b-app", "b"),
+	)
+	evictAndDelete(kc)
+	refuseEveryPatchAfterTheFirst(kc)
+
+	result, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS), testLease, noEvictionRetry)
+	if err == nil {
+		t.Fatal("Migrate reported success while one workload could not be patched")
+	}
+
+	if len(result.Workloads) != 1 {
+		t.Fatalf("migrated = %v, want the one workload that was patched before the failure", result.Workloads)
+	}
+	if !strings.HasPrefix(result.Workloads[0], testNS+"/deployment/") {
+		t.Errorf("migrated = %v, want a namespace qualified reference", result.Workloads)
+	}
+	if len(result.MigratedNamespaces) != 0 {
+		t.Errorf("migrated namespaces = %v, want none: the namespace never finished", result.MigratedNamespaces)
 	}
 }
 
@@ -2290,14 +2328,16 @@ func TestWorkloadOffBurstNodesFoldsEveryNamespaceTogether(t *testing.T) {
 	kc := fake.NewSimpleClientset(
 		burstNode("burst-1", testLease.UID),
 		makePod("stuck", testNSB, "burst-1", corev1.PodRunning),
+		makePod("settled", testNS, "homelab-1", corev1.PodRunning),
 	)
 
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, nsSet(t, testNS, testNSB), testLease)
+	// the stuck namespace is read first, so a fold that keeps only the last answer would report ready
+	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, nsSet(t, testNSB, testNS), testLease)
 	if err != nil {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
 	if ready {
-		t.Error("an empty namespace read first masked a namespace still holding burst capacity")
+		t.Error("a namespace read after the stuck one masked the capacity the stuck one still holds")
 	}
 
 	clear, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, nsSet(t, testNS), testLease)
@@ -2305,7 +2345,7 @@ func TestWorkloadOffBurstNodesFoldsEveryNamespaceTogether(t *testing.T) {
 		t.Fatalf("WorkloadOffBurstNodes: %v", err)
 	}
 	if !clear {
-		t.Error("a namespace holding nothing must still report ready on its own")
+		t.Error("a namespace whose pods all sit off the burst nodes must report ready")
 	}
 }
 

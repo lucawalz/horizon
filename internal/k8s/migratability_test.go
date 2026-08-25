@@ -1,8 +1,10 @@
 package k8s_test
 
 import (
+	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -251,29 +253,32 @@ func TestClassifyMigratabilityCoversBothWorkloadKinds(t *testing.T) {
 }
 
 func TestClassifyMigratabilityQualifiesAWorkloadReferenceByNamespace(t *testing.T) {
-	here := deploymentWith("api", 1, func(*appsv1.DeploymentSpec) {})
-	there := here.DeepCopy()
-	there.Namespace = testNSB
+	deployment := deploymentWith("api", 1, func(*appsv1.DeploymentSpec) {})
+	statefulSet := statefulSetWith("api", 1, func(*appsv1.StatefulSetSpec) {})
+	deploymentThere := deployment.DeepCopy()
+	deploymentThere.Namespace = testNSB
+	statefulSetThere := statefulSet.DeepCopy()
+	statefulSetThere.Namespace = testNSB
 
-	kc := fake.NewSimpleClientset(here, there)
-	got := map[string]string{}
-	for _, namespace := range []string{testNS, testNSB} {
-		assessments, err := classifyNS(t, kc, namespace, testLease)
-		if err != nil {
-			t.Fatalf("ClassifyMigratability in %q: %v", namespace, err)
-		}
-		if len(assessments) != 1 {
-			t.Fatalf("assessments in %q = %+v, want exactly one", namespace, assessments)
-		}
-		got[namespace] = assessments[0].Workload
+	kc := fake.NewSimpleClientset(deployment, statefulSet, deploymentThere, statefulSetThere)
+	assessments, err := k8s.ClassifyMigratability(context.Background(), kc, nsSet(t, testNS, testNSB), testLease)
+	if err != nil {
+		t.Fatalf("ClassifyMigratability: %v", err)
 	}
 
-	want := map[string]string{
-		testNS:  "sentio-systems/deployment/api",
-		testNSB: "sentio-systems-b/deployment/api",
+	var got []string
+	for _, assessment := range assessments {
+		got = append(got, assessment.Workload)
+	}
+	slices.Sort(got)
+	want := []string{
+		"sentio-systems-b/deployment/api",
+		"sentio-systems-b/statefulset/api",
+		"sentio-systems/deployment/api",
+		"sentio-systems/statefulset/api",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("workloads = %v, want %v: one name per namespace collides on the status list-map key", got, want)
+		t.Errorf("workloads = %v, want %v: one name across a target set collides on the status list-map key", got, want)
 	}
 }
 

@@ -4,8 +4,10 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/k8s"
@@ -238,14 +240,45 @@ func TestCapacityLeaseRefusesEveryChangeToWhatItAlreadyHolds(t *testing.T) {
 	}
 }
 
+func classifiedWorkloadRefs(t *testing.T) []string {
+	t.Helper()
+	targets, err := k8s.NewNamespaceSet([]string{"team-a", "team-b"})
+	if err != nil {
+		t.Fatalf("NewNamespaceSet: %v", err)
+	}
+	kube := k8sfake.NewSimpleClientset(
+		selectedDeployment("team-a", "api"),
+		selectedDeployment("team-b", "api"),
+	)
+	assessments, err := k8s.ClassifyMigratability(t.Context(), kube, targets, k8s.LeaseIdentity{UID: "uid", Name: "lease"})
+	if err != nil {
+		t.Fatalf("ClassifyMigratability: %v", err)
+	}
+	var refs []string
+	for _, assessment := range assessments {
+		refs = append(refs, assessment.Workload)
+	}
+	return refs
+}
+
+func selectedDeployment(namespace, name string) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
+		},
+	}
+}
+
 func TestCapacityLeaseStatusRefusesTwoWarningsUnderOneWorkloadKey(t *testing.T) {
 	tests := []struct {
 		name         string
-		workloads    []string
+		workloads    func(*testing.T) []string
 		wantRejected bool
 	}{
-		{"one name per namespace", []string{"team-a/deployment/api", "team-b/deployment/api"}, false},
-		{"one name unqualified", []string{"deployment/api", "deployment/api"}, true},
+		// the references come from the producer, so a reference that stopped naming its namespace is refused here rather than assumed distinct
+		{"one name per namespace", classifiedWorkloadRefs, false},
+		{"one name unqualified", func(*testing.T) []string { return []string{"deployment/api", "deployment/api"} }, true},
 	}
 
 	for _, tc := range tests {
@@ -254,7 +287,7 @@ func TestCapacityLeaseStatusRefusesTwoWarningsUnderOneWorkloadKey(t *testing.T) 
 			lease := validLease(t)
 			assertCreate(t, c, lease, false)
 
-			for _, workload := range tc.workloads {
+			for _, workload := range tc.workloads(t) {
 				lease.Status.MigrationWarnings = append(lease.Status.MigrationWarnings,
 					v1alpha1.MigrationWarning{Workload: workload, Reasons: []string{k8s.ReasonRecreateStrategy}})
 			}
