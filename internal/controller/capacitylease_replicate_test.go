@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -146,6 +147,51 @@ func TestReplicateModeSkipsAnAutoscaledWorkloadAndNamesMoveMode(t *testing.T) {
 	if len(warnings) != 1 || warnings[0].Workload != testWorkloadNS+"/deployment/api" ||
 		!strings.Contains(strings.Join(warnings[0].Reasons, ","), k8s.ReasonAutoscalerTargeted) {
 		t.Errorf("the lease warns %+v, want the autoscaled workload named with its reason", warnings)
+	}
+}
+
+func replicatingTwoNamespaces(lease *v1alpha1.CapacityLease) {
+	lease.Spec.Workload.Namespaces = []string{testWorkloadNS, testWorkloadNSB}
+}
+
+func TestReplicateModeReportsANamespaceItCouldNotRead(t *testing.T) {
+	h := replicated(t, replicatingTwoNamespaces)
+	h.seedWorkload()
+	h.seedWorkloadIn(testWorkloadNSB, "api")
+	h.refuseWorkloadListsIn(testWorkloadNSB)
+	h.settleIgnoringErrors(5)
+
+	h.assertCondition(v1alpha1.ConditionWorkloadReplicable, metav1.ConditionFalse)
+	h.assertConditionDetail(v1alpha1.ConditionWorkloadReplicable, reasonPartialReplication, "replicated 1 of 2 namespaces, leaving 1 copies running")
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 1 {
+		t.Errorf("the namespace that could be read holds %d burst copies, want the one it made kept", got)
+	}
+}
+
+func TestReplicateModeKeepsTheWarningsOfANamespaceItCannotReRead(t *testing.T) {
+	h := replicated(t, replicatingTwoNamespaces)
+	h.seedWorkload()
+	h.seedWorkloadIn(testWorkloadNS, "worker")
+	h.seedAutoscalerFor("api")
+	h.seedWorkloadIn(testWorkloadNSB, "api")
+	h.refuseWorkloadListsIn(testWorkloadNSB)
+	h.settleIgnoringErrors(5)
+
+	warned := h.lease().Status.MigrationWarnings
+	if len(warned) != 1 || warned[0].Workload != testWorkloadNS+"/deployment/api" {
+		t.Fatalf("the lease warns %+v, want the autoscaled workload of the namespace it read", warned)
+	}
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 1 {
+		t.Fatalf("the namespace holds %d burst copies, want the one the warning stands beside", got)
+	}
+
+	h.refuseWorkloadListsIn(testWorkloadNS)
+	if _, err := h.reconciler().replicateWorkload(t.Context(), h.lease()); err == nil {
+		t.Fatal("replicateWorkload reported success while every namespace failed")
+	}
+
+	if got := h.lease().Status.MigrationWarnings; !reflect.DeepEqual(got, warned) {
+		t.Errorf("a pass that read no namespace left the warnings as %+v, want %+v kept while the copies run", got, warned)
 	}
 }
 

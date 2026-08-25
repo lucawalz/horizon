@@ -23,7 +23,7 @@ func (r *CapacityLeaseReconciler) replicateWorkload(ctx context.Context, lease *
 	result, replicateErr := k8s.Replicate(ctx, r.Kube, targets, replicationOf(lease))
 	// only a successful teardown may shrink this list, because it is the sole record of the copies teardown still has to delete
 	lease.Status.MigratedWorkloads = alsoMigrated(lease.Status.MigratedWorkloads, result.Copies)
-	lease.Status.MigrationWarnings = replicationWarnings(result)
+	lease.Status.MigrationWarnings = alsoWarned(lease.Status.MigrationWarnings, result)
 	if replicateErr != nil {
 		reason, cause := replicationOutcome(result, len(lease.Spec.Workload.Namespaces), replicateErr)
 		return r.failReplication(ctx, lease, reason, cause)
@@ -83,6 +83,22 @@ func replicationWarnings(result k8s.ReplicationResult) []v1alpha1.MigrationWarni
 			Workload: flagged.Workload,
 			Reasons:  flagged.Reasons,
 		})
+	}
+	return warnings
+}
+
+func alsoWarned(recorded []v1alpha1.MigrationWarning, result k8s.ReplicationResult) []v1alpha1.MigrationWarning {
+	warnings := replicationWarnings(result)
+	named := map[string]bool{}
+	for _, warning := range warnings {
+		named[warning.Workload] = true
+	}
+	for _, warning := range recorded {
+		// a namespace this pass never read through keeps what the pass that did read it recorded, because its copies are still running
+		if named[warning.Workload] || slices.Contains(result.ReplicatedNamespaces, k8s.WorkloadNamespace(warning.Workload)) {
+			continue
+		}
+		warnings = append(warnings, warning)
 	}
 	return warnings
 }

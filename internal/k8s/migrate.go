@@ -260,6 +260,14 @@ func parseWorkloadRef(ref string) (namespace, kind, name string, err error) {
 	return parts[0], parts[1], parts[2], nil
 }
 
+func WorkloadNamespace(ref string) string {
+	namespace, _, _, err := parseWorkloadRef(ref)
+	if err != nil {
+		return ""
+	}
+	return namespace
+}
+
 func NamespaceSetOfWorkloads(refs []string) (TargetSet, error) {
 	var namespaces []string
 	for _, ref := range refs {

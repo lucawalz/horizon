@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -591,6 +592,16 @@ func (h *harness) refuseWorkloadPatchesIn(namespace string) {
 			return false, nil, nil
 		}
 		return true, nil, apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, action.GetNamespace(), errors.New("no"))
+	})
+}
+
+func (h *harness) refuseWorkloadListsIn(namespaces ...string) {
+	h.t.Helper()
+	h.kube.PrependReactor("list", "deployments", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if !slices.Contains(namespaces, action.GetNamespace()) {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewInternalError(errors.New("the apiserver is briefly unavailable"))
 	})
 }
 
