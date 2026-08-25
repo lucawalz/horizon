@@ -835,6 +835,38 @@ func TestMigrateNeitherPatchesNorClaimsAnotherLeasesWorkload(t *testing.T) {
 	}
 }
 
+func TestMigrateReadsAnEmptyOwnerLabelAsHeldByNobody(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	dep := ownedDeployment("dep1", "web", k8s.LeaseIdentity{})
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	claimed, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if len(claimed) != 1 || claimed[0] != "deployment/dep1" {
+		t.Fatalf("claimed = %v, want [deployment/dep1]: an owner label naming nobody strands the workload for every lease", claimed)
+	}
+	if got := getDeployment(t, kc, "dep1").Labels[provider.LeaseUIDLabelKey]; got != testLease.UID {
+		t.Errorf("owner label = %q, want %q", got, testLease.UID)
+	}
+}
+
+func TestRestorePlacementReadsAnEmptyOwnerLabelAsHeldByNobody(t *testing.T) {
+	dep := ownedDeployment("dep1", "web", k8s.LeaseIdentity{})
+	kc := fake.NewSimpleClientset(dep)
+	evictAndDelete(kc)
+
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+	if len(restored) != 1 || restored[0] != "deployment/dep1" {
+		t.Fatalf("restored = %v, want [deployment/dep1]: an owner label naming nobody leaves the workload pinned for good", restored)
+	}
+}
+
 func TestMigrateStampsAndClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
 	liveAffinity := hostSpreadAffinity(100)
@@ -1474,7 +1506,7 @@ func TestWorkloadOnBurstNodesWithoutAnOwnedWorkloadIsNotReady(t *testing.T) {
 	kc := fake.NewSimpleClientset(
 		burstNode("burst-b", leaseB.UID),
 		ownedDeployment("app-a", "a", testLease),
-		labelledPod("pod-a", "a", "burst-a", corev1.PodRunning),
+		labelledPod("pod-a", "a", "burst-b", corev1.PodRunning),
 	)
 	ready, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, leaseB)
 	if err != nil {
@@ -2003,6 +2035,11 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 	}
 
 	createPod(t, kc, "pod-a", "a", "burst-a")
+	crossed := ownedDeployment("app-crossed", "crossed", leaseB)
+	if _, err := kc.AppsV1().Deployments(testNS).Create(context.Background(), crossed, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create app-crossed: %v", err)
+	}
+	createPod(t, kc, "pod-crossed", "crossed", "burst-a")
 
 	gotA, err := kc.AppsV1().Deployments(testNS).Get(context.Background(), "app-a", metav1.GetOptions{})
 	if err != nil {
@@ -2027,6 +2064,6 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 		t.Fatalf("WorkloadOnBurstNodes lease-b against lease-a's namespace: %v", err)
 	}
 	if onWrongLease {
-		t.Fatal("lease-b's readiness gate must not count a pod sitting on lease-a's node")
+		t.Fatal("lease-b's readiness gate counted its own workload's pod while that pod sits on lease-a's node")
 	}
 }
