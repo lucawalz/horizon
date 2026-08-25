@@ -41,6 +41,7 @@ const field = {
 const requirementsMode = 'requirements'
 const sizeMode = 'size'
 const namespaceListId = 'workload-namespaces'
+const addNamespaceId = 'add-workload-namespace'
 
 const replicaBounds = { min: 1, max: 8, initial: 2 }
 const coreBounds = { min: 1, max: 64, initial: 2 }
@@ -210,17 +211,32 @@ function useNamespaceSuggestions(): string[] {
 }
 
 function WorkloadField({ suggestions }: { suggestions: string[] }) {
+  const [entries, setEntries] = useState([0])
   const suggested = suggestions.length > 0
   return (
-    <Field label="Workload namespace" hint="Optional. Its workloads are drained onto the leased nodes.">
-      <input
-        name={field.workload}
-        list={suggested ? namespaceListId : undefined}
-        placeholder="batch"
-        spellCheck={false}
-        autoComplete="off"
-        className={controlClass}
-      />
+    <div className="flex flex-col gap-tight">
+      <Field label="Workload namespaces" hint="Optional. Their workloads are drained onto the leased nodes.">
+        <span className="flex flex-col gap-tight">
+          {entries.map((entry) => (
+            <input
+              key={entry}
+              name={field.workload}
+              list={suggested ? namespaceListId : undefined}
+              placeholder="batch"
+              spellCheck={false}
+              autoComplete="off"
+              className={controlClass}
+            />
+          ))}
+        </span>
+      </Field>
+      <Button
+        id={addNamespaceId}
+        type="button"
+        onClick={() => setEntries((held) => [...held, held.length])}
+      >
+        Add a namespace
+      </Button>
       {suggested ? (
         <datalist id={namespaceListId}>
           {suggestions.map((name) => (
@@ -228,7 +244,7 @@ function WorkloadField({ suggestions }: { suggestions: string[] }) {
           ))}
         </datalist>
       ) : null}
-    </Field>
+    </div>
   )
 }
 

@@ -132,6 +132,44 @@ describe('the create form', () => {
     await view.unmount()
   })
 
+  it('submits every namespace the form was given', async () => {
+    const respond = stubCluster(() => jsonResponse(leaseDetailBody(), 201))
+    const { view, form } = await newLeaseForm()
+
+    await fill(control<HTMLInputElement>(view.container, 'input[name="name"]'), 'batch-run')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="region"]'), 'nbg1')
+    await click(control<HTMLButtonElement>(view.container, 'button#add-workload-namespace'))
+
+    const namespaces = [...view.container.querySelectorAll<HTMLInputElement>('input[name="workload"]')]
+    expect(namespaces).toHaveLength(2)
+    await fill(namespaces[0], 'team-a')
+    await fill(namespaces[1], 'team-b')
+
+    await send(form)
+
+    const [, init] = respond.mock.calls[respond.mock.calls.length - 1]
+    expect(submitted(init?.body).workloadNamespaces).toEqual(['team-a', 'team-b'])
+
+    await view.unmount()
+  })
+
+  it('drops a namespace entry left blank', async () => {
+    const respond = stubCluster(() => jsonResponse(leaseDetailBody(), 201))
+    const { view, form } = await newLeaseForm()
+
+    await fill(control<HTMLInputElement>(view.container, 'input[name="name"]'), 'batch-run')
+    await fill(control<HTMLInputElement>(view.container, 'input[name="region"]'), 'nbg1')
+    await click(control<HTMLButtonElement>(view.container, 'button#add-workload-namespace'))
+    await fill(control<HTMLInputElement>(view.container, 'input[name="workload"]'), 'team-a')
+
+    await send(form)
+
+    const [, init] = respond.mock.calls[respond.mock.calls.length - 1]
+    expect(submitted(init?.body).workloadNamespaces).toEqual(['team-a'])
+
+    await view.unmount()
+  })
+
   it('suggests the namespaces the signed in user may list', async () => {
     stubCluster(
       () => jsonResponse(leaseDetailBody()),
@@ -139,12 +177,16 @@ describe('the create form', () => {
     )
     const { view } = await newLeaseForm()
 
-    const workload = control<HTMLInputElement>(view.container, 'input[name="workload"]')
-    const suggestions = control<HTMLDataListElement>(
-      view.container,
-      `datalist#${workload.getAttribute('list')}`,
-    )
-    expect([...suggestions.options].map((option) => option.value)).toEqual(['batch', 'default'])
+    await click(control<HTMLButtonElement>(view.container, 'button#add-workload-namespace'))
+    const entries = [...view.container.querySelectorAll<HTMLInputElement>('input[name="workload"]')]
+    expect(entries).toHaveLength(2)
+    for (const entry of entries) {
+      const suggestions = control<HTMLDataListElement>(
+        view.container,
+        `datalist#${entry.getAttribute('list')}`,
+      )
+      expect([...suggestions.options].map((option) => option.value)).toEqual(['batch', 'default'])
+    }
 
     await view.unmount()
   })

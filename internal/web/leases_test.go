@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -462,5 +464,36 @@ func TestLeaseDetailCarriesNoSelectionForANamedSize(t *testing.T) {
 
 	if detail.Selection != nil {
 		t.Errorf("selection = %+v, want null", *detail.Selection)
+	}
+}
+
+// the browser reads these keys by name and nothing checks the two sides against each other at build time
+func TestLeaseDetailEncodesTheWorkloadTargetSet(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	lease := leaseFixture("targeted-run")
+	lease.Spec.Workload = &v1alpha1.WorkloadRef{
+		Namespaces: []string{"team-a", "team-b"},
+		Selector:   &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "batch"}},
+	}
+
+	encoded, err := json.Marshal(newLeaseDetailResponse(lease, now))
+	if err != nil {
+		t.Fatalf("marshal the detail: %v", err)
+	}
+
+	var decoded struct {
+		WorkloadNamespaces []string `json:"workloadNamespaces"`
+		WorkloadSelector   *string  `json:"workloadSelector"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode the detail: %v", err)
+	}
+
+	want := []string{"team-a", "team-b"}
+	if !reflect.DeepEqual(decoded.WorkloadNamespaces, want) {
+		t.Errorf("workloadNamespaces = %v, want %v", decoded.WorkloadNamespaces, want)
+	}
+	if decoded.WorkloadSelector == nil || *decoded.WorkloadSelector != "tier=batch" {
+		t.Errorf("workloadSelector = %v, want %q", decoded.WorkloadSelector, "tier=batch")
 	}
 }
