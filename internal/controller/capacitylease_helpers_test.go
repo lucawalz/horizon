@@ -514,6 +514,8 @@ func (h *harness) seedWorkload(mutators ...func(*appsv1.Deployment)) {
 	h.seedPod("api-0", testWorkloadNS, "home-0")
 }
 
+func int32Ptr(value int32) *int32 { return &value }
+
 func (h *harness) seedWorkloadIn(namespace, name string) {
 	h.t.Helper()
 	deployment := &appsv1.Deployment{

@@ -203,6 +203,51 @@ func TestCapacityLeaseDefaultsTheSelectionStrategy(t *testing.T) {
 	}
 }
 
+func targeting(mode v1alpha1.WorkloadMode, burstReplicas *int32) func(*v1alpha1.CapacityLeaseSpec) {
+	return func(spec *v1alpha1.CapacityLeaseSpec) {
+		spec.Workload = &v1alpha1.WorkloadRef{
+			Namespaces:    []string{testWorkloadNS},
+			Mode:          mode,
+			BurstReplicas: burstReplicas,
+		}
+	}
+}
+
+func TestCapacityLeaseWorkloadModePairsWithBurstReplicas(t *testing.T) {
+	tests := []struct {
+		name         string
+		target       func(*v1alpha1.CapacityLeaseSpec)
+		wantRejected bool
+	}{
+		{"move without a pod count", targeting(v1alpha1.WorkloadModeMove, nil), false},
+		{"move with a pod count", targeting(v1alpha1.WorkloadModeMove, int32Ptr(2)), true},
+		{"replicate with a pod count", targeting(v1alpha1.WorkloadModeReplicate, int32Ptr(2)), false},
+		{"replicate without a pod count", targeting(v1alpha1.WorkloadModeReplicate, nil), true},
+		{"replicate with no pods at all", targeting(v1alpha1.WorkloadModeReplicate, int32Ptr(0)), true},
+		{"an unknown mode", targeting("clone", nil), true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := apiServerClient(t)
+			lease := validLease(t)
+			tc.target(&lease.Spec)
+			assertCreate(t, c, lease, tc.wantRejected)
+		})
+	}
+}
+
+func TestCapacityLeaseDefaultsTheWorkloadModeToMove(t *testing.T) {
+	c := apiServerClient(t)
+	lease := validLease(t)
+	lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
+	assertCreate(t, c, lease, false)
+
+	if got := lease.Spec.Workload.Mode; got != v1alpha1.WorkloadModeMove {
+		t.Errorf("mode defaulted to %q, want %q", got, v1alpha1.WorkloadModeMove)
+	}
+}
+
 func TestCapacityLeaseRefusesEveryChangeToWhatItAlreadyHolds(t *testing.T) {
 	tests := []struct {
 		name         string

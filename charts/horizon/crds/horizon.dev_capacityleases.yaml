@@ -84,6 +84,8 @@ spec:
                 minLength: 1
                 type: string
               replicas:
+                description: the number of machines the lease rents, a count of machines
+                  rather than the pods spec.workload.burstReplicas names
                 format: int32
                 type: integer
                 x-kubernetes-validations:
@@ -135,6 +137,22 @@ spec:
                   rule: duration(self) >= duration('0s') && duration(self) <= duration('15m')
               workload:
                 properties:
+                  burstReplicas:
+                    description: the number of pods each replicated copy runs, a count
+                      of pods rather than the machines spec.replicas names
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  mode:
+                    default: move
+                    description: move repins each matched workload onto the leased
+                      nodes and restores it at expiry; replicate never writes to the
+                      matched workload and runs a lease-owned copy of it on the leased
+                      nodes instead
+                    enum:
+                    - move
+                    - replicate
+                    type: string
                   namespaces:
                     items:
                       maxLength: 63
@@ -194,6 +212,10 @@ spec:
                 required:
                 - namespaces
                 type: object
+                x-kubernetes-validations:
+                - message: burstReplicas belongs to replicate mode and is required
+                    by it
+                  rule: (has(self.mode) && self.mode == 'replicate') == has(self.burstReplicas)
             required:
             - duration
             - providerRef

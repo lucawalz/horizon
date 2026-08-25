@@ -47,6 +47,14 @@ const (
 	InstanceStageReady                InstanceStage = "Ready"
 )
 
+type WorkloadMode string
+
+const (
+	WorkloadModeMove      WorkloadMode = "move"
+	WorkloadModeReplicate WorkloadMode = "replicate"
+)
+
+// +kubebuilder:validation:XValidation:rule="(has(self.mode) && self.mode == 'replicate') == has(self.burstReplicas)",message="burstReplicas belongs to replicate mode and is required by it"
 type WorkloadRef struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:MaxLength=63
@@ -57,6 +65,17 @@ type WorkloadRef struct {
 	// the selector names workloads inside the target namespaces rather than the namespaces themselves, and its absence names every one of them
 	// +optional
 	Selector *metav1.LabelSelector `json:"selector,omitempty"`
+
+	// move repins each matched workload onto the leased nodes and restores it at expiry; replicate never writes to the matched workload and runs a lease-owned copy of it on the leased nodes instead
+	// +kubebuilder:default=move
+	// +kubebuilder:validation:Enum=move;replicate
+	// +optional
+	Mode WorkloadMode `json:"mode,omitempty"`
+
+	// the number of pods each replicated copy runs, a count of pods rather than the machines spec.replicas names
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	BurstReplicas *int32 `json:"burstReplicas,omitempty"`
 }
 
 type Architecture string
@@ -121,6 +140,7 @@ type CapacityLeaseSpec struct {
 	// +optional
 	Requirements *SizeRequirements `json:"requirements,omitempty"`
 
+	// the number of machines the lease rents, a count of machines rather than the pods spec.workload.burstReplicas names
 	// +kubebuilder:validation:XValidation:rule="self >= 1 && self <= 8",message="replicas must be between 1 and 8"
 	Replicas int32 `json:"replicas"`
 
