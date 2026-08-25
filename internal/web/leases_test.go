@@ -467,7 +467,6 @@ func TestLeaseDetailCarriesNoSelectionForANamedSize(t *testing.T) {
 	}
 }
 
-// the browser reads these keys by name and nothing checks the two sides against each other at build time
 func TestLeaseDetailEncodesTheWorkloadTargetSet(t *testing.T) {
 	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	lease := leaseFixture("targeted-run")

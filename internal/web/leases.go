@@ -246,7 +246,6 @@ func workloadNamespaces(ref *v1alpha1.WorkloadRef) []string {
 	return orEmpty(ref.Namespaces)
 }
 
-// the detail names which workloads a lease moved, so a set narrowed by a selector must not read as the whole of its namespaces
 func workloadSelector(ref *v1alpha1.WorkloadRef) *string {
 	if ref == nil || ref.Selector == nil {
 		return nil

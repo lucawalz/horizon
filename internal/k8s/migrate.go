@@ -35,7 +35,7 @@ const (
 	opRestore                 = "restore-placement"
 	// a workload reference keys a status list-map, so one name per namespace would otherwise collide across a target set
 	workloadRefSeparator = "/"
-	// one reconcile worker serves every lease, so an in-pass retry is capped far below the grace and the requeue finishes the job
+	// one reconcile worker serves every lease, so one window capped far below the grace covers a whole call and the requeue finishes the job
 	maxEvictRetryWindow    = 2 * time.Second
 	evictAttemptsPerWindow = 4
 )
@@ -392,7 +392,6 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, targets TargetSet, le
 
 	var result MigrationResult
 	var failures error
-	// one retry window covers the whole call, so a refusal in one namespace cannot multiply the block by the size of the set
 	retry := retryWithin(evictionBudget)
 	for _, namespace := range targets.namespaces {
 		moved, err := migrateNamespace(ctx, kc, namespace, targets.selector, lease, retry)
@@ -450,7 +449,6 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 			}
 		}
 		onBurst = append(onBurst, wc.ref(t.name))
-		// a claimed workload counts even when this pass patched nothing, so a retry still reaches the pods a disruption budget refused
 		if !t.selfRolls() {
 			notSelfRolling = append(notSelfRolling, t.selector)
 		}
@@ -642,7 +640,6 @@ func RestorePlacement(ctx context.Context, kc kubernetes.Interface, targets Targ
 
 	var restored []string
 	var failures error
-	// a namespace whose restore failed must be reached again on the next pass, so no namespace is skipped because another one failed
 	for _, namespace := range targets.namespaces {
 		names, err := restoreNamespace(ctx, kc, namespace, lease)
 		restored = append(restored, names...)
@@ -812,7 +809,6 @@ func leaseNodesAndPods(ctx context.Context, kc kubernetes.Interface, namespace s
 
 func ownedWorkloadSelectors(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]labels.Selector, error) {
 	var owned []labels.Selector
-	// the gate counts what this lease actually moved, which the owner label already names, so the target selector adds nothing here
 	for _, wc := range workloadClients(kc, namespace, labels.Everything()) {
 		targets, err := wc.list(ctx)
 		if err != nil {

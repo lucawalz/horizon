@@ -27,7 +27,7 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 		return r.migrateWorkload(ctx, lease)
 	}
 
-	namespaces, err := workloadNamespaces(lease)
+	namespaces, err := everyWorkloadInNamespaces(lease)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -41,7 +41,7 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 	return ctrl.Result{}, nil
 }
 
-func workloadNamespaces(lease *v1alpha1.CapacityLease) (k8s.TargetSet, error) {
+func everyWorkloadInNamespaces(lease *v1alpha1.CapacityLease) (k8s.TargetSet, error) {
 	namespaces, err := k8s.NewNamespaceSet(lease.Spec.Workload.Namespaces)
 	if err != nil {
 		return k8s.TargetSet{}, fmt.Errorf("read the workload target set of lease %q: %w", lease.Name, err)
@@ -73,7 +73,6 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 		reason, cause := migrationOutcome(result, len(lease.Spec.Workload.Namespaces), migrateErr)
 		return r.failMigration(ctx, lease, reason, cause)
 	}
-	// reporting a move of nothing as done leaves the placement gate false for the life of the lease with nothing naming the cause
 	if len(result.Workloads) == 0 {
 		return r.failMigration(ctx, lease, reasonEmptyTargetSet,
 			errors.New("the workload target set names no deployment or statefulset to move"))
@@ -160,12 +159,11 @@ func migratabilitySummary(warnings []v1alpha1.MigrationWarning, total int) strin
 }
 
 func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
-	// a migration that failed part way still moved workloads, so the list of what moved decides this rather than a condition that is no longer True
+	// what moved decides both whether to restore and where, because a partial migration leaves the condition False and the spec is mutable
 	if lease.Spec.Workload == nil || len(lease.Status.MigratedWorkloads) == 0 {
 		return ctrl.Result{}, nil
 	}
 
-	// the spec is mutable, so only what the lease recorded as moved says which namespaces it still has to put back
 	namespaces, err := migratedNamespaces(lease)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -210,7 +208,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 		return ctrl.Result{}, nil
 	}
 
-	namespaces, err := workloadNamespaces(lease)
+	namespaces, err := everyWorkloadInNamespaces(lease)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
