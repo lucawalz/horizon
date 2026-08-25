@@ -17,7 +17,9 @@ Three consequences followed. `restoreWorkloads` filtered on annotation presence 
 
 Ownership moves onto the marker. The workload keeps `horizon.dev/burst-placement: "true"` as the category and gains `horizon.dev/lease-uid: <uid>` as the identity, the same key the node side already uses, so one identity concept spans nodes and workloads. The value is the UID rather than the lease name because a name can be reused once a lease ends and a UID cannot, which is the reasoning ADR 0031 already records.
 
-Both verbs then compare owners. Migrate patches and claims a workload with no annotation, claims without patching one it already owns, and neither patches nor claims one owned by another lease. Restore restores a workload this lease owns, restores an annotated workload carrying no owner at all, and leaves another lease's workload alone.
+Both verbs then compare owners. Migrate patches and claims a workload with no annotation, claims without patching one it already owns, and neither patches nor claims one owned by another lease. Restore restores a workload this lease owns, and leaves another lease's workload alone.
+
+A marker written before ownership was recorded names no lease, and both verbs treat it as unheld: migrate claims it without patching, and restore restores it. Nothing is taken from another lease, because an unowned marker by definition names no holder, and the alternative leaves a workload pinned to a lease that can no longer restore it.
 
 Eviction inverts from a skip list to a target list: each path evicts the pods of the workloads that the call itself patched or restored and that do not roll themselves. That states the actual intent rather than approximating it, and it confines both paths to the lease's own workloads.
 
@@ -29,6 +31,7 @@ The asymmetry between the two verbs is deliberate and is the fail-safe direction
 
 - Record the owning lease inside the placement annotation's JSON. Rejected. Ownership then cannot be answered by a label selector, and it becomes undecidable when the annotation fails to parse, which is an already-handled error case, forcing a choice between abandoning a workload and restoring one that may belong to someone else.
 - Replace the `horizon.dev/burst-placement` value `"true"` with the lease UID. Rejected. It collapses the category and the identity into one label and loses the ability to ask whether a workload is on burst capacity at all, which is the same conflation ADR 0031 rejected on the node side.
+- Adopt an unowned marker by stamping the owner onto it, so the ambiguous state is retired rather than tolerated. Rejected for now, and worth revisiting only if it starts to matter. An unowned marker can be produced only by a release that predates this decision, and no workload in the cluster carries one, because every lease there has already been released and restore clears all three markers. Tolerating the state costs one branch in each verb; adopting it adds a metadata write on a path that otherwise patches nothing.
 - Leave the markers alone and have each lease consult the other leases it overlaps with. Rejected. It treats the symptom at teardown rather than fixing the marker both verbs key on, and it needs a lease lister keyed by workload namespace that does not exist.
 
 ## Consequences
