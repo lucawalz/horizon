@@ -763,6 +763,31 @@ func TestMigrateNeitherPatchesNorClaimsAnotherLeasesWorkload(t *testing.T) {
 	}
 }
 
+func TestMigrateClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "dep1",
+			Namespace:   testNS,
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
+			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
+		},
+	}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	migrated, err := k8s.Migrate(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if len(migrated) != 1 || migrated[0] != "deployment/dep1" {
+		t.Errorf("migrated = %v, want [deployment/dep1]: no other lease holds a marker that names none", migrated)
+	}
+	if got := patchCount(kc, "deployments", "dep1"); got != 0 {
+		t.Errorf("dep1 patched %d times, which would overwrite the saved placement", got)
+	}
+}
+
 func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
 	dep := &appsv1.Deployment{

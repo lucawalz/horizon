@@ -329,7 +329,8 @@ func migrateWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 	}
 	for _, t := range targets {
 		if _, alreadyMoved := t.annotations[PrePlacementAnnotationKey]; alreadyMoved {
-			if owner, _ := placementOwner(t.labels); owner == lease.UID {
+			// a marker written before ownership was recorded names no lease, so no other lease can be holding it
+			if owner, owned := placementOwner(t.labels); !owned || owner == lease.UID {
 				onBurst = append(onBurst, workloadRef(wc.kind, t.name))
 			}
 			continue
