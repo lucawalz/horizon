@@ -2,11 +2,16 @@ package web
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -15,6 +20,8 @@ import (
 )
 
 const providerConfigsEndpoint = "/api/providerconfigs"
+
+func configEndpoint(name string) string { return providerConfigsEndpoint + "/" + name }
 
 func configRequestFixture(name string) providerConfigCreateRequest {
 	return providerConfigCreateRequest{
@@ -35,16 +42,6 @@ func configRequestFixture(name string) providerConfigCreateRequest {
 			MaxLifetimeSeconds:   seconds(8 * time.Hour),
 		},
 	}
-}
-
-func removeConfigAfterTest(t *testing.T, name string) {
-	t.Helper()
-	t.Cleanup(func() {
-		config := &v1alpha1.ProviderConfig{ObjectMeta: metav1.ObjectMeta{Name: name}}
-		if err := testEnv.Client.Delete(context.Background(), config); err != nil && !apierrors.IsNotFound(err) {
-			t.Errorf("delete provider config %s: %v", name, err)
-		}
-	})
 }
 
 func readConfig(t *testing.T, name string) *v1alpha1.ProviderConfig {
@@ -298,5 +295,219 @@ func TestProviderConfigCreateSummarisesWhyTheConfigIsUnready(t *testing.T) {
 	}
 	if message := present(t, "message", summary.Message); !strings.Contains(message, "horizon-hetzner") {
 		t.Errorf("message = %q, want it to name the secret that could not be resolved", message)
+	}
+}
+
+func referencedConfigFixture(name string) *v1alpha1.ProviderConfig {
+	config := providerConfigFixture(name)
+	config.Spec.Hetzner.NodeCredentialSecretRef = ptr(secretRef("horizon-hetzner-node", "ssh-key"))
+	config.Spec.Hetzner.JoinTokenSecretRef = ptr(secretRef("horizon-join-token", "token"))
+	config.Spec.Hetzner.SSHKeys = []string{"workstation"}
+	config.Spec.Hetzner.Firewalls = []string{"burst"}
+	return config
+}
+
+func createSecret(t *testing.T, name, key, value string) {
+	t.Helper()
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: metav1.NamespaceDefault},
+		StringData: map[string]string{key: value},
+	}
+	if err := testEnv.Client.Create(t.Context(), secret); err != nil {
+		t.Fatalf("create secret %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		if err := testEnv.Client.Delete(context.Background(), secret); err != nil && !apierrors.IsNotFound(err) {
+			t.Errorf("delete secret %s: %v", name, err)
+		}
+	})
+}
+
+func TestProviderConfigDetailRendersTheSpecAndItsConditions(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "detail-hetzner"
+	config := createConfig(t, referencedConfigFixture(name))
+	config.Status.Conditions = []metav1.Condition{{
+		Type:               v1alpha1.ConditionReady,
+		Status:             metav1.ConditionFalse,
+		Reason:             "SecretUnresolved",
+		Message:            `secret "horizon-join-token" not found`,
+		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: config.Generation,
+	}}
+	if err := testEnv.Client.Status().Update(t.Context(), config); err != nil {
+		t.Fatalf("set the status of provider config %s: %v", name, err)
+	}
+
+	response := get(t, newTestServer(t, testEnv.Client, AbsentCatalogue()), configEndpoint(name))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusOK, response.Body)
+	}
+
+	detail := decodeBody[providerConfigDetailResponse](t, response)
+	if detail.Summary.Name != name {
+		t.Errorf("summary.name = %q, want %q", detail.Summary.Name, name)
+	}
+	if detail.Summary.Type != v1alpha1.ProviderTypeHetzner {
+		t.Errorf("summary.type = %q, want %q", detail.Summary.Type, v1alpha1.ProviderTypeHetzner)
+	}
+
+	hetzner := present(t, "hetzner", detail.Hetzner)
+	if hetzner.CredentialsSecretRef.Name != "horizon-hetzner" || hetzner.CredentialsSecretRef.Key != "token" {
+		t.Errorf("credentialsSecretRef = %+v, want the name and key the spec carries", hetzner.CredentialsSecretRef)
+	}
+	if node := present(t, "nodeCredentialSecretRef", hetzner.NodeCredentialSecretRef); node.Key != "ssh-key" {
+		t.Errorf("nodeCredentialSecretRef key = %q, want %q", node.Key, "ssh-key")
+	}
+	if image := present(t, "image", hetzner.Image); present(t, "image.name", image.Name) != "ubuntu-24.04" {
+		t.Errorf("image = %+v, want it named ubuntu-24.04", image)
+	}
+
+	if detail.Watchdog.MaxLifetimeSeconds != seconds(8*time.Hour) {
+		t.Errorf("maxLifetimeSeconds = %d, want %d", detail.Watchdog.MaxLifetimeSeconds, seconds(8*time.Hour))
+	}
+
+	ready := conditionEntryNamed(detail.Conditions, v1alpha1.ConditionReady)
+	if ready == nil {
+		t.Fatalf("the conditions omit %q", v1alpha1.ConditionReady)
+	}
+	if reason := present(t, "reason", ready.Reason); reason != "SecretUnresolved" {
+		t.Errorf("reason = %q, want %q", reason, "SecretUnresolved")
+	}
+	if message := present(t, "message", ready.Message); !strings.Contains(message, "horizon-join-token") {
+		t.Errorf("message = %q, want it to name the secret that could not be resolved", message)
+	}
+}
+
+// the reference tells a missing secret apart from a misnamed one, and reading the secret itself would put a credential in a browser
+func TestProviderConfigDetailNeverCarriesTheContentsOfAReferencedSecret(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "referenced-hetzner"
+	const token = "a-token-no-response-may-repeat"
+	createSecret(t, "horizon-hetzner", "token", token)
+	createConfig(t, referencedConfigFixture(name))
+
+	response := get(t, newTestServer(t, testEnv.Client, AbsentCatalogue()), configEndpoint(name))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusOK, response.Body)
+	}
+	if body := response.Body.String(); strings.Contains(body, token) {
+		t.Errorf("the detail carries the contents of the referenced secret: %s", body)
+	}
+}
+
+func TestProviderConfigDetailQuotesEverySecretByNameAndKeyAlone(t *testing.T) {
+	encoded, err := json.Marshal(newProviderConfigDetailResponse(referencedConfigFixture("quoted-hetzner"), time.Now()))
+	if err != nil {
+		t.Fatalf("marshal the detail: %v", err)
+	}
+
+	var decoded struct {
+		Hetzner map[string]json.RawMessage `json:"hetzner"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("decode the detail: %v", err)
+	}
+
+	for _, field := range []string{
+		"credentialsSecretRef",
+		"nodeCredentialSecretRef",
+		"joinTokenSecretRef",
+		"cloudInitSecretRef",
+	} {
+		raw, carried := decoded.Hetzner[field]
+		if !carried {
+			t.Errorf("the detail omits %s", field)
+			continue
+		}
+		var reference map[string]any
+		if err := json.Unmarshal(raw, &reference); err != nil {
+			t.Fatalf("decode %s: %v", field, err)
+		}
+		if fields := slices.Sorted(maps.Keys(reference)); !slices.Equal(fields, []string{"key", "name"}) {
+			t.Errorf("%s carries %v, want the name and the key alone", field, fields)
+		}
+	}
+}
+
+func TestProviderConfigDetailReportsAnUnreferencedOptionalSecret(t *testing.T) {
+	config := providerConfigFixture("sparse-hetzner")
+
+	detail := newProviderConfigDetailResponse(config, time.Now())
+
+	hetzner := present(t, "hetzner", detail.Hetzner)
+	if hetzner.NodeCredentialSecretRef != nil {
+		t.Errorf("nodeCredentialSecretRef = %+v, want null", *hetzner.NodeCredentialSecretRef)
+	}
+	if hetzner.JoinTokenSecretRef != nil {
+		t.Errorf("joinTokenSecretRef = %+v, want null", *hetzner.JoinTokenSecretRef)
+	}
+	if hetzner.SSHKeys == nil || len(hetzner.SSHKeys) != 0 {
+		t.Errorf("sshKeys = %v, want an empty list rather than null", hetzner.SSHKeys)
+	}
+	if hetzner.Firewalls == nil || len(hetzner.Firewalls) != 0 {
+		t.Errorf("firewalls = %v, want an empty list rather than null", hetzner.Firewalls)
+	}
+}
+
+// a published catalogue runs to hundreds of entries, so the detail tallies it and the machines route lists it
+func TestProviderConfigDetailTalliesThePublishedCatalogueByRegion(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	config := providerConfigFixture("stocked-hetzner")
+	config.Status.InstanceTypes = []v1alpha1.InstanceType{
+		publishedType("cx22", "nbg1"),
+		publishedType("cx32", "nbg1"),
+		publishedType("cx22", "fsn1"),
+	}
+	config.Status.CatalogueRefreshedAt = &metav1.Time{Time: now.Add(-time.Minute)}
+
+	catalogue := newProviderConfigDetailResponse(config, now).Catalogue
+
+	if catalogue.Types != 3 {
+		t.Errorf("types = %d, want 3", catalogue.Types)
+	}
+	want := []catalogueRegion{{Region: "fsn1", Types: 1}, {Region: "nbg1", Types: 2}}
+	if !slices.Equal(catalogue.Regions, want) {
+		t.Errorf("regions = %+v, want %+v in name order", catalogue.Regions, want)
+	}
+	if refreshed := present(t, "refreshedAt", catalogue.RefreshedAt); refreshed != rfc3339(now.Add(-time.Minute)) {
+		t.Errorf("refreshedAt = %q, want %q", refreshed, rfc3339(now.Add(-time.Minute)))
+	}
+}
+
+func TestProviderConfigDetailReportsAnUnpublishedCatalogue(t *testing.T) {
+	catalogue := newProviderConfigDetailResponse(providerConfigFixture("fresh-hetzner"), time.Now()).Catalogue
+
+	if catalogue.Types != 0 {
+		t.Errorf("types = %d, want none", catalogue.Types)
+	}
+	if catalogue.Regions == nil || len(catalogue.Regions) != 0 {
+		t.Errorf("regions = %v, want an empty list rather than null", catalogue.Regions)
+	}
+	if catalogue.RefreshedAt != nil {
+		t.Errorf("refreshedAt = %q, want null", *catalogue.RefreshedAt)
+	}
+}
+
+func TestProviderConfigDetailReportsAMissingConfig(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	response := get(t, newTestServer(t, testEnv.Client, AbsentCatalogue()), configEndpoint("absent-hetzner"))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusNotFound, response.Body)
+	}
+	if detail := decodeBody[apiError](t, response).Detail; !strings.Contains(detail, "absent-hetzner") {
+		t.Errorf("detail = %q, want the missing config named", detail)
+	}
+}
+
+func TestProviderConfigDetailReportsAClusterFailure(t *testing.T) {
+	server := newTestServer(t, failingReader{err: errors.New("the api server is unreachable")}, AbsentCatalogue())
+
+	response := get(t, server, configEndpoint("unreadable-hetzner"))
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusBadGateway, response.Body)
 	}
 }

@@ -167,9 +167,8 @@ func secretRef(name, key string) corev1.SecretKeySelector {
 	}
 }
 
-func createProviderConfig(t *testing.T, name string) *v1alpha1.ProviderConfig {
-	t.Helper()
-	config := &v1alpha1.ProviderConfig{
+func providerConfigFixture(name string) *v1alpha1.ProviderConfig {
+	return &v1alpha1.ProviderConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: v1alpha1.ProviderConfigSpec{
 			Type: v1alpha1.ProviderTypeHetzner,
@@ -185,13 +184,28 @@ func createProviderConfig(t *testing.T, name string) *v1alpha1.ProviderConfig {
 			},
 		},
 	}
-	if err := testEnv.Client.Create(t.Context(), config); err != nil {
-		t.Fatalf("create provider config %s: %v", name, err)
-	}
+}
+
+func removeConfigAfterTest(t *testing.T, name string) {
+	t.Helper()
 	t.Cleanup(func() {
-		if err := testEnv.Client.Delete(context.Background(), config); err != nil {
+		config := &v1alpha1.ProviderConfig{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		if err := testEnv.Client.Delete(context.Background(), config); err != nil && !apierrors.IsNotFound(err) {
 			t.Errorf("delete provider config %s: %v", name, err)
 		}
 	})
+}
+
+func createConfig(t *testing.T, config *v1alpha1.ProviderConfig) *v1alpha1.ProviderConfig {
+	t.Helper()
+	if err := testEnv.Client.Create(t.Context(), config); err != nil {
+		t.Fatalf("create provider config %s: %v", config.Name, err)
+	}
+	removeConfigAfterTest(t, config.Name)
 	return config
+}
+
+func createProviderConfig(t *testing.T, name string) *v1alpha1.ProviderConfig {
+	t.Helper()
+	return createConfig(t, providerConfigFixture(name))
 }

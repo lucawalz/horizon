@@ -189,7 +189,7 @@ func refusedByCluster(w http.ResponseWriter, r *http.Request, err error) bool {
 
 func writeClusterRefusal(w http.ResponseWriter, r *http.Request, err error, name, fallback string) {
 	if apierrors.IsNotFound(err) {
-		writeLeaseNotFound(w, name)
+		writeNotFound(w, leaseKind, name)
 		return
 	}
 	if refusedByCluster(w, r, err) {
@@ -236,7 +236,7 @@ func (s *Server) leaseRelease(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.PathValue("name")
-	if refusedAsAnInvalidName(w, name) {
+	if refusedAsAnInvalidName(w, leaseKind, name) {
 		return
 	}
 

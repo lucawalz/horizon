@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +16,7 @@ import (
 )
 
 const (
+	providerConfigKind = "provider config"
 	unreadableConfig   = "the request body is not a provider config this interface can submit"
 	configCreateFailed = "the provider config could not be created in the cluster"
 )
@@ -123,6 +126,140 @@ func (r providerConfigCreateRequest) config() (*v1alpha1.ProviderConfig, error) 
 			Watchdog: watchdog,
 		},
 	}, nil
+}
+
+// a reference tells a missing secret apart from a misnamed one, and resolving it would put a credential in a browser
+type secretKeyReference struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
+type imageSelection struct {
+	Name     *string           `json:"name"`
+	ID       *int64            `json:"id"`
+	Selector map[string]string `json:"selector"`
+}
+
+type hetznerProviderDetail struct {
+	CredentialsSecretRef    secretKeyReference  `json:"credentialsSecretRef"`
+	NodeCredentialSecretRef *secretKeyReference `json:"nodeCredentialSecretRef"`
+	JoinTokenSecretRef      *secretKeyReference `json:"joinTokenSecretRef"`
+	CloudInitSecretRef      secretKeyReference  `json:"cloudInitSecretRef"`
+	Image                   *imageSelection     `json:"image"`
+	ImageSelector           map[string]string   `json:"imageSelector"`
+	SSHKeys                 []string            `json:"sshKeys"`
+	Firewalls               []string            `json:"firewalls"`
+}
+
+type watchdogDetail struct {
+	RenewIntervalSeconds int64 `json:"renewIntervalSeconds"`
+	SlackSeconds         int64 `json:"slackSeconds"`
+	MaxLifetimeSeconds   int64 `json:"maxLifetimeSeconds"`
+}
+
+type catalogueRegion struct {
+	Region string `json:"region"`
+	Types  int    `json:"types"`
+}
+
+// a published catalogue runs to hundreds of entries, so it is tallied here and listed by the machines route
+type publishedCatalogue struct {
+	Types       int               `json:"types"`
+	Regions     []catalogueRegion `json:"regions"`
+	RefreshedAt *string           `json:"refreshedAt"`
+}
+
+type providerConfigDetailResponse struct {
+	Summary    providerConfigSummary  `json:"summary"`
+	Hetzner    *hetznerProviderDetail `json:"hetzner"`
+	Watchdog   watchdogDetail         `json:"watchdog"`
+	Catalogue  publishedCatalogue     `json:"catalogue"`
+	Conditions []conditionEntry       `json:"conditions"`
+	ObservedAt string                 `json:"observedAt"`
+}
+
+func newSecretKeyReference(selector corev1.SecretKeySelector) secretKeyReference {
+	return secretKeyReference{Name: selector.Name, Key: selector.Key}
+}
+
+func newOptionalSecretKeyReference(selector *corev1.SecretKeySelector) *secretKeyReference {
+	if selector == nil {
+		return nil
+	}
+	return ptr(newSecretKeyReference(*selector))
+}
+
+func newImageSelection(image *v1alpha1.ImageSpec) *imageSelection {
+	if image == nil {
+		return nil
+	}
+	selection := imageSelection{Name: nullable(image.Name), Selector: image.Selector}
+	if image.ID != 0 {
+		selection.ID = ptr(image.ID)
+	}
+	return &selection
+}
+
+func newHetznerProviderDetail(spec *v1alpha1.HetznerProviderSpec) *hetznerProviderDetail {
+	if spec == nil {
+		return nil
+	}
+	return &hetznerProviderDetail{
+		CredentialsSecretRef:    newSecretKeyReference(spec.CredentialsSecretRef),
+		NodeCredentialSecretRef: newOptionalSecretKeyReference(spec.NodeCredentialSecretRef),
+		JoinTokenSecretRef:      newOptionalSecretKeyReference(spec.JoinTokenSecretRef),
+		CloudInitSecretRef:      newSecretKeyReference(spec.CloudInitSecretRef),
+		Image:                   newImageSelection(spec.Image),
+		ImageSelector:           spec.ImageSelector,
+		SSHKeys:                 orEmpty(spec.SSHKeys),
+		Firewalls:               orEmpty(spec.Firewalls),
+	}
+}
+
+func newWatchdogDetail(policy v1alpha1.WatchdogPolicy) watchdogDetail {
+	return watchdogDetail{
+		RenewIntervalSeconds: seconds(policy.RenewInterval.Duration),
+		SlackSeconds:         seconds(policy.Slack.Duration),
+		MaxLifetimeSeconds:   seconds(policy.MaxLifetime.Duration),
+	}
+}
+
+func newPublishedCatalogue(status v1alpha1.ProviderConfigStatus) publishedCatalogue {
+	offered := map[string]int{}
+	for _, published := range status.InstanceTypes {
+		offered[published.Region]++
+	}
+
+	regions := make([]catalogueRegion, 0, len(offered))
+	for region, types := range offered {
+		regions = append(regions, catalogueRegion{Region: region, Types: types})
+	}
+	slices.SortFunc(regions, func(a, b catalogueRegion) int { return strings.Compare(a.Region, b.Region) })
+
+	return publishedCatalogue{
+		Types:       len(status.InstanceTypes),
+		Regions:     regions,
+		RefreshedAt: instant(status.CatalogueRefreshedAt),
+	}
+}
+
+func newProviderConfigDetailResponse(config *v1alpha1.ProviderConfig, now time.Time) providerConfigDetailResponse {
+	return providerConfigDetailResponse{
+		Summary:    newProviderConfigSummary(config),
+		Hetzner:    newHetznerProviderDetail(config.Spec.Hetzner),
+		Watchdog:   newWatchdogDetail(config.Spec.Watchdog),
+		Catalogue:  newPublishedCatalogue(config.Status),
+		Conditions: newConditionEntries(config.Status.Conditions),
+		ObservedAt: rfc3339(now),
+	}
+}
+
+func (s *Server) providerConfigDetail(w http.ResponseWriter, r *http.Request) {
+	var config v1alpha1.ProviderConfig
+	if !s.objectNamed(w, r, providerConfigKind, r.PathValue("name"), &config, configReadFailed) {
+		return
+	}
+	writeJSON(w, http.StatusOK, newProviderConfigDetailResponse(&config, time.Now()))
 }
 
 // the form names the secrets it references and creates none, so nothing here reaches the namespace holding the controller's own credentials

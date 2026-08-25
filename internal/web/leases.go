@@ -1,21 +1,19 @@
 package web
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 )
 
-const leaseReadFailed = "the capacity leases could not be read from the cluster"
+const (
+	leaseKind       = "capacity lease"
+	leaseReadFailed = "the capacity leases could not be read from the cluster"
+)
 
 type leaseSummary struct {
 	Name         string                  `json:"name"`
@@ -275,22 +273,6 @@ func workloadBurstReplicas(ref *v1alpha1.WorkloadRef) *int32 {
 	return ref.BurstReplicas
 }
 
-// a name the apiserver could never carry is refused here, since client-go rejects it locally and the failure is the request's rather than the cluster's
-func refusedAsAnInvalidName(w http.ResponseWriter, name string) bool {
-	violations := apivalidation.NameIsDNSSubdomain(name, false)
-	if len(violations) == 0 {
-		return false
-	}
-	writeAPIError(w, http.StatusBadRequest,
-		fmt.Sprintf("%q cannot name a capacity lease: %s", name, strings.Join(violations, "; ")))
-	return true
-}
-
-func writeLeaseNotFound(w http.ResponseWriter, name string) {
-	writeAPIError(w, http.StatusNotFound,
-		fmt.Sprintf("no capacity lease named %q exists in the cluster", name))
-}
-
 func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
 	reader, held := requestClient(w, r, s.readers)
 	if !held {
@@ -310,26 +292,8 @@ func (s *Server) leaseList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) leaseNamed(w http.ResponseWriter, r *http.Request, name string) (*v1alpha1.CapacityLease, bool) {
-	if refusedAsAnInvalidName(w, name) {
-		return nil, false
-	}
-
-	reader, held := requestClient(w, r, s.readers)
-	if !held {
-		return nil, false
-	}
-
 	var lease v1alpha1.CapacityLease
-	if err := reader.Get(r.Context(), client.ObjectKey{Name: name}, &lease); err != nil {
-		if apierrors.IsNotFound(err) {
-			writeLeaseNotFound(w, name)
-			return nil, false
-		}
-		if refusedByAuthorisation(w, r, err) {
-			return nil, false
-		}
-		slog.Error("read the capacity lease", "lease", name, "error", err)
-		writeAPIError(w, http.StatusBadGateway, leaseReadFailed)
+	if !s.objectNamed(w, r, leaseKind, name, &lease, leaseReadFailed) {
 		return nil, false
 	}
 	return &lease, true

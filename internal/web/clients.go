@@ -3,10 +3,13 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -135,6 +138,49 @@ func requestClient[T any](w http.ResponseWriter, r *http.Request, from source[T]
 	}
 	var none T
 	return none, false
+}
+
+// a name the apiserver could never carry is refused here, since client-go rejects it locally and the failure is the request's rather than the cluster's
+func refusedAsAnInvalidName(w http.ResponseWriter, kind, name string) bool {
+	violations := apivalidation.NameIsDNSSubdomain(name, false)
+	if len(violations) == 0 {
+		return false
+	}
+	writeAPIError(w, http.StatusBadRequest,
+		fmt.Sprintf("%q cannot name a %s: %s", name, kind, strings.Join(violations, "; ")))
+	return true
+}
+
+func writeNotFound(w http.ResponseWriter, kind, name string) {
+	writeAPIError(w, http.StatusNotFound,
+		fmt.Sprintf("no %s named %q exists in the cluster", kind, name))
+}
+
+func (s *Server) objectNamed(
+	w http.ResponseWriter, r *http.Request, kind, name string, into client.Object, readFailed string,
+) bool {
+	if refusedAsAnInvalidName(w, kind, name) {
+		return false
+	}
+
+	reader, held := requestClient(w, r, s.readers)
+	if !held {
+		return false
+	}
+
+	if err := reader.Get(r.Context(), client.ObjectKey{Name: name}, into); err != nil {
+		if apierrors.IsNotFound(err) {
+			writeNotFound(w, kind, name)
+			return false
+		}
+		if refusedByAuthorisation(w, r, err) {
+			return false
+		}
+		slog.Error("read the "+kind, "name", name, "error", err)
+		writeAPIError(w, http.StatusBadGateway, readFailed)
+		return false
+	}
+	return true
 }
 
 // the adopter's RBAC decides what an impersonated caller may do, so a denial reads as an authorisation failure rather than a fault
