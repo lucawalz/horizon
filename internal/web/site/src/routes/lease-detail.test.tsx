@@ -72,12 +72,29 @@ const migrationCopy: [string, string][] = [
   ['RecreateStrategy', 'every replica stops before a replacement starts'],
   ['NoSurgeCapacity', 'maxSurge leaves no room for a replacement pod'],
   ['NodeSelectorPinned', 'the node selector is cleared for the duration of the lease'],
+  ['HeldByAnotherLease', 'another lease holds this workload, so this lease leaves it where it is'],
 ]
 
-const everyReason: MigrationWarning[] = migrationCopy.map(([reason], index) => ({
-  workload: `batch/worker-${index}`,
-  reasons: [reason],
-}))
+const replicationCopy: [string, string][] = [
+  [
+    'TargetedByAutoscaler',
+    'move mode changes no replica count, so it bursts this workload without fighting the autoscaler',
+  ],
+  [
+    'StatefulSetNotCopyable',
+    'move mode bursts a StatefulSet as it stands',
+  ],
+  [
+    'DisruptionBudgetSpansCopy',
+    'so its accounting is wrong for the life of the lease',
+  ],
+]
+
+function warningsFor(copy: [string, string][]): MigrationWarning[] {
+  return copy.map(([reason], index) => ({ workload: `batch/worker-${index}`, reasons: [reason] }))
+}
+
+const everyReason = warningsFor(migrationCopy)
 
 function pillLabelled(container: HTMLElement, label: string): HTMLElement {
   const found = [...container.querySelectorAll<HTMLElement>('[data-severity]')].find(
@@ -334,6 +351,27 @@ describe('the lease detail', () => {
     const panel = pillLabelled(view.container, migrationCopy[0][0]).closest('section')
     expect(panel?.querySelector('[data-severity="danger"]')).toBeNull()
     expect(panel?.textContent).toContain('still moves onto the leased nodes')
+
+    await view.unmount()
+  })
+
+  // a reason that only reports the refusal leaves nothing to do about it, and move mode is what bursts these workloads
+  it('signposts move mode on every workload a copy would break', async () => {
+    stubLease(
+      leaseDetailBody({
+        workloadMode: 'replicate',
+        workloadBurstReplicas: 2,
+        migrationWarnings: warningsFor(replicationCopy),
+      }),
+    )
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    const shown = view.container.textContent ?? ''
+    for (const [reason, copy] of replicationCopy) {
+      expect(pillLabelled(view.container, reason).dataset.severity).toBe('attention')
+      expect(shown).toContain(copy)
+    }
+    expect(shown).not.toContain('no wording for')
 
     await view.unmount()
   })

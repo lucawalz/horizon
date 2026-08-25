@@ -753,6 +753,13 @@ const migrationReasons: Record<string, string> = {
   RecreateStrategy: 'every replica stops before a replacement starts',
   NoSurgeCapacity: 'maxSurge leaves no room for a replacement pod',
   NodeSelectorPinned: 'the node selector is cleared for the duration of the lease',
+  HeldByAnotherLease: 'another lease holds this workload, so this lease leaves it where it is',
+  TargetedByAutoscaler:
+    'a HorizontalPodAutoscaler targets it and would read the copy as over-provisioning and scale the original down; move mode changes no replica count, so it bursts this workload without fighting the autoscaler',
+  StatefulSetNotCopyable:
+    'a copy would mint empty volumes rather than carry the data the workload holds; move mode bursts a StatefulSet as it stands',
+  DisruptionBudgetSpansCopy:
+    'a PodDisruptionBudget on the original selects the copy pods as well, so its accounting is wrong for the life of the lease',
 }
 
 // a newer controller can classify a shape this bundle predates, and dropping its reason would hide the warning entirely
