@@ -29,6 +29,7 @@ import (
 const (
 	CapacityLeaseControllerName = "capacitylease"
 	capacityLeaseFinalizer      = "horizon.dev/capacity-lease"
+	capacityLeaseKind           = "CapacityLease"
 
 	LeaseNameLabelKey = "horizon.dev/lease"
 	LeaseUIDLabelKey  = provider.LeaseUIDLabelKey
@@ -54,6 +55,14 @@ const (
 	reasonPartialMigration    = "PartialMigration"
 	reasonSeamlessMigration   = "SeamlessMigration"
 	reasonDisruptiveMigration = "DisruptiveMigration"
+
+	reasonReplicated           = "Replicated"
+	reasonReplicateFailed      = "ReplicateFailed"
+	reasonPartialReplication   = "PartialReplication"
+	reasonNoMatchingWorkloads  = "NoMatchingWorkloads"
+	reasonEveryWorkloadSkipped = "EveryWorkloadSkipped"
+	reasonCopiesDeleted        = "BurstCopiesDeleted"
+	reasonCopyDeleteFailed     = "BurstCopyDeleteFailed"
 
 	reasonClassificationFailed = "ClassificationFailed"
 	reasonPlacementRestored    = "PlacementRestored"

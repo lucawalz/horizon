@@ -11,6 +11,7 @@ const (
 	ConditionWatchdogArmed      = "WatchdogArmed"
 	ConditionWorkloadMigratable = "WorkloadMigratable"
 	ConditionWorkloadMigrated   = "WorkloadMigrated"
+	ConditionWorkloadReplicable = "WorkloadReplicable"
 	ConditionExpiryClamped      = "ExpiryClamped"
 	ConditionExpired            = "Expired"
 	ConditionReleased           = "Released"

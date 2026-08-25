@@ -11,7 +11,9 @@ import (
 
 	"github.com/go-logr/logr/funcr"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,6 +29,7 @@ import (
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/catalogue"
+	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider"
 	"github.com/lucawalz/horizon/internal/provider/fake"
 )
@@ -499,6 +502,7 @@ func (h *harness) seedWorkload(mutators ...func(*appsv1.Deployment)) {
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}},
 			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "api"}},
 				Spec: corev1.PodSpec{
 					Tolerations: []corev1.Toleration{{Key: "existing", Operator: corev1.TolerationOpExists}},
 				},
@@ -515,6 +519,57 @@ func (h *harness) seedWorkload(mutators ...func(*appsv1.Deployment)) {
 }
 
 func int32Ptr(value int32) *int32 { return &value }
+
+func (h *harness) seedAutoscalerFor(name string) {
+	h.t.Helper()
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testWorkloadNS},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				Kind:       "Deployment",
+				Name:       name,
+				APIVersion: "apps/v1",
+			},
+		},
+	}
+	if _, err := h.kube.AutoscalingV2().HorizontalPodAutoscalers(testWorkloadNS).Create(h.t.Context(), hpa, metav1.CreateOptions{}); err != nil {
+		h.t.Fatalf("create horizontalpodautoscaler %q: %v", name, err)
+	}
+}
+
+func (h *harness) seedDisruptionBudgetFor(app string) {
+	h.t.Helper()
+	budget := &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Name: app, Namespace: testWorkloadNS},
+		Spec: policyv1.PodDisruptionBudgetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
+		},
+	}
+	if _, err := h.kube.PolicyV1().PodDisruptionBudgets(testWorkloadNS).Create(h.t.Context(), budget, metav1.CreateOptions{}); err != nil {
+		h.t.Fatalf("create poddisruptionbudget %q: %v", app, err)
+	}
+}
+
+func (h *harness) burstCopiesIn(namespace string) []appsv1.Deployment {
+	h.t.Helper()
+	list, err := h.kube.AppsV1().Deployments(namespace).List(h.t.Context(), metav1.ListOptions{
+		LabelSelector: k8s.BurstCopyLabelKey,
+	})
+	if err != nil {
+		h.t.Fatalf("list burst copies in %q: %v", namespace, err)
+	}
+	return list.Items
+}
+
+func replicating(replicas int32, namespaces ...string) func(*v1alpha1.CapacityLease) {
+	return func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{
+			Namespaces:    namespaces,
+			Mode:          v1alpha1.WorkloadModeReplicate,
+			BurstReplicas: int32Ptr(replicas),
+		}
+	}
+}
 
 func (h *harness) seedWorkloadIn(namespace, name string) {
 	h.t.Helper()

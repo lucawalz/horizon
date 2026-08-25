@@ -11,7 +11,9 @@ import (
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
@@ -287,6 +289,123 @@ func TestReplicateDoesNotCopyABurstCopy(t *testing.T) {
 
 	if got := len(burstCopiesIn(t, kc, testNS)); got != 2 {
 		t.Errorf("the namespace holds %d burst copies, want one per lease and none of a copy", got)
+	}
+}
+
+func autoscalerFor(deployment string) *autoscalingv2.HorizontalPodAutoscaler {
+	return &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{Name: deployment, Namespace: testNS},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				Kind:       "Deployment",
+				Name:       deployment,
+				APIVersion: "apps/v1",
+			},
+		},
+	}
+}
+
+func budgetFor(app string) *policyv1.PodDisruptionBudget {
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Name: app, Namespace: testNS},
+		Spec:       policyv1.PodDisruptionBudgetSpec{Selector: appSelector(app)},
+	}
+}
+
+func warningReasons(warnings []k8s.WorkloadWarning, workload string) []string {
+	for _, warning := range warnings {
+		if warning.Workload == workload {
+			return warning.Reasons
+		}
+	}
+	return nil
+}
+
+func TestReplicateSkipsAnAutoscaledWorkloadAndSignpostsMoveMode(t *testing.T) {
+	original := originalDeployment()
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), original, autoscalerFor(original.Name))
+
+	result, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	if got := len(burstCopiesIn(t, kc, testNS)); got != 0 {
+		t.Errorf("an autoscaled workload was copied %d times, and the copy is what scales the original down", got)
+	}
+	if len(result.Copies) != 0 {
+		t.Errorf("Replicate reports copies %v for a workload it must not copy", result.Copies)
+	}
+	reasons := warningReasons(result.Skipped, testNS+"/deployment/"+original.Name)
+	if !slices.Equal(reasons, []string{k8s.ReasonAutoscalerTargeted}) {
+		t.Fatalf("the skip reports reasons %v, want [%s]", reasons, k8s.ReasonAutoscalerTargeted)
+	}
+	if text := k8s.ReplicationReasonText(k8s.ReasonAutoscalerTargeted); !strings.Contains(text, "move mode") {
+		t.Errorf("the autoscaler skip reads %q, want it to name move mode as the way to burst the workload", text)
+	}
+}
+
+func TestReplicateSkipsAStatefulSet(t *testing.T) {
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), plainStatefulSet("db"), originalDeployment())
+
+	result, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	reasons := warningReasons(result.Skipped, testNS+"/statefulset/db")
+	if !slices.Equal(reasons, []string{k8s.ReasonStatefulSetCopy}) {
+		t.Errorf("the skip reports reasons %v, want [%s]", reasons, k8s.ReasonStatefulSetCopy)
+	}
+	if got := len(burstCopiesIn(t, kc, testNS)); got != 1 {
+		t.Errorf("the namespace holds %d burst copies, want only the deployment's", got)
+	}
+	if result.Matched() != 2 {
+		t.Errorf("Replicate matched %d workloads, want the deployment and the statefulset", result.Matched())
+	}
+}
+
+func TestReplicateWarnsWhenADisruptionBudgetSpansTheCopy(t *testing.T) {
+	original := originalDeployment()
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), original, budgetFor("api"))
+
+	result, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	reasons := warningReasons(result.Warnings, testNS+"/deployment/"+original.Name)
+	if !slices.Equal(reasons, []string{k8s.ReasonBudgetSpansCopy}) {
+		t.Errorf("the warning reports reasons %v, want [%s]", reasons, k8s.ReasonBudgetSpansCopy)
+	}
+	if got := len(burstCopiesIn(t, kc, testNS)); got != 1 {
+		t.Errorf("the namespace holds %d burst copies, want the warning not to have stopped the copy", got)
+	}
+	if len(result.Skipped) != 0 {
+		t.Errorf("a disruption budget skipped %v rather than warning about it", result.Skipped)
+	}
+}
+
+func TestReplicateCopiesTheNeighboursOfASkippedWorkload(t *testing.T) {
+	autoscaled := originalDeployment()
+	neighbour := originalDeployment(func(d *appsv1.Deployment) {
+		d.Name = "worker"
+		d.Spec.Selector = appSelector("worker")
+		d.Spec.Template.Labels = map[string]string{"app": "worker"}
+	})
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), autoscaled, neighbour, autoscalerFor(autoscaled.Name))
+
+	result, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+
+	copies := burstCopiesIn(t, kc, testNS)
+	if len(copies) != 1 || !strings.HasPrefix(copies[0].Name, neighbour.Name) {
+		t.Errorf("the namespace holds %d burst copies, want one of %q alone", len(copies), neighbour.Name)
+	}
+	if len(result.Skipped) != 1 || len(result.Copies) != 1 {
+		t.Errorf("Replicate skipped %v and copied %v, want one of each", result.Skipped, result.Copies)
 	}
 }
 

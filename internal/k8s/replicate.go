@@ -12,18 +12,37 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 )
 
 const (
 	BurstCopyLabelKey = "horizon.dev/burst-copy"
 
+	ReasonAutoscalerTargeted = "TargetedByAutoscaler"
+	ReasonStatefulSetCopy    = "StatefulSetNotCopyable"
+	ReasonBudgetSpansCopy    = "DisruptionBudgetSpansCopy"
+
 	opReplicate         = "replicate"
 	burstCopyInfix      = "-burst-"
 	burstCopyHashLength = 8
 	maxObjectNameLength = 253
 	minBurstReplicas    = 1
+	deploymentKind      = "Deployment"
 )
+
+var replicationReasons = map[string]string{
+	ReasonAutoscalerTargeted: "a HorizontalPodAutoscaler targets it, and it would read the copy's pods as the workload being over-provisioned and scale the original down; move mode changes no replica count, so it bursts this workload without fighting the autoscaler",
+	ReasonStatefulSetCopy:    "a copy of a StatefulSet mints empty volumes rather than carrying the data the workload holds; move mode bursts this workload as it stands",
+	ReasonBudgetSpansCopy:    "its PodDisruptionBudget selects the copy's pods as well, so the budget counts pods it was not written for until the lease ends",
+}
+
+func ReplicationReasonText(reason string) string {
+	if text, named := replicationReasons[reason]; named {
+		return text
+	}
+	return reason
+}
 
 type Replication struct {
 	Lease    LeaseIdentity
@@ -44,9 +63,20 @@ func (r Replication) validate() error {
 	return nil
 }
 
+type WorkloadWarning struct {
+	Workload string
+	Reasons  []string
+}
+
 type ReplicationResult struct {
 	Copies               []string
 	ReplicatedNamespaces []string
+	Skipped              []WorkloadWarning
+	Warnings             []WorkloadWarning
+}
+
+func (r ReplicationResult) Matched() int {
+	return len(r.Copies) + len(r.Skipped)
 }
 
 func burstCopyName(original, leaseUID string) string {
@@ -121,8 +151,10 @@ func Replicate(ctx context.Context, kc kubernetes.Interface, targets TargetSet, 
 	var result ReplicationResult
 	var failures error
 	for _, namespace := range targets.namespaces {
-		copies, err := replicateNamespace(ctx, kc, namespace, targets.selector, replication)
-		result.Copies = append(result.Copies, copies...)
+		replicated, err := replicateNamespace(ctx, kc, namespace, targets.selector, replication)
+		result.Copies = append(result.Copies, replicated.copies...)
+		result.Skipped = append(result.Skipped, replicated.skipped...)
+		result.Warnings = append(result.Warnings, replicated.warnings...)
 		if err != nil {
 			failures = errors.Join(failures, err)
 			continue
@@ -132,29 +164,115 @@ func Replicate(ctx context.Context, kc kubernetes.Interface, targets TargetSet, 
 	return result, failures
 }
 
-func replicateNamespace(ctx context.Context, kc kubernetes.Interface, namespace string, selector labels.Selector, replication Replication) ([]string, error) {
+type namespaceReplication struct {
+	copies   []string
+	skipped  []WorkloadWarning
+	warnings []WorkloadWarning
+}
+
+func (n *namespaceReplication) skip(namespace, kind, name, reason string) {
+	n.skipped = append(n.skipped, WorkloadWarning{
+		Workload: workloadRef(namespace, kind, name),
+		Reasons:  []string{reason},
+	})
+}
+
+func replicateNamespace(ctx context.Context, kc kubernetes.Interface, namespace string, selector labels.Selector, replication Replication) (namespaceReplication, error) {
+	var replicated namespaceReplication
+	autoscaled, err := autoscaledDeployments(ctx, kc, namespace)
+	if err != nil {
+		return replicated, err
+	}
+	budgets, err := disruptionBudgetSelectors(ctx, kc, namespace)
+	if err != nil {
+		return replicated, err
+	}
+	if err := skipStatefulSets(ctx, kc, namespace, selector, &replicated); err != nil {
+		return replicated, err
+	}
+
 	api := kc.AppsV1().Deployments(namespace)
 	list, err := api.List(ctx, metav1.ListOptions{LabelSelector: selector.String()})
 	if err != nil {
-		return nil, fmt.Errorf("%s: list deployments in %q: %w", opReplicate, namespace, err)
+		return replicated, fmt.Errorf("%s: list deployments in %q: %w", opReplicate, namespace, err)
 	}
-
-	var copies []string
 	for i := range list.Items {
 		original := &list.Items[i]
 		if isBurstCopy(original.Labels) {
 			continue
 		}
 		if _, err := workloadSelector(kindDeployment, original.Name, original.Spec.Selector); err != nil {
-			return copies, fmt.Errorf("%s: %w", opReplicate, err)
+			return replicated, fmt.Errorf("%s: %w", opReplicate, err)
+		}
+		// the copy is what makes an autoscaler scale the original down, so this skip creates nothing rather than warning and proceeding
+		if autoscaled[original.Name] {
+			replicated.skip(namespace, kindDeployment, original.Name, ReasonAutoscalerTargeted)
+			continue
 		}
 		copied := burstCopy(original, replication)
-		if _, err := api.Create(ctx, copied, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
-			return copies, fmt.Errorf("%s: create copy of deployment %q in %q: %w", opReplicate, original.Name, namespace, err)
+		if matchedByWorkload(copied.Spec.Template.Labels, budgets) {
+			replicated.warnings = append(replicated.warnings, WorkloadWarning{
+				Workload: workloadRef(namespace, kindDeployment, original.Name),
+				Reasons:  []string{ReasonBudgetSpansCopy},
+			})
 		}
-		copies = append(copies, workloadRef(namespace, kindDeployment, copied.Name))
+		if _, err := api.Create(ctx, copied, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return replicated, fmt.Errorf("%s: create copy of deployment %q in %q: %w", opReplicate, original.Name, namespace, err)
+		}
+		replicated.copies = append(replicated.copies, workloadRef(namespace, kindDeployment, copied.Name))
 	}
-	return copies, nil
+	return replicated, nil
+}
+
+func skipStatefulSets(ctx context.Context, kc kubernetes.Interface, namespace string, selector labels.Selector, replicated *namespaceReplication) error {
+	wc := statefulSetClient(kc, namespace, selector)
+	targets, err := wc.list(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: list %s in %q: %w", opReplicate, wc.plural(), namespace, err)
+	}
+	for _, t := range targets {
+		replicated.skip(namespace, kindStatefulSet, t.name, ReasonStatefulSetCopy)
+	}
+	return nil
+}
+
+func autoscaledDeployments(ctx context.Context, kc kubernetes.Interface, namespace string) (map[string]bool, error) {
+	list, err := kc.AutoscalingV2().HorizontalPodAutoscalers(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("%s: list horizontalpodautoscalers in %q: %w", opReplicate, namespace, err)
+	}
+	targeted := map[string]bool{}
+	for i := range list.Items {
+		ref := list.Items[i].Spec.ScaleTargetRef
+		if ref.Kind == deploymentKind && scalesApps(ref.APIVersion) {
+			targeted[ref.Name] = true
+		}
+	}
+	return targeted, nil
+}
+
+func scalesApps(apiVersion string) bool {
+	// an unqualified reference is read as the apps group, because the cost of skipping a workload needlessly is far below the cost of copying one an autoscaler governs
+	group := schema.FromAPIVersionAndKind(apiVersion, deploymentKind).Group
+	return group == appsv1.GroupName || group == ""
+}
+
+func disruptionBudgetSelectors(ctx context.Context, kc kubernetes.Interface, namespace string) ([]labels.Selector, error) {
+	list, err := kc.PolicyV1().PodDisruptionBudgets(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("%s: list poddisruptionbudgets in %q: %w", opReplicate, namespace, err)
+	}
+	var selectors []labels.Selector
+	for i := range list.Items {
+		budget := &list.Items[i]
+		// a budget reads its own empty selector as every pod in the namespace, which is the opposite of what a workload's empty selector means
+		selector, err := metav1.LabelSelectorAsSelector(budget.Spec.Selector)
+		if err != nil {
+			return nil, fmt.Errorf("%s: selector of poddisruptionbudget %q in %q: %w", opReplicate, budget.Name, namespace, err)
+		}
+		selectors = append(selectors, selector)
+	}
+	return selectors, nil
 }
 
 func isBurstCopy(workloadLabels map[string]string) bool {

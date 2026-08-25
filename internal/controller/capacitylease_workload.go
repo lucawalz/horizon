@@ -23,8 +23,8 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 		return r.nextPoll(lease, policy), nil
 	}
 
-	if !conditionTrue(lease, v1alpha1.ConditionWorkloadMigrated) {
-		return r.migrateWorkload(ctx, lease)
+	if !conditionTrue(lease, workloadPlacedCondition(lease)) {
+		return r.placeWorkload(ctx, lease)
 	}
 
 	namespaces, err := everyWorkloadInNamespaces(lease)
@@ -39,6 +39,24 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 		return r.nextPoll(lease, policy), nil
 	}
 	return ctrl.Result{}, nil
+}
+
+func replicateMode(lease *v1alpha1.CapacityLease) bool {
+	return lease.Spec.Workload != nil && lease.Spec.Workload.Mode == v1alpha1.WorkloadModeReplicate
+}
+
+func workloadPlacedCondition(lease *v1alpha1.CapacityLease) string {
+	if replicateMode(lease) {
+		return v1alpha1.ConditionWorkloadReplicable
+	}
+	return v1alpha1.ConditionWorkloadMigrated
+}
+
+func (r *CapacityLeaseReconciler) placeWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+	if replicateMode(lease) {
+		return r.replicateWorkload(ctx, lease)
+	}
+	return r.migrateWorkload(ctx, lease)
 }
 
 func everyWorkloadInNamespaces(lease *v1alpha1.CapacityLease) (k8s.TargetSet, error) {
@@ -105,7 +123,11 @@ func migrationOutcome(result k8s.MigrationResult, targeted int, cause error) (st
 }
 
 func (r *CapacityLeaseReconciler) failMigration(ctx context.Context, lease *v1alpha1.CapacityLease, reason string, cause error) (ctrl.Result, error) {
-	r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reason, cause.Error())
+	return r.failWorkload(ctx, lease, v1alpha1.ConditionWorkloadMigrated, reason, cause)
+}
+
+func (r *CapacityLeaseReconciler) failWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, condition, reason string, cause error) (ctrl.Result, error) {
+	r.setCondition(lease, condition, metav1.ConditionFalse, reason, cause.Error())
 	if err := r.writeStatus(ctx, lease); err != nil {
 		return ctrl.Result{}, errors.Join(cause, err)
 	}
