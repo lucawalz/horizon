@@ -22,9 +22,9 @@ jobs:
         with:
           path: bin/k8s
           key: envtest-${{ runner.os }}-${{ hashFiles('Makefile') }}
-      - run: go mod tidy -diff
-      - run: go vet ./...
-      - run: go build ./...
+      - run: make tidy-check
+      - run: make vet
+      - run: make build
       - run: make test
       - run: make test-race
 
@@ -32,67 +32,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: bash scripts/check-adr-index.sh
+      - run: make adr-check
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
+      - run: make lint
 
   site:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: every vite server stays bound to loopback
-        run: |
-          set -euo pipefail
-          config=internal/web/site/vite.config.ts
-          if ! grep -qF "host: '127.0.0.1'" "$config"; then
-            echo "$config no longer pins the dev server to host: '127.0.0.1'; the dashboard it proxies is unauthenticated and must not be reachable off the machine" >&2
-            exit 1
-          fi
-          widened="$(grep -oE "host[[:space:]]*:[[:space:]]*[^,}[:space:]]+" "$config" | grep -vE "^host[[:space:]]*:[[:space:]]*'127\.0\.0\.1'$" || true)"
-          if [ -n "$widened" ]; then
-            echo "$config carries a host binding that is not 127.0.0.1:" >&2
-            echo "$widened" >&2
-            echo "every server this file configures, dev and preview alike, proxies the unauthenticated dashboard and must not be reachable off the machine" >&2
-            exit 1
-          fi
-      - name: no npm script widens the dev server binding
-        run: |
-          set -euo pipefail
-          scripts="$(jq -r '.scripts[]?' internal/web/site/package.json)"
-          if grep -q -- '--host' <<<"$scripts"; then
-            echo "an npm script passes --host, which overrides the loopback binding in vite.config.ts and exposes the unauthenticated dashboard to the network" >&2
-            exit 1
-          fi
       - uses: actions/setup-node@v7
         with:
           node-version-file: internal/web/site/.nvmrc
           cache: npm
           cache-dependency-path: internal/web/site/package-lock.json
-      - run: npm ci
-        working-directory: internal/web/site
-      # the root tsconfig carries project references only, so a plain tsc --noEmit checks nothing
-      - run: npx tsc -b --noEmit
-        working-directory: internal/web/site
-      - run: npm test
-        working-directory: internal/web/site
-      - run: npm run lint
-        working-directory: internal/web/site
-      - run: npm run build
-        working-directory: internal/web/site
-      - name: committed dist matches a fresh build
-        run: |
-          set -euo pipefail
-          # content-hashed bundles arrive as untracked files, which git diff alone never reports
-          git add -A
-          if ! git diff --cached --exit-code; then
-            echo "internal/web/site/dist is stale; rebuild it with npm run build and commit the result" >&2
-            exit 1
-          fi
+      - run: make site
 
   release-config:
     runs-on: ubuntu-latest
@@ -102,30 +58,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: goreleaser/goreleaser-action@v7
-        with:
-          version: "~> v2"
-          args: check
+      - run: make release-check
 
   chart:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
-      - name: crds match the generated manifests
-        run: diff -r config/crd/bases charts/horizon/crds
-      - name: default image tag resolves to the chart appVersion
-        run: |
-          set -euo pipefail
-          app_version="$(awk '$1 == "appVersion:" { gsub(/"/, "", $2); print $2; exit }' charts/horizon/Chart.yaml)"
-          repository="$(awk '$1 == "repository:" { print $2; exit }' charts/horizon/values.yaml)"
-          resolved="$(helm template horizon charts/horizon | awk '$1 == "image:" { print $2; exit }')"
-          if [ "$resolved" != "${repository}:${app_version}" ]; then
-            echo "chart resolves $resolved but appVersion declares ${repository}:${app_version}" >&2
-            exit 1
-          fi
-      - run: helm lint charts/horizon
-      - run: helm template horizon charts/horizon --include-crds
+      - run: make chart-lint
 
   image:
     runs-on: ubuntu-latest
