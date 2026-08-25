@@ -36,3 +36,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0030. Define the verification gates once in the Makefile](0030-define-the-verification-gates-once-in-the-makefile.md) (accepted)
 - [0031. Identify a lease's nodes by lease UID](0031-identify-a-leases-nodes-by-lease-uid.md) (accepted)
 - [0032. Identify a lease's migrated workloads by lease UID](0032-identify-a-leases-migrated-workloads-by-lease-uid.md) (accepted)
+- [0033. Create a provider config from the interface, behind a second narrow writer](0033-create-a-provider-config-from-the-interface.md) (accepted)
