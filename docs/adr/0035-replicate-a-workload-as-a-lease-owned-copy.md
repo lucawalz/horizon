@@ -187,6 +187,16 @@ after which the list is the only record that the copy ever existed. A copy that 
 delete degrades the lease with `BurstCopyDeleteFailed` and keeps the record, rather than
 clearing the list and leaving the copy to run on nodes that are about to be deleted.
 
+The node release is then held until no pod of the lease sits on a burst node, which is the
+node-scoped gate move mode already used. That gate reads its namespaces out of
+`spec.workload` rather than out of the list, because a successful delete clears the list
+before the gate is ever reached, and because two teardown paths skip the gate outright, a
+zero teardown grace and a lease whose instances are already released, so moving the clear
+behind the gate would leave the list standing for good on either of them. A target set
+narrowed after the copies were made therefore leaves the gate blind to the namespace that was
+dropped, and the drain that follows covers it: it draws on the same teardown budget and
+evicts the same pods, only without waiting for them first.
+
 A lease name is bounded at 63 characters by the CRD. The name is a label value on the copy,
 on the copy's pods and in the copy's selector, and it is the value of the burst taint on
 every leased node, so a longer name is refused by the apiserver on the create that carries
