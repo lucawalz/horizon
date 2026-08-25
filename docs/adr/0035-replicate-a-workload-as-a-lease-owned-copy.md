@@ -28,6 +28,24 @@ same namespace, pinned to the lease's own nodes and running `spec.workload.burst
 pods, and deletes the copy at teardown. The matched workload is never written to on any
 path.
 
+The mode is latched into `status.placedWorkloadMode` before the first placement and every
+teardown step dispatches on that latch rather than on `spec.workload.mode`. The spec is
+mutable while a lease lives, and the two modes undo themselves in opposite ways, so a mode
+read back at teardown is a mode that can have changed since the placement it is supposed to
+reverse. A lease that moved a workload and then reads `replicate` deletes copies that do not
+exist and never restores the placement it saved, leaving the original pinned by a required
+node affinity to a label no node carries once the lease is gone, which is a permanent outage
+of a workload the lease was only borrowing capacity for. The mirror case leaves a copy
+running on capacity that is about to be returned. This is the same latching that
+[0032](0032-identify-a-leases-migrated-workloads-by-lease-uid.md) applies to ownership and
+0034 applies to the namespaces teardown reads out of `status.migratedWorkloads`: what the
+lease did is recorded where the lease did it.
+
+`spec.workload.mode` is immutable as well, so the edit is refused rather than merely
+survived. The latch is still what teardown reads, because a rule comparing the field against
+its old value cannot see a `spec.workload` that appears mid-lease, and because the record of
+what a lease did belongs in its status either way.
+
 The field is named `burstReplicas` rather than `replicas` because `spec.replicas` already
 exists one level up and counts machines. Two quantities under one name in one object is how
 someone rents eight servers to run two pods, so both fields now carry a description in the

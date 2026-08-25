@@ -41,8 +41,18 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 	return ctrl.Result{}, nil
 }
 
+func placedMode(lease *v1alpha1.CapacityLease) v1alpha1.WorkloadMode {
+	if lease.Status.PlacedWorkloadMode != "" {
+		return lease.Status.PlacedWorkloadMode
+	}
+	if lease.Spec.Workload == nil {
+		return ""
+	}
+	return lease.Spec.Workload.Mode
+}
+
 func replicateMode(lease *v1alpha1.CapacityLease) bool {
-	return lease.Spec.Workload != nil && lease.Spec.Workload.Mode == v1alpha1.WorkloadModeReplicate
+	return placedMode(lease) == v1alpha1.WorkloadModeReplicate
 }
 
 func workloadPlacedCondition(lease *v1alpha1.CapacityLease) string {
@@ -53,6 +63,10 @@ func workloadPlacedCondition(lease *v1alpha1.CapacityLease) string {
 }
 
 func (r *CapacityLeaseReconciler) placeWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
+	// teardown undoes what the lease did, so the mode is latched before the first write and never read back from a spec that can still change
+	if lease.Status.PlacedWorkloadMode == "" {
+		lease.Status.PlacedWorkloadMode = lease.Spec.Workload.Mode
+	}
 	if replicateMode(lease) {
 		return r.replicateWorkload(ctx, lease)
 	}
@@ -182,7 +196,7 @@ func migratabilitySummary(warnings []v1alpha1.MigrationWarning, total int) strin
 
 func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (ctrl.Result, error) {
 	// what the lease placed decides both whether to act and where, because a partial placement leaves the condition False and the spec is mutable
-	if lease.Spec.Workload == nil || len(lease.Status.MigratedWorkloads) == 0 {
+	if len(lease.Status.MigratedWorkloads) == 0 {
 		return ctrl.Result{}, nil
 	}
 

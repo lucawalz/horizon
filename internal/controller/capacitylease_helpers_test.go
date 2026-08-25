@@ -610,6 +610,15 @@ func (h *harness) retargetWorkload(namespaces ...string) {
 	}
 }
 
+func (h *harness) dropWorkloadTarget() {
+	h.t.Helper()
+	lease := h.lease()
+	lease.Spec.Workload = nil
+	if err := h.api.Update(h.t.Context(), lease); err != nil {
+		h.t.Fatalf("drop the workload target: %v", err)
+	}
+}
+
 func (h *harness) deploymentIn(namespace, name string) *appsv1.Deployment {
 	h.t.Helper()
 	deployment, err := h.kube.AppsV1().Deployments(namespace).Get(h.t.Context(), name, metav1.GetOptions{})

@@ -45,6 +45,64 @@ func TestReplicateModeRunsACopyAndLeavesTheOriginalAlone(t *testing.T) {
 	}
 }
 
+func TestTeardownFollowsTheModeTheLeasePlacedIn(t *testing.T) {
+	tests := []struct {
+		name          string
+		placed        v1alpha1.WorkloadMode
+		asked         v1alpha1.WorkloadMode
+		wantReplicate bool
+		wantCondition string
+	}{
+		{"a copy the spec now calls a move", v1alpha1.WorkloadModeReplicate, v1alpha1.WorkloadModeMove, true, v1alpha1.ConditionWorkloadReplicable},
+		{"a move the spec now calls a copy", v1alpha1.WorkloadModeMove, v1alpha1.WorkloadModeReplicate, false, v1alpha1.ConditionWorkloadMigrated},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			lease := &v1alpha1.CapacityLease{
+				Spec:   v1alpha1.CapacityLeaseSpec{Workload: &v1alpha1.WorkloadRef{Mode: tc.asked}},
+				Status: v1alpha1.CapacityLeaseStatus{PlacedWorkloadMode: tc.placed},
+			}
+
+			if got := replicateMode(lease); got != tc.wantReplicate {
+				t.Errorf("teardown reads the lease as replicating=%t, want %t: what the lease did is what it has to undo", got, tc.wantReplicate)
+			}
+			if got := workloadPlacedCondition(lease); got != tc.wantCondition {
+				t.Errorf("the lease reports placement on %s, want %s", got, tc.wantCondition)
+			}
+		})
+	}
+}
+
+func TestReplicateModeRecordsTheModeItPlacedIn(t *testing.T) {
+	h := replicated(t)
+	h.seedWorkload()
+	h.settle()
+
+	if got := h.lease().Status.PlacedWorkloadMode; got != v1alpha1.WorkloadModeReplicate {
+		t.Errorf("the lease recorded mode %q, want %q so teardown deletes the copy it made", got, v1alpha1.WorkloadModeReplicate)
+	}
+}
+
+func TestTeardownDeletesTheCopyThoughTheSpecNoLongerNamesAWorkload(t *testing.T) {
+	h := replicated(t)
+	h.seedWorkload()
+	h.settle()
+	h.dropWorkloadTarget()
+
+	h.deleteLease()
+	if _, err := h.reconcile(); err != nil {
+		t.Fatalf("teardown pass: %v", err)
+	}
+
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 0 {
+		t.Errorf("teardown left %d burst copies running because the spec stopped naming a workload", got)
+	}
+	if got := h.lease().Status.MigratedWorkloads; len(got) != 0 {
+		t.Errorf("the lease still owes %v after its copies were deleted", got)
+	}
+}
+
 func TestReplicateModeReportsNoMigratabilityVerdict(t *testing.T) {
 	h := replicated(t)
 	h.seedWorkload(func(d *appsv1.Deployment) { d.Spec.Paused = true })

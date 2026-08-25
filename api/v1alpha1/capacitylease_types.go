@@ -56,6 +56,7 @@ const (
 )
 
 // +kubebuilder:validation:XValidation:rule="(has(self.mode) && self.mode == 'replicate') == has(self.burstReplicas)",message="burstReplicas belongs to replicate mode and is required by it"
+// +kubebuilder:validation:XValidation:rule="has(self.mode) == has(oldSelf.mode) && (!has(self.mode) || self.mode == oldSelf.mode)",message="mode is immutable"
 type WorkloadRef struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:items:MaxLength=63
@@ -257,6 +258,11 @@ type CapacityLeaseStatus struct {
 	// +optional
 	// +listType=atomic
 	Instances []InstanceStatus `json:"instances,omitempty"`
+
+	// the mode the lease placed its workload in, recorded at the first placement so teardown undoes what the lease did rather than what the spec asks for now
+	// +kubebuilder:validation:Enum=move;replicate
+	// +optional
+	PlacedWorkloadMode WorkloadMode `json:"placedWorkloadMode,omitempty"`
 
 	// +optional
 	// +listType=atomic

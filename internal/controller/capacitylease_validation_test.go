@@ -267,6 +267,13 @@ func TestCapacityLeaseRefusesEveryChangeToWhatItAlreadyHolds(t *testing.T) {
 			s.Requirements = nil
 			s.Size = "cx22"
 		}, true},
+		{"workload mode", targeting(v1alpha1.WorkloadModeMove, nil), func(s *v1alpha1.CapacityLeaseSpec) {
+			s.Workload.Mode = v1alpha1.WorkloadModeReplicate
+			s.Workload.BurstReplicas = int32Ptr(2)
+		}, true},
+		{"workload namespaces", targeting(v1alpha1.WorkloadModeMove, nil), func(s *v1alpha1.CapacityLeaseSpec) {
+			s.Workload.Namespaces = []string{"other"}
+		}, false},
 		{"replicas", nil, func(s *v1alpha1.CapacityLeaseSpec) { s.Replicas = 3 }, false},
 	}
 

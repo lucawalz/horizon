@@ -437,6 +437,9 @@ func TestWorkloadMigrationRunsOnceInstancesAreReady(t *testing.T) {
 	if _, ok := h.deploymentAnnotations()[k8s.PrePlacementAnnotationKey]; !ok {
 		t.Error("the deployment carries no saved placement annotation")
 	}
+	if got := h.lease().Status.PlacedWorkloadMode; got != v1alpha1.WorkloadModeMove {
+		t.Errorf("the lease recorded mode %q, want %q so teardown restores what it moved", got, v1alpha1.WorkloadModeMove)
+	}
 }
 
 func TestARepeatedMigrationPassReportsTheSameWorkloads(t *testing.T) {

@@ -216,6 +216,9 @@ spec:
                 - message: burstReplicas belongs to replicate mode and is required
                     by it
                   rule: (has(self.mode) && self.mode == 'replicate') == has(self.burstReplicas)
+                - message: mode is immutable
+                  rule: has(self.mode) == has(oldSelf.mode) && (!has(self.mode) ||
+                    self.mode == oldSelf.mode)
             required:
             - duration
             - providerRef
@@ -363,6 +366,14 @@ spec:
                 format: int64
                 type: integer
               phase:
+                type: string
+              placedWorkloadMode:
+                description: the mode the lease placed its workload in, recorded at
+                  the first placement so teardown undoes what the lease did rather
+                  than what the spec asks for now
+                enum:
+                - move
+                - replicate
                 type: string
               providerConfig:
                 type: string
