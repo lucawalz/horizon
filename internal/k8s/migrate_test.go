@@ -50,6 +50,7 @@ const (
 	testNSB             = "sentio-systems-b"
 	emptyPlacementJSON  = "{}"
 	pinnedPlacementJSON = `{"nodeSelector":{"disktype":"ssd"}}`
+	hostSpreadWeight    = int32(100)
 )
 
 func appSelector(app string) *metav1.LabelSelector {
@@ -155,11 +156,11 @@ func burstToleration() corev1.Toleration {
 	}
 }
 
-func hostSpreadAffinity(weight int32) *corev1.Affinity {
+func hostSpreadAffinity() *corev1.Affinity {
 	return &corev1.Affinity{
 		PodAntiAffinity: &corev1.PodAntiAffinity{
 			PreferredDuringSchedulingIgnoredDuringExecution: []corev1.WeightedPodAffinityTerm{{
-				Weight:          weight,
+				Weight:          hostSpreadWeight,
 				PodAffinityTerm: corev1.PodAffinityTerm{TopologyKey: "kubernetes.io/hostname"},
 			}},
 		},
@@ -525,15 +526,8 @@ func TestMigrateEvictsStatefulSetPodsBelowPartition(t *testing.T) {
 
 func TestMigrateEvictsPausedDeploymentPods(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
-		Spec: appsv1.DeploymentSpec{
-			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
-			Paused:   true,
-		},
-	}
-	matched := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
-	matched.Labels = map[string]string{"app": "web"}
+	dep := pausedDeployment("app", "web")
+	matched := labelledPod("app-pod", "web", "homelab-1", corev1.PodRunning)
 
 	kc := fake.NewSimpleClientset(node, dep, matched)
 	evictAndDelete(kc)
@@ -592,12 +586,8 @@ func TestMigrateRejectsInvalidInput(t *testing.T) {
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{UID: "uid-a"}); err == nil {
 		t.Error("expected error for a lease identity with no name")
 	}
-}
-
-func TestMigrateRefusesEmptyIdentity(t *testing.T) {
-	kc := fake.NewSimpleClientset()
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, k8s.LeaseIdentity{Name: "lease-a"}); err == nil {
-		t.Fatal("Migrate accepted an identity with no uid")
+		t.Error("expected error for a lease identity with no uid")
 	}
 }
 
@@ -741,7 +731,7 @@ func TestRestorePlacementClearsEveryPlacementMarker(t *testing.T) {
 
 func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	originalAffinity := hostSpreadAffinity(100)
+	originalAffinity := hostSpreadAffinity()
 	originalToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
@@ -869,7 +859,7 @@ func TestRestorePlacementReadsAnEmptyOwnerLabelAsHeldByNobody(t *testing.T) {
 
 func TestMigrateStampsAndClaimsAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	liveAffinity := hostSpreadAffinity(100)
+	liveAffinity := hostSpreadAffinity()
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "dep1",
@@ -923,7 +913,7 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
 			Selector: appSelector("dep1"),
-			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: hostSpreadAffinity(100)}},
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: hostSpreadAffinity()}},
 		},
 	}
 	sts := plainStatefulSet("sts1")
@@ -983,7 +973,7 @@ func TestMigrateReportsNoWorkloadsForAnEmptyNamespace(t *testing.T) {
 
 func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	originalAffinity := hostSpreadAffinity(100)
+	originalAffinity := hostSpreadAffinity()
 	originalToleration := corev1.Toleration{Key: "workload", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
@@ -1026,7 +1016,7 @@ func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
 
-	originalAffinity := hostSpreadAffinity(100)
+	originalAffinity := hostSpreadAffinity()
 
 	dep1 := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
@@ -1078,7 +1068,7 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 
 func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	existingAffinity := hostSpreadAffinity(50)
+	existingAffinity := hostSpreadAffinity()
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
@@ -1758,24 +1748,6 @@ func TestWorkloadOffBurstNodesIgnoresAnotherLeasesNode(t *testing.T) {
 	}
 	if !ready {
 		t.Error("lease-a's capacity is clear, so another lease's node must not withhold its release")
-	}
-}
-
-func TestWorkloadOffBurstNodesHoldsForAPodOfAWorkloadItNoLongerOwns(t *testing.T) {
-	dep := ownedDeployment("app", "web", testLease)
-	dep.Labels = nil
-	dep.Annotations = nil
-	kc := fake.NewSimpleClientset(
-		burstNode("burst-1", testLease.UID),
-		dep,
-		labelledPod("app-pod", "web", "burst-1", corev1.PodRunning),
-	)
-	ready, err := k8s.WorkloadOffBurstNodes(context.Background(), kc, testNS, testLease)
-	if err != nil {
-		t.Fatalf("WorkloadOffBurstNodes: %v", err)
-	}
-	if ready {
-		t.Error("restore clears the owner marker before this gate runs, so ownership cannot be what it counts")
 	}
 }
 

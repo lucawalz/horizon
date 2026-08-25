@@ -26,6 +26,10 @@ const (
 	kindStatefulSet           = "statefulset"
 	strategicPatchDirective   = "$patch"
 	strategicPatchReplace     = "replace"
+	opMigrate                 = "migrate"
+	opRestore                 = "restore-placement"
+	abortOnEvictionError      = true
+	continueOnEvictionError   = false
 )
 
 var namespaceNameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -326,7 +330,7 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, namespace string, lea
 	if !moved {
 		return onBurst, nil
 	}
-	if err := evictWorkloadPods(ctx, kc, namespace, notSelfRolling); err != nil {
+	if err := evictWorkloadPods(ctx, kc, namespace, notSelfRolling, opMigrate, abortOnEvictionError); err != nil {
 		return onBurst, err
 	}
 	return onBurst, nil
@@ -420,14 +424,14 @@ func marshalPlacement(podSpec *corev1.PodSpec, name string) (string, error) {
 	return string(data), nil
 }
 
-func evictablePods(pods []corev1.Pod, workloads []labels.Selector) []*corev1.Pod {
+func evictablePods(pods []corev1.Pod, selectors []labels.Selector) []*corev1.Pod {
 	var evictable []*corev1.Pod
 	for i := range pods {
 		pod := &pods[i]
 		if isDaemonSetPod(pod) {
 			continue
 		}
-		if !matchedByWorkload(pod.Labels, workloads) {
+		if !matchedByWorkload(pod.Labels, selectors) {
 			continue
 		}
 		evictable = append(evictable, pod)
@@ -435,9 +439,9 @@ func evictablePods(pods []corev1.Pod, workloads []labels.Selector) []*corev1.Pod
 	return evictable
 }
 
-func matchedByWorkload(podLabels map[string]string, workloads []labels.Selector) bool {
+func matchedByWorkload(podLabels map[string]string, selectors []labels.Selector) bool {
 	set := labels.Set(podLabels)
-	for _, sel := range workloads {
+	for _, sel := range selectors {
 		if sel.Matches(set) {
 			return true
 		}
@@ -445,18 +449,23 @@ func matchedByWorkload(podLabels map[string]string, workloads []labels.Selector)
 	return false
 }
 
-func evictWorkloadPods(ctx context.Context, kc kubernetes.Interface, namespace string, workloads []labels.Selector) error {
+func evictWorkloadPods(ctx context.Context, kc kubernetes.Interface, namespace string, selectors []labels.Selector, op string, abortOnError bool) error {
 	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("migrate: list pods in %q: %w", namespace, err)
+		return fmt.Errorf("%s: list pods in %q: %w", op, namespace, err)
 	}
-	for _, pod := range evictablePods(pods.Items, workloads) {
+	var firstErr error
+	for _, pod := range evictablePods(pods.Items, selectors) {
 		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
 		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			return fmt.Errorf("migrate: evict %s/%s: %w", pod.Namespace, pod.Name, err)
+			err = fmt.Errorf("%s: evict %s/%s: %w", op, pod.Namespace, pod.Name, err)
+			if abortOnError {
+				return err
+			}
+			recordFirst(&firstErr, err)
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func buildRestorePatch(kind, name, placement string, current map[string]string) ([]byte, error) {
@@ -505,7 +514,7 @@ func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace st
 	if len(restored) == 0 {
 		return nil, firstErr
 	}
-	recordFirst(&firstErr, evictWorkloadPodsBestEffort(ctx, kc, namespace, notSelfRolling))
+	recordFirst(&firstErr, evictWorkloadPods(ctx, kc, namespace, notSelfRolling, opRestore, continueOnEvictionError))
 	return restored, firstErr
 }
 
@@ -541,21 +550,6 @@ func restoreWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 		}
 	}
 	return restored, notSelfRolling, firstErr
-}
-
-func evictWorkloadPodsBestEffort(ctx context.Context, kc kubernetes.Interface, namespace string, workloads []labels.Selector) error {
-	pods, err := kc.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("restore-placement: list pods in %q: %w", namespace, err)
-	}
-	var firstErr error
-	for _, pod := range evictablePods(pods.Items, workloads) {
-		ev := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace}}
-		if err := kc.CoreV1().Pods(pod.Namespace).EvictV1(ctx, ev); err != nil {
-			recordFirst(&firstErr, fmt.Errorf("restore-placement: evict %s/%s: %w", pod.Namespace, pod.Name, err))
-		}
-	}
-	return firstErr
 }
 
 func leaseNodePresent(ctx context.Context, kc kubernetes.Interface, leaseUID string) (bool, error) {
