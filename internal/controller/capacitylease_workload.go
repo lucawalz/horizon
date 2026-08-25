@@ -26,7 +26,7 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 		return r.migrateWorkload(ctx, lease, namespace)
 	}
 
-	placed, err := k8s.WorkloadOnBurstNodes(ctx, r.Kube, namespace, k8s.LeaseIdentity{UID: string(lease.UID), Name: lease.Name})
+	placed, err := k8s.WorkloadOnBurstNodes(ctx, r.Kube, namespace, leaseIdentity(lease))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("check workload placement in %q: %w", namespace, err)
 	}
@@ -40,7 +40,7 @@ func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1
 	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, namespace)
 	r.recordMigratability(lease, assessments, classifyErr)
 
-	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, k8s.LeaseIdentity{UID: string(lease.UID), Name: lease.Name})
+	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, leaseIdentity(lease))
 	if migrateErr != nil {
 		migrateErr = fmt.Errorf("migrate workload in %q: %w", namespace, migrateErr)
 		r.setCondition(lease, v1alpha1.ConditionWorkloadMigrated, metav1.ConditionFalse, reasonMigrateFailed, migrateErr.Error())
@@ -132,7 +132,7 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 	}
 
 	namespace := lease.Spec.Workload.Namespace
-	restored, err := k8s.WorkloadOffBurstNodes(ctx, r.Kube, namespace, k8s.LeaseIdentity{UID: string(lease.UID), Name: lease.Name})
+	restored, err := k8s.WorkloadOffBurstNodes(ctx, r.Kube, namespace, leaseIdentity(lease))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("check workload restored in %q: %w", namespace, err)
 	}
@@ -140,4 +140,8 @@ func (r *CapacityLeaseReconciler) awaitWorkloadRestored(ctx context.Context, lea
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: restoreGatePoll}, nil
+}
+
+func leaseIdentity(lease *v1alpha1.CapacityLease) k8s.LeaseIdentity {
+	return k8s.LeaseIdentity{UID: string(lease.UID), Name: lease.Name}
 }
