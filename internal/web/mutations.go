@@ -59,6 +59,10 @@ type leaseCreateRequest struct {
 	DurationSeconds      int64                     `json:"durationSeconds"`
 	TeardownGraceSeconds *int64                    `json:"teardownGraceSeconds"`
 	WorkloadNamespaces   []string                  `json:"workloadNamespaces"`
+	WorkloadSelector     string                    `json:"workloadSelector"`
+	WorkloadMode         string                    `json:"workloadMode"`
+	// the apiserver refuses a count that does not belong to the mode, so the request carries whatever it was given
+	WorkloadBurstReplicas *int32 `json:"workloadBurstReplicas"`
 }
 
 type leaseExtendRequest struct {
@@ -104,6 +108,10 @@ func (r leaseCreateRequest) lease() (*v1alpha1.CapacityLease, error) {
 	if err != nil {
 		return nil, err
 	}
+	workload, err := r.workloadRef()
+	if err != nil {
+		return nil, err
+	}
 	return &v1alpha1.CapacityLease{
 		ObjectMeta: metav1.ObjectMeta{Name: r.Name},
 		Spec: v1alpha1.CapacityLeaseSpec{
@@ -114,7 +122,7 @@ func (r leaseCreateRequest) lease() (*v1alpha1.CapacityLease, error) {
 			Replicas:      r.Replicas,
 			Duration:      metav1.Duration{Duration: span(r.DurationSeconds)},
 			TeardownGrace: teardownGrace(r.TeardownGraceSeconds),
-			Workload:      workloadRefFor(r.WorkloadNamespaces),
+			Workload:      workload,
 		},
 	}, nil
 }
@@ -126,17 +134,43 @@ func teardownGrace(elapsed *int64) *metav1.Duration {
 	return &metav1.Duration{Duration: span(*elapsed)}
 }
 
-func workloadRefFor(namespaces []string) *v1alpha1.WorkloadRef {
+func (r leaseCreateRequest) workloadRef() (*v1alpha1.WorkloadRef, error) {
+	named := namedNamespaces(r.WorkloadNamespaces)
+	if len(named) == 0 {
+		return nil, nil
+	}
+	selector, err := labelSelectorFrom(r.WorkloadSelector)
+	if err != nil {
+		return nil, err
+	}
+	return &v1alpha1.WorkloadRef{
+		Namespaces:    named,
+		Selector:      selector,
+		Mode:          v1alpha1.WorkloadMode(r.WorkloadMode),
+		BurstReplicas: r.WorkloadBurstReplicas,
+	}, nil
+}
+
+func namedNamespaces(namespaces []string) []string {
 	var named []string
 	for _, namespace := range namespaces {
 		if trimmed := strings.TrimSpace(namespace); trimmed != "" {
 			named = append(named, trimmed)
 		}
 	}
-	if len(named) == 0 {
-		return nil
+	return named
+}
+
+func labelSelectorFrom(selector string) (*metav1.LabelSelector, error) {
+	trimmed := strings.TrimSpace(selector)
+	if trimmed == "" {
+		return nil, nil
 	}
-	return &v1alpha1.WorkloadRef{Namespaces: named}
+	parsed, err := metav1.ParseToLabelSelector(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("the workload selector %q is not a label selector: %w", trimmed, err)
+	}
+	return parsed, nil
 }
 
 // the apiserver names the rule a rejected object broke, which is more accurate than anything this handler can restate

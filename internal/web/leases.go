@@ -85,24 +85,26 @@ type leaseSelection struct {
 }
 
 type leaseDetailResponse struct {
-	Summary              leaseSummary       `json:"summary"`
-	ProviderRef          string             `json:"providerRef"`
-	Size                 *string            `json:"size"`
-	Requirements         *leaseRequirements `json:"requirements"`
-	Selection            *leaseSelection    `json:"selection"`
-	DurationSeconds      int64              `json:"durationSeconds"`
-	TeardownGraceSeconds *int64             `json:"teardownGraceSeconds"`
-	WorkloadNamespaces   []string           `json:"workloadNamespaces"`
-	WorkloadSelector     *string            `json:"workloadSelector"`
-	MigratedWorkloads    []string           `json:"migratedWorkloads"`
-	MigrationWarnings    []migrationWarning `json:"migrationWarnings"`
-	AcceptedAt           *string            `json:"acceptedAt"`
-	BackstopAt           *string            `json:"backstopAt"`
-	WatchdogDeadline     *string            `json:"watchdogDeadline"`
-	ObservedGeneration   int64              `json:"observedGeneration"`
-	Conditions           []conditionEntry   `json:"conditions"`
-	Instances            []leaseInstance    `json:"instances"`
-	ObservedAt           string             `json:"observedAt"`
+	Summary               leaseSummary           `json:"summary"`
+	ProviderRef           string                 `json:"providerRef"`
+	Size                  *string                `json:"size"`
+	Requirements          *leaseRequirements     `json:"requirements"`
+	Selection             *leaseSelection        `json:"selection"`
+	DurationSeconds       int64                  `json:"durationSeconds"`
+	TeardownGraceSeconds  *int64                 `json:"teardownGraceSeconds"`
+	WorkloadNamespaces    []string               `json:"workloadNamespaces"`
+	WorkloadSelector      *string                `json:"workloadSelector"`
+	WorkloadMode          *v1alpha1.WorkloadMode `json:"workloadMode"`
+	WorkloadBurstReplicas *int32                 `json:"workloadBurstReplicas"`
+	MigratedWorkloads     []string               `json:"migratedWorkloads"`
+	MigrationWarnings     []migrationWarning     `json:"migrationWarnings"`
+	AcceptedAt            *string                `json:"acceptedAt"`
+	BackstopAt            *string                `json:"backstopAt"`
+	WatchdogDeadline      *string                `json:"watchdogDeadline"`
+	ObservedGeneration    int64                  `json:"observedGeneration"`
+	Conditions            []conditionEntry       `json:"conditions"`
+	Instances             []leaseInstance        `json:"instances"`
+	ObservedAt            string                 `json:"observedAt"`
 }
 
 func newLeaseSummary(lease *v1alpha1.CapacityLease) leaseSummary {
@@ -131,24 +133,26 @@ func newLeaseListResponse(leases []v1alpha1.CapacityLease, now time.Time) leaseL
 
 func newLeaseDetailResponse(lease *v1alpha1.CapacityLease, now time.Time) leaseDetailResponse {
 	return leaseDetailResponse{
-		Summary:              newLeaseSummary(lease),
-		ProviderRef:          lease.Spec.ProviderRef,
-		Size:                 nullable(lease.Spec.Size),
-		Requirements:         newLeaseRequirements(lease.Spec.Requirements),
-		Selection:            newLeaseSelection(lease.Status.Selection),
-		DurationSeconds:      seconds(lease.Spec.Duration.Duration),
-		TeardownGraceSeconds: teardownGraceSeconds(lease.Spec.TeardownGrace),
-		WorkloadNamespaces:   workloadNamespaces(lease.Spec.Workload),
-		WorkloadSelector:     workloadSelector(lease.Spec.Workload),
-		MigratedWorkloads:    orEmpty(lease.Status.MigratedWorkloads),
-		MigrationWarnings:    newMigrationWarnings(lease.Status.MigrationWarnings),
-		AcceptedAt:           instant(lease.Status.AcceptedAt),
-		BackstopAt:           instant(lease.Status.LifetimeBackstop()),
-		WatchdogDeadline:     instant(lease.Status.WatchdogDeadline),
-		ObservedGeneration:   lease.Status.ObservedGeneration,
-		Conditions:           newConditionEntries(lease.Status.Conditions),
-		Instances:            newLeaseInstances(lease.Status.Instances),
-		ObservedAt:           rfc3339(now),
+		Summary:               newLeaseSummary(lease),
+		ProviderRef:           lease.Spec.ProviderRef,
+		Size:                  nullable(lease.Spec.Size),
+		Requirements:          newLeaseRequirements(lease.Spec.Requirements),
+		Selection:             newLeaseSelection(lease.Status.Selection),
+		DurationSeconds:       seconds(lease.Spec.Duration.Duration),
+		TeardownGraceSeconds:  teardownGraceSeconds(lease.Spec.TeardownGrace),
+		WorkloadNamespaces:    workloadNamespaces(lease.Spec.Workload),
+		WorkloadSelector:      workloadSelector(lease.Spec.Workload),
+		WorkloadMode:          workloadMode(lease.Spec.Workload),
+		WorkloadBurstReplicas: workloadBurstReplicas(lease.Spec.Workload),
+		MigratedWorkloads:     orEmpty(lease.Status.MigratedWorkloads),
+		MigrationWarnings:     newMigrationWarnings(lease.Status.MigrationWarnings),
+		AcceptedAt:            instant(lease.Status.AcceptedAt),
+		BackstopAt:            instant(lease.Status.LifetimeBackstop()),
+		WatchdogDeadline:      instant(lease.Status.WatchdogDeadline),
+		ObservedGeneration:    lease.Status.ObservedGeneration,
+		Conditions:            newConditionEntries(lease.Status.Conditions),
+		Instances:             newLeaseInstances(lease.Status.Instances),
+		ObservedAt:            rfc3339(now),
 	}
 }
 
@@ -255,6 +259,20 @@ func workloadSelector(ref *v1alpha1.WorkloadRef) *string {
 		return ptr(err.Error())
 	}
 	return nullable(selector.String())
+}
+
+func workloadMode(ref *v1alpha1.WorkloadRef) *v1alpha1.WorkloadMode {
+	if ref == nil {
+		return nil
+	}
+	return nullable(ref.Mode)
+}
+
+func workloadBurstReplicas(ref *v1alpha1.WorkloadRef) *int32 {
+	if ref == nil {
+		return nil
+	}
+	return ref.BurstReplicas
 }
 
 // a name the apiserver could never carry is refused here, since client-go rejects it locally and the failure is the request's rather than the cluster's

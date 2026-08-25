@@ -496,3 +496,37 @@ func TestLeaseDetailEncodesTheWorkloadTargetSet(t *testing.T) {
 		t.Errorf("workloadSelector = %v, want %q", decoded.WorkloadSelector, "tier=batch")
 	}
 }
+
+func TestLeaseDetailEncodesTheWorkloadModeAndItsBurstReplicas(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	lease := leaseFixture("replicated-run")
+	lease.Spec.Workload = &v1alpha1.WorkloadRef{
+		Namespaces:    []string{"batch"},
+		Mode:          v1alpha1.WorkloadModeReplicate,
+		BurstReplicas: ptr(int32(3)),
+	}
+
+	detail := newLeaseDetailResponse(lease, now)
+
+	if mode := present(t, "workloadMode", detail.WorkloadMode); mode != v1alpha1.WorkloadModeReplicate {
+		t.Errorf("workloadMode = %q, want %q", mode, v1alpha1.WorkloadModeReplicate)
+	}
+	if replicas := present(t, "workloadBurstReplicas", detail.WorkloadBurstReplicas); replicas != 3 {
+		t.Errorf("workloadBurstReplicas = %d, want 3", replicas)
+	}
+}
+
+func TestLeaseDetailNamesNoWorkloadModeWithoutATargetSet(t *testing.T) {
+	now := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	lease := leaseFixture("pending-run")
+	lease.Spec.Workload = nil
+
+	detail := newLeaseDetailResponse(lease, now)
+
+	if detail.WorkloadMode != nil {
+		t.Errorf("workloadMode = %q, want null: a lease targeting nothing runs in no mode", *detail.WorkloadMode)
+	}
+	if detail.WorkloadBurstReplicas != nil {
+		t.Errorf("workloadBurstReplicas = %d, want null", *detail.WorkloadBurstReplicas)
+	}
+}

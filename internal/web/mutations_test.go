@@ -211,6 +211,76 @@ func TestLeaseCreateCarriesNoWorkloadWhenEveryNamespaceIsBlank(t *testing.T) {
 	}
 }
 
+func TestLeaseCreateStoresTheReplicateModeAndItsBurstReplicas(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "replicated-run"
+	removeAfterTest(t, name)
+
+	request := createRequestFixture(name)
+	request.WorkloadMode = string(v1alpha1.WorkloadModeReplicate)
+	request.WorkloadBurstReplicas = ptr(int32(3))
+
+	server := newWritingServer(t)
+	response := mutate(t, server, http.MethodPost, leasesEndpoint, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusCreated, response.Body)
+	}
+
+	workload := present(t, "workload", readLease(t, name).Spec.Workload)
+	if workload.Mode != v1alpha1.WorkloadModeReplicate {
+		t.Errorf("workload mode = %q, want %q", workload.Mode, v1alpha1.WorkloadModeReplicate)
+	}
+	if replicas := present(t, "burstReplicas", workload.BurstReplicas); replicas != 3 {
+		t.Errorf("burstReplicas = %d, want 3", replicas)
+	}
+}
+
+func TestLeaseCreateStoresTheSubmittedWorkloadSelector(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "narrowed-run"
+	removeAfterTest(t, name)
+
+	request := createRequestFixture(name)
+	request.WorkloadSelector = "tier=batch,team in (a,b)"
+
+	server := newWritingServer(t)
+	response := mutate(t, server, http.MethodPost, leasesEndpoint, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusCreated, response.Body)
+	}
+
+	workload := present(t, "workload", readLease(t, name).Spec.Workload)
+	selector := present(t, "selector", workload.Selector)
+	if want := map[string]string{"tier": "batch"}; !reflect.DeepEqual(selector.MatchLabels, want) {
+		t.Errorf("matchLabels = %v, want %v", selector.MatchLabels, want)
+	}
+	if len(selector.MatchExpressions) != 1 || selector.MatchExpressions[0].Key != "team" {
+		t.Errorf("matchExpressions = %v, want one requirement on team", selector.MatchExpressions)
+	}
+}
+
+// a selector the request cannot compile never reaches the apiserver, so the refusal has to name the field itself
+func TestLeaseCreateRefusesAnUnparsableWorkloadSelector(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "unparsable-run"
+	removeAfterTest(t, name)
+
+	request := createRequestFixture(name)
+	request.WorkloadSelector = "tier in (batch"
+
+	server := newWritingServer(t)
+	response := mutate(t, server, http.MethodPost, leasesEndpoint, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusBadRequest, response.Body)
+	}
+	if !strings.Contains(response.Body.String(), "workload selector") {
+		t.Errorf("body = %s, want it to name the workload selector", response.Body)
+	}
+}
+
 // a decimal suffix and a binary one differ by 7 percent, which is the difference between offering cx23 and excluding it
 func TestLeaseCreateKeepsTheSubmittedMemoryUnit(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)
