@@ -135,6 +135,8 @@ kubectl get capacityleases -w
 
 `spec.workload` is optional and names a target set: `namespaces` lists at least one namespace, and an optional `selector` narrows the move to the workloads inside them that carry the labels it names. Omitting `spec.workload` adds bare capacity and moves nothing.
 
+`spec.workload.mode` defaults to `move`, which repins the matched workloads onto the leased nodes and restores them at expiry. Setting it to `replicate` leaves each matched workload untouched and runs a lease-owned copy of it on the leased nodes instead, with `spec.workload.burstReplicas` pods, deleted again at teardown. The copy carries the original's labels, so an existing Service reaches the burst replicas as well. An autoscaled workload and a StatefulSet are skipped rather than copied and are named in `status.migrationWarnings` with the reason. [ADR 0035](adr/0035-replicate-a-workload-as-a-lease-owned-copy.md) records why a copy rather than a larger original.
+
 A stock `ubuntu-24.04` node registers within about 90 seconds of boot, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matches it to the lease.
 
 ## Images and clusters that are not stock
