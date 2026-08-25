@@ -171,7 +171,11 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, errors.Join(restoreErr, err)
 		}
-		return ctrl.Result{}, restoreErr
+		// blocking past this point would strand the machines and the finalizer as well as the workload, so the drain share ends the wait
+		if r.remainingTeardownBudget(lease) > reservedDrainBudget(lease) {
+			return ctrl.Result{}, restoreErr
+		}
+		return ctrl.Result{}, nil
 	}
 
 	lease.Status.MigratedWorkloads = nil

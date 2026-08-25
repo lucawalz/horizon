@@ -511,6 +511,34 @@ func TestTeardownProceedsAfterTheRestoreGraceElapsesWithTheWorkloadStillNotReady
 	}
 }
 
+func TestARestoreThatCanNeverSucceedStillReleasesTheCapacity(t *testing.T) {
+	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
+		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
+		lease.Spec.TeardownGrace = &metav1.Duration{Duration: time.Minute}
+	})
+	h.seedWorkload()
+	h.settle()
+	h.joinNode(h.instanceName(0), true)
+	h.settle()
+
+	h.refuseWorkloadPatchesIn(testWorkloadNS)
+	h.deleteLease()
+	h.settleIgnoringErrors(5)
+
+	h.assertConditionDetail(v1alpha1.ConditionDegraded, reasonRestoreFailed, "restore placement")
+	if got := len(h.providerInstances()); got != 1 {
+		t.Fatalf("provider holds %d instances while the restore may still succeed, want the release withheld", got)
+	}
+
+	h.clock.Advance(time.Minute)
+	h.settleIgnoringErrors(10)
+
+	h.assertProviderEmpty()
+	if !h.leaseGone() {
+		t.Error("a restore that can never succeed held the finalizer and the machines forever")
+	}
+}
+
 func TestAZeroTeardownGraceSkipsTheRestoreGate(t *testing.T) {
 	h := newHarness(t, func(lease *v1alpha1.CapacityLease) {
 		lease.Spec.Workload = &v1alpha1.WorkloadRef{Namespaces: []string{testWorkloadNS}}
