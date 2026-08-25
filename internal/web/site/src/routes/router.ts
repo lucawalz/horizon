@@ -3,9 +3,10 @@ import { useEffect, useState } from 'react'
 export const leasesHref = '/'
 export const machinesHref = '/machines'
 export const newLeaseHref = '/new'
-export const newConfigHref = '/configs/new'
+export const newConfigHref = '/new-config'
 
 const leasePrefix = '/leases/'
+const configPrefix = '/configs/'
 const configQueryKey = 'config'
 const regionQueryKey = 'region'
 const primaryButton = 0
@@ -15,11 +16,17 @@ export type Route =
   | { name: 'new' }
   | { name: 'new-config' }
   | { name: 'lease'; lease: string }
+  | { name: 'config'; config: string }
   | { name: 'machines'; config: string; region: string }
   | { name: 'unknown'; path: string }
 
 export function leaseHref(name: string): string {
   return leasePrefix + encodeURIComponent(name)
+}
+
+// the create page is kept out of this prefix, so every segment under it is a config name rather than a reserved word
+export function configHref(name: string): string {
+  return configPrefix + encodeURIComponent(name)
 }
 
 export function machinesHrefFor(config: string, region: string): string {
@@ -38,6 +45,11 @@ function parseRoute(path: string, search: string): Route {
   if (path.startsWith(leasePrefix)) {
     const lease = decodeURIComponent(path.slice(leasePrefix.length))
     return lease === '' ? { name: 'leases' } : { name: 'lease', lease }
+  }
+
+  if (path.startsWith(configPrefix)) {
+    const config = decodeURIComponent(path.slice(configPrefix.length))
+    return config === '' ? { name: 'machines', config: '', region: '' } : { name: 'config', config }
   }
 
   if (path === machinesHref) {

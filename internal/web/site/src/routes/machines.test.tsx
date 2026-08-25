@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { MachineCatalogueResponse } from '@/lib/api'
 import { MachinesRoute } from '@/routes/machines'
-import { machinesHref } from '@/routes/router'
+import { configHref, machinesHref } from '@/routes/router'
 import {
   control,
   fill,
@@ -39,6 +39,16 @@ describe('the machines route', () => {
     expect(view.container.textContent).not.toContain('Provider configs')
     expect(view.container.textContent).toContain('The cluster holds no ProviderConfig')
     expect(view.container.querySelector('table')).not.toBeNull()
+
+    await view.unmount()
+  })
+
+  it('links each listed config to what it is configured with', async () => {
+    stubFetchWith(() => Promise.resolve(jsonResponse(catalogueWith())))
+    const view = await mount(<MachinesRoute config="" region="" />)
+
+    const link = control<HTMLAnchorElement>(view.container, `a[href="${configHref('hetzner')}"]`)
+    expect(link.textContent).toBe('hetzner')
 
     await view.unmount()
   })

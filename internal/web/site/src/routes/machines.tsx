@@ -23,7 +23,7 @@ import { ConditionChip, Since } from '@/routes/chips'
 import { EmptyState, Loading, Notice, PageHeader } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { machinesHrefFor, navigate, newConfigHref } from '@/routes/router'
+import { configHref, machinesHrefFor, navigate, newConfigHref } from '@/routes/router'
 import { absent, formatBytes, formatRate } from '@/routes/units'
 
 const configField = 'config'
@@ -166,8 +166,15 @@ function ConfigsPanel({ configs }: { configs: ProviderConfigSummary[] }) {
           </TableEmpty>
         ) : (
           configs.map((one) => (
-            <Row key={one.name}>
-              <Cell className="font-emphasis text-ink-strong">{one.name}</Cell>
+            <Row key={one.name} interactive>
+              <Cell className="text-label-14">
+                <a
+                  href={configHref(one.name)}
+                  className="font-emphasis text-ink-strong underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                >
+                  {one.name}
+                </a>
+              </Cell>
               <Cell muted>{one.type}</Cell>
               <Cell>
                 <ConditionChip type={readyCondition} status={one.ready} />

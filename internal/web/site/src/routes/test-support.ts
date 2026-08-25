@@ -5,11 +5,13 @@ import { createRoot } from 'react-dom/client'
 import { vi } from 'vitest'
 
 import type {
+  HetznerProviderDetail,
   LeaseDetailResponse,
   LeaseListResponse,
   LeaseSummary,
   MachineCatalogueResponse,
   NamespaceListResponse,
+  ProviderConfigDetailResponse,
   ProviderConfigSummary,
 } from '@/lib/api'
 
@@ -153,6 +155,37 @@ export function providerConfigSummary(
     message: null,
     cataloguePublished: 'True',
     createdAt: '2026-08-21T10:00:00Z',
+    ...overrides,
+  }
+}
+
+export function hetznerProviderDetail(
+  overrides: Partial<HetznerProviderDetail> = {},
+): HetznerProviderDetail {
+  return {
+    credentialsSecretRef: { name: 'horizon-hetzner', key: 'token' },
+    nodeCredentialSecretRef: { name: 'horizon-hetzner-node', key: 'ssh-key' },
+    joinTokenSecretRef: { name: 'horizon-join-token', key: 'token' },
+    cloudInitSecretRef: { name: 'horizon-cloud-init', key: 'user-data' },
+    image: { name: 'ubuntu-24.04', id: null, selector: null },
+    imageSelector: null,
+    sshKeys: [],
+    firewalls: [],
+    ...overrides,
+  }
+}
+
+export function providerConfigDetailBody(
+  name: string,
+  overrides: Partial<ProviderConfigDetailResponse> = {},
+): ProviderConfigDetailResponse {
+  return {
+    summary: providerConfigSummary(name),
+    hetzner: hetznerProviderDetail(),
+    watchdog: { renewIntervalSeconds: 60, slackSeconds: 120, maxLifetimeSeconds: 28800 },
+    catalogue: { types: 0, regions: [], refreshedAt: null },
+    conditions: [],
+    observedAt: '2026-08-25T12:00:00Z',
     ...overrides,
   }
 }

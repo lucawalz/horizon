@@ -39,13 +39,13 @@ import { errorFor } from '@/lib/errors'
 import { numberValue } from '@/lib/form'
 import type { Severity } from '@/lib/status'
 import {
-  ConditionChip,
   Countdown,
   InstancePhaseChip,
   InstanceStageChip,
   PhaseChip,
   Since,
 } from '@/routes/chips'
+import { ConditionsTable } from '@/routes/conditions'
 import {
   Definition,
   DefinitionGrid,
@@ -68,7 +68,6 @@ import {
   secondsPerMinute,
 } from '@/routes/units'
 
-const conditionColumns = 5
 const instanceColumns = 7
 
 function BackLink() {
@@ -126,47 +125,6 @@ function Stamp({ at }: { at: string | null }) {
       <Since at={at} />
       <span className="text-label-12 text-subtle">{formatInstant(at)}</span>
     </span>
-  )
-}
-
-function ConditionsPanel({ conditions }: { conditions: ConditionEntry[] }) {
-  return (
-    <Table>
-      <TableHead>
-        <Row>
-          <HeadCell>Condition</HeadCell>
-          <HeadCell>Status</HeadCell>
-          <HeadCell>Reason</HeadCell>
-          <HeadCell>Message</HeadCell>
-          <HeadCell numeric>Changed</HeadCell>
-        </Row>
-      </TableHead>
-      <TableBody>
-        {conditions.length === 0 ? (
-          <TableEmpty span={conditionColumns}>
-            The controller has not written a condition for this lease yet.
-          </TableEmpty>
-        ) : (
-          conditions.map((condition) => (
-            <Row key={condition.type}>
-              <Cell className="font-emphasis text-ink-strong">{condition.type}</Cell>
-              <Cell>
-                <ConditionChip type={condition.type} status={condition.status} />
-              </Cell>
-              <Cell muted>{condition.reason ?? absent}</Cell>
-              <Cell muted>
-                <span className="block max-w-[40ch] truncate" title={condition.message ?? undefined}>
-                  {condition.message ?? absent}
-                </span>
-              </Cell>
-              <Cell numeric muted>
-                <Since at={condition.lastTransitionTime} />
-              </Cell>
-            </Row>
-          ))
-        )}
-      </TableBody>
-    </Table>
   )
 }
 
@@ -871,7 +829,10 @@ function LeaseDetailBody({ name, view }: { name: string; view: Polled<LeaseDetai
       <LeaseFacts lease={view.data} />
       <SelectionPanel selection={view.data.selection} size={view.data.size} />
       <InstancesPanel instances={view.data.instances} />
-      <ConditionsPanel conditions={view.data.conditions} />
+      <ConditionsTable
+        conditions={view.data.conditions}
+        empty="The controller has not written a condition for this lease yet."
+      />
       <MigrationWarningsPanel lease={view.data} />
       <MigratedPanel lease={view.data} />
       {view.data.summary.releasedAt === null ? (

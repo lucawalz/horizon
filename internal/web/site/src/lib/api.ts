@@ -132,6 +132,54 @@ export interface ProviderConfigSummary {
   createdAt: string
 }
 
+export interface SecretKeyReference {
+  name: string
+  key: string
+}
+
+export interface ImageSelection {
+  name: string | null
+  id: number | null
+  selector: Record<string, string> | null
+}
+
+export interface HetznerProviderDetail {
+  credentialsSecretRef: SecretKeyReference
+  nodeCredentialSecretRef: SecretKeyReference | null
+  joinTokenSecretRef: SecretKeyReference | null
+  cloudInitSecretRef: SecretKeyReference
+  image: ImageSelection | null
+  imageSelector: Record<string, string> | null
+  sshKeys: string[]
+  firewalls: string[]
+}
+
+export interface WatchdogDetail {
+  renewIntervalSeconds: number
+  slackSeconds: number
+  maxLifetimeSeconds: number
+}
+
+export interface CatalogueRegion {
+  region: string
+  types: number
+}
+
+export interface PublishedCatalogue {
+  types: number
+  regions: CatalogueRegion[]
+  refreshedAt: string | null
+}
+
+export interface ProviderConfigDetailResponse {
+  summary: ProviderConfigSummary
+  hetzner: HetznerProviderDetail | null
+  watchdog: WatchdogDetail
+  catalogue: PublishedCatalogue
+  conditions: ConditionEntry[]
+  observedAt: string
+}
+
 export interface Money {
   amount: number
   currency: string
@@ -267,6 +315,10 @@ export function leasePath(name: string): string {
   return `${leasesPath}/${encodeURIComponent(name)}`
 }
 
+export function providerConfigPath(name: string): string {
+  return `${providerConfigsPath}/${encodeURIComponent(name)}`
+}
+
 export function machinesPath(config: string, region: string): string {
   const query = new URLSearchParams({ [configQueryKey]: config, [regionQueryKey]: region })
   return `${machinesBasePath}?${query.toString()}`
@@ -311,6 +363,10 @@ export function fetchLeases(): Promise<LeaseListResponse> {
 
 export function fetchLease(name: string): Promise<LeaseDetailResponse> {
   return read<LeaseDetailResponse>(leasePath(name))
+}
+
+export function fetchProviderConfig(name: string): Promise<ProviderConfigDetailResponse> {
+  return read<ProviderConfigDetailResponse>(providerConfigPath(name))
 }
 
 export function fetchMachines(config: string, region: string): Promise<MachineCatalogueResponse> {
