@@ -9,6 +9,7 @@ import (
 	"maps"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -119,16 +120,29 @@ func burstCopySelector(original *metav1.LabelSelector, leaseName string) *metav1
 	return selector
 }
 
+func pinnedToLeaseNodes(original *corev1.Affinity, leaseUID string) *corev1.Affinity {
+	// only the node affinity is the lease's to decide, and replacing the whole field would drop a pod anti-affinity that spreads the copy over the rented nodes
+	pinned := original.DeepCopy()
+	if pinned == nil {
+		pinned = &corev1.Affinity{}
+	}
+	pinned.NodeAffinity = leaseNodeAffinity(leaseUID).NodeAffinity
+	return pinned
+}
+
 func burstCopy(original *appsv1.Deployment, replication Replication) *appsv1.Deployment {
 	lease := replication.Lease
 	spec := original.Spec.DeepCopy()
 	spec.Replicas = &replication.Replicas
 	spec.Selector = burstCopySelector(spec.Selector, lease.Name)
 	spec.Template.Labels = labelledAsBurstCopy(spec.Template.Labels, lease.Name)
-	spec.Template.Spec.Affinity = leaseNodeAffinity(lease.UID)
+	spec.Template.Spec.Affinity = pinnedToLeaseNodes(spec.Template.Spec.Affinity, lease.UID)
 	spec.Template.Spec.Tolerations = withBurstToleration(spec.Template.Spec.Tolerations, lease.Name)
-	// the copy exists to run pods on the leased nodes, and both of these would keep it from ever placing one there
+	// the copy exists to run pods on the leased nodes, and a node selector of the original's names labels none of them carry
 	spec.Template.Spec.NodeSelector = nil
+	// the copy is the expendable half of the pair, and an inherited priority lets it preempt pods already running on the rented nodes
+	spec.Template.Spec.PriorityClassName = ""
+	spec.Template.Spec.Priority = nil
 	spec.Paused = false
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

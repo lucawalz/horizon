@@ -71,6 +71,15 @@ a superset of it, so a Service that selects the original reaches the burst repli
 being told about them, which is the point of the mode. The extra label in the copy's selector
 is what keeps the two ReplicaSets from contending over one set of pods.
 
+The copy's pod spec is the original's with four changes, and each one is scoped as narrowly
+as it can be. The node affinity is replaced by the lease's own and the node selector is
+cleared, because both would otherwise keep the copy off the very nodes it exists to run on.
+The rest of the affinity is kept, so a workload that demands one pod per host still gets one
+pod per rented host rather than every burst replica packed onto a single node. The burst
+toleration is added. The priority class is dropped, because the copy is the expendable half
+of the pair and an inherited priority would let it preempt pods already running on the nodes
+the lease rents.
+
 Replicate mode reports its own condition, `WorkloadReplicable`, and emits no
 `WorkloadMigratable` verdict. Nothing is rolled, so none of the classifier's reasons apply to
 a copy. The condition is True once copies exist, and False with `NoMatchingWorkloads` when

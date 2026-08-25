@@ -170,6 +170,36 @@ func TestBurstCopyIsPinnedToTheLeasesNodes(t *testing.T) {
 	}
 }
 
+func TestBurstCopyKeepsTheOriginalsPodAntiAffinity(t *testing.T) {
+	original := originalDeployment(func(d *appsv1.Deployment) {
+		d.Spec.Template.Spec.Affinity = hostSpreadAffinity()
+	})
+
+	copied := k8s.BurstCopy(original, replicationOf(testLease))
+	affinity := copied.Spec.Template.Spec.Affinity
+
+	if !reflect.DeepEqual(affinity.PodAntiAffinity, hostSpreadAffinity().PodAntiAffinity) {
+		t.Errorf("the copy's pod anti-affinity is %+v, so every burst replica may land on one node", affinity.PodAntiAffinity)
+	}
+	if !reflect.DeepEqual(affinity.NodeAffinity, burstNodeAffinity().NodeAffinity) {
+		t.Errorf("the copy's node affinity is %+v, want it pinned to the lease's nodes", affinity.NodeAffinity)
+	}
+}
+
+func TestBurstCopyDropsTheOriginalsPriority(t *testing.T) {
+	priority := int32(1000)
+	original := originalDeployment(func(d *appsv1.Deployment) {
+		d.Spec.Template.Spec.PriorityClassName = "platform-critical"
+		d.Spec.Template.Spec.Priority = &priority
+	})
+
+	podSpec := k8s.BurstCopy(original, replicationOf(testLease)).Spec.Template.Spec
+
+	if podSpec.PriorityClassName != "" || podSpec.Priority != nil {
+		t.Errorf("the copy runs at priority %q/%v, so it preempts pods already on the rented nodes", podSpec.PriorityClassName, podSpec.Priority)
+	}
+}
+
 func TestBurstCopyCarriesBothOwnershipMarkers(t *testing.T) {
 	original := originalDeployment(func(d *appsv1.Deployment) {
 		d.Labels[k8s.BurstPlacementLabelKey] = k8s.BurstPlacementLabelValue
