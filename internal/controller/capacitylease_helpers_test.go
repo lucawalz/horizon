@@ -494,6 +494,7 @@ func (h *harness) seedWorkload(mutators ...func(*appsv1.Deployment)) {
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: testWorkloadNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}},
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					Tolerations: []corev1.Toleration{{Key: "existing", Operator: corev1.TolerationOpExists}},

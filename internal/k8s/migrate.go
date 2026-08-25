@@ -197,8 +197,8 @@ func workloadRef(kind, name string) string {
 }
 
 func workloadSelector(kind, name string, sel *metav1.LabelSelector) (labels.Selector, error) {
-	if sel != nil && len(sel.MatchLabels)+len(sel.MatchExpressions) == 0 {
-		return nil, fmt.Errorf("selector for %s %q: empty selector would match every pod in the namespace", kind, name)
+	if sel == nil || len(sel.MatchLabels)+len(sel.MatchExpressions) == 0 {
+		return nil, fmt.Errorf("selector for %s %q: empty selector cannot name the pods of this workload", kind, name)
 	}
 	selector, err := metav1.LabelSelectorAsSelector(sel)
 	if err != nil {

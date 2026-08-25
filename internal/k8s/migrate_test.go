@@ -192,6 +192,20 @@ func selectedNames(t *testing.T, kc *fake.Clientset) []string {
 	return names
 }
 
+func plainDeployment(name string) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec:       appsv1.DeploymentSpec{Selector: appSelector(name)},
+	}
+}
+
+func plainStatefulSet(name string) *appsv1.StatefulSet {
+	return &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec:       appsv1.StatefulSetSpec{Selector: appSelector(name)},
+	}
+}
+
 func pausedDeployment(name, app string) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
@@ -383,6 +397,40 @@ func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
 	}
 }
 
+func TestMigrateRejectsAWorkloadThatNamesNoSelectorAtAll(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	cases := map[string]runtime.Object{
+		"deployment":  &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}},
+		"statefulset": &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}},
+	}
+	for kind, workload := range cases {
+		t.Run(kind, func(t *testing.T) {
+			pod := makePod("stray", testNS, "homelab-1", corev1.PodRunning)
+			kc := fake.NewSimpleClientset(node, workload, pod)
+			evictAndDelete(kc)
+
+			if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err == nil {
+				t.Fatal("a workload naming no pods was migrated instead of refused")
+			}
+			if evicted := evictionNames(kc); len(evicted) != 0 {
+				t.Errorf("evicted = %v, want none: an absent selector must never stand in for every pod", evicted)
+			}
+		})
+	}
+}
+
+func TestWorkloadOnBurstNodesRefusesAWorkloadThatNamesNoSelector(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		&appsv1.Deployment{ObjectMeta: migratedMeta("dep1")},
+		labelledPod("stray", "web", "burst-1", corev1.PodRunning),
+	)
+
+	if _, err := k8s.WorkloadOnBurstNodes(context.Background(), kc, testNS, testLease); err == nil {
+		t.Fatal("an absent selector left the gate answering from every pod in the namespace instead of failing")
+	}
+}
+
 func TestMigrateRejectsEmptyDeploymentSelector(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
 	dep := &appsv1.Deployment{
@@ -518,7 +566,7 @@ func TestMigrateDoesNotRelabelNode(t *testing.T) {
 
 func TestMigrateFailsWhenNoLeaseNode(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "homelab-1"}}
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
+	dep := plainDeployment("app")
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
@@ -555,7 +603,7 @@ func TestMigrateRefusesEmptyIdentity(t *testing.T) {
 
 func TestMigrateRequiresANodeOfThisLease(t *testing.T) {
 	foreign := burstNode("burst-b", "uid-b")
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
+	dep := plainDeployment("app")
 	kc := fake.NewSimpleClientset(foreign, dep)
 	evictAndDelete(kc)
 
@@ -567,8 +615,8 @@ func TestMigrateRequiresANodeOfThisLease(t *testing.T) {
 
 func TestMigrateAffinityPatch(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
-	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
+	dep := plainDeployment("dep1")
+	sts := plainStatefulSet("sts1")
 	kc := fake.NewSimpleClientset(node, dep, sts)
 	evictAndDelete(kc)
 
@@ -623,7 +671,7 @@ func TestLeaseNodeAffinityKeysOnLeaseUID(t *testing.T) {
 
 func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	dep := plainDeployment("dep1")
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
@@ -649,7 +697,7 @@ func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
 
 func TestMigrateStampsTheOwningLeaseOnTheWorkload(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	dep := plainDeployment("dep1")
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
@@ -668,7 +716,7 @@ func TestMigrateStampsTheOwningLeaseOnTheWorkload(t *testing.T) {
 
 func TestRestorePlacementClearsEveryPlacementMarker(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	dep := plainDeployment("dep1")
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
@@ -698,6 +746,7 @@ func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) 
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{Affinity: originalAffinity, Tolerations: []corev1.Toleration{originalToleration}},
 			},
@@ -739,17 +788,7 @@ func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) 
 
 func TestMigrateDoesNotRepatchAnAlreadyMigratedWorkload(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "dep1",
-			Namespace:   testNS,
-			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
-			Labels: map[string]string{
-				k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue,
-				provider.LeaseUIDLabelKey:  testLease.UID,
-			},
-		},
-	}
+	dep := ownedDeployment("dep1", "web", testLease)
 	kc := fake.NewSimpleClientset(node, dep)
 	evictAndDelete(kc)
 
@@ -772,7 +811,7 @@ func TestMigrateNeitherPatchesNorClaimsAnotherLeasesWorkload(t *testing.T) {
 	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
 	nodeA := burstNode("burst-a", testLease.UID)
 	nodeB := burstNode("burst-b", leaseB.UID)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
+	dep := plainDeployment("app")
 	kc := fake.NewSimpleClientset(nodeA, nodeB, dep)
 	evictAndDelete(kc)
 
@@ -851,10 +890,11 @@ func TestMigrateReportsTheSameWorkloadsOnASecondPass(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: hostSpreadAffinity(100)}},
 		},
 	}
-	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
+	sts := plainStatefulSet("sts1")
 	pod := makePod("dep1-pod", testNS, "homelab-1", corev1.PodRunning)
 	kc := fake.NewSimpleClientset(node, dep, sts, pod)
 	evictAndDelete(kc)
@@ -916,6 +956,7 @@ func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{Affinity: originalAffinity, Tolerations: []corev1.Toleration{originalToleration}},
 			},
@@ -958,14 +999,13 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	dep1 := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{Affinity: originalAffinity},
 			},
 		},
 	}
-	dep2 := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "dep2", Namespace: testNS},
-	}
+	dep2 := plainDeployment("dep2")
 
 	kc := fake.NewSimpleClientset(node, dep1, dep2)
 	evictAndDelete(kc)
@@ -1010,6 +1050,7 @@ func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Affinity: existingAffinity}},
 		},
 	}
@@ -1036,8 +1077,8 @@ func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 
 func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
-	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
+	dep := plainDeployment("dep1")
+	sts := plainStatefulSet("sts1")
 	untouched := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "elsewhere", Namespace: "default"}}
 	kc := fake.NewSimpleClientset(node, dep, sts, untouched)
 	evictAndDelete(kc)
@@ -1071,12 +1112,13 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 	dep1 := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{Tolerations: []corev1.Toleration{existingToleration}},
 			},
 		},
 	}
-	sts1 := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
+	sts1 := plainStatefulSet("sts1")
 
 	kc := fake.NewSimpleClientset(node, dep1, sts1)
 	evictAndDelete(kc)
@@ -1128,7 +1170,7 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 
 func TestRestorePlacementIsIdempotent(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	dep := plainDeployment("dep1")
 	pod := makePod("app-pod", testNS, "burst-1", corev1.PodRunning)
 	kc := fake.NewSimpleClientset(node, dep, pod)
 	evictAndDelete(kc)
@@ -1160,7 +1202,7 @@ func TestRestorePlacementIsIdempotent(t *testing.T) {
 }
 
 func TestRestorePlacementWithoutAnnotationIsNoop(t *testing.T) {
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	dep := plainDeployment("dep1")
 	pod := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
 	kc := fake.NewSimpleClientset(dep, pod)
 	evictAndDelete(kc)
@@ -1183,14 +1225,14 @@ func TestRestorePlacementRestoresOnlyTheWorkloadsThisLeaseOwns(t *testing.T) {
 	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
 	nodeA := burstNode("burst-a", testLease.UID)
 	nodeB := burstNode("burst-b", leaseB.UID)
-	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-a", Namespace: testNS}}
+	depA := plainDeployment("app-a")
 	kc := fake.NewSimpleClientset(nodeA, nodeB, depA)
 	evictAndDelete(kc)
 
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate lease-a: %v", err)
 	}
-	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-b", Namespace: testNS}}
+	depB := plainDeployment("app-b")
 	if _, err := kc.AppsV1().Deployments(testNS).Create(context.Background(), depB, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create app-b: %v", err)
 	}
@@ -1226,6 +1268,7 @@ func TestRestorePlacementRescuesAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
 			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
 		},
+		Spec: appsv1.DeploymentSpec{Selector: appSelector("web")},
 	}
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
@@ -1299,6 +1342,7 @@ func TestRestorePlacementReportsUnreadableAnnotation(t *testing.T) {
 			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: "{not json"},
 			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
 		},
+		Spec: appsv1.DeploymentSpec{Selector: appSelector("web")},
 	}
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
@@ -1317,7 +1361,7 @@ func TestRestorePlacementReportsUnreadableAnnotation(t *testing.T) {
 
 func TestRestorePlacementReportsPatchFailure(t *testing.T) {
 	node := burstNode("burst-1", testLease.UID)
-	sts := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "sts1", Namespace: testNS}}
+	sts := plainStatefulSet("sts1")
 	kc := fake.NewSimpleClientset(node, sts)
 	evictAndDelete(kc)
 
@@ -1766,6 +1810,7 @@ func TestMigrateClearsTheNodeSelectorAndSavesIt(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{NodeSelector: map[string]string{"disktype": "ssd", "zone": "a"}},
 			},
@@ -1801,6 +1846,7 @@ func TestRestorePlacementReturnsTheNodeSelector(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: original}},
 		},
 	}
@@ -1824,6 +1870,7 @@ func TestRestorePlacementDropsNodeSelectorKeysAddedWhileOnBurst(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("dep1"),
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{NodeSelector: map[string]string{"disktype": "ssd"}},
 			},
@@ -1863,6 +1910,7 @@ func TestRestorePlacementLeavesTheNodeSelectorOfAnOlderAnnotation(t *testing.T) 
 			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
 		},
 		Spec: appsv1.DeploymentSpec{
+			Selector: appSelector("web"),
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{NodeSelector: pinned}},
 		},
 	}
@@ -1940,7 +1988,10 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "a"}},
 		},
 	}
-	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-b", Namespace: testNSB}}
+	depB := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-b", Namespace: testNSB},
+		Spec:       appsv1.DeploymentSpec{Selector: appSelector("b")},
+	}
 	kc := fake.NewSimpleClientset(nodeA, nodeB, depA, depB)
 	evictAndDelete(kc)
 

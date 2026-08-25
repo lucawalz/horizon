@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/lucawalz/horizon/internal/k8s"
-	"github.com/lucawalz/horizon/internal/provider"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,7 +33,7 @@ func classifyOne(t *testing.T, object runtime.Object) k8s.WorkloadMigratability 
 func deploymentWith(name string, replicas int32, mutate func(spec *appsv1.DeploymentSpec)) *appsv1.Deployment {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
-		Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
+		Spec:       appsv1.DeploymentSpec{Replicas: &replicas, Selector: appSelector(name)},
 	}
 	mutate(&dep.Spec)
 	return dep
@@ -43,7 +42,7 @@ func deploymentWith(name string, replicas int32, mutate func(spec *appsv1.Deploy
 func statefulSetWith(name string, replicas int32, mutate func(spec *appsv1.StatefulSetSpec)) *appsv1.StatefulSet {
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
-		Spec:       appsv1.StatefulSetSpec{Replicas: &replicas},
+		Spec:       appsv1.StatefulSetSpec{Replicas: &replicas, Selector: appSelector(name)},
 	}
 	mutate(&sts.Spec)
 	return sts
@@ -300,8 +299,9 @@ func TestClassifyMigratabilityStillFlagsAWorkloadAlreadyMovedOntoBurst(t *testin
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "dep1",
 			Namespace:   testNS,
-			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: `{"nodeSelector":{"disktype":"ssd"}}`},
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: pinnedPlacementJSON},
 		},
+		Spec: appsv1.DeploymentSpec{Selector: appSelector("web")},
 	}
 
 	got := classifyOne(t, dep)
@@ -312,9 +312,7 @@ func TestClassifyMigratabilityStillFlagsAWorkloadAlreadyMovedOntoBurst(t *testin
 }
 
 func TestClassifyMigratabilityNamesAWorkloadHeldByAnotherLease(t *testing.T) {
-	held := migratedMeta("dep1")
-	held.Labels[provider.LeaseUIDLabelKey] = "uid-b"
-	dep := &appsv1.Deployment{ObjectMeta: held}
+	dep := ownedDeployment("dep1", "web", k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"})
 
 	got := classifyOne(t, dep)
 	if got.Verdict != k8s.VerdictDisruptive {
@@ -327,7 +325,7 @@ func TestClassifyMigratabilityNamesAWorkloadHeldByAnotherLease(t *testing.T) {
 }
 
 func TestClassifyMigratabilityAcceptsThisLeasesOwnWorkload(t *testing.T) {
-	dep := &appsv1.Deployment{ObjectMeta: migratedMeta("dep1")}
+	dep := ownedDeployment("dep1", "web", testLease)
 
 	got := classifyOne(t, dep)
 	if got.Verdict != k8s.VerdictSeamless {
@@ -349,6 +347,7 @@ func TestClassifyMigratabilityRefusesACorruptPlacementAnnotation(t *testing.T) {
 			Namespace:   testNS,
 			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: "{not json"},
 		},
+		Spec: appsv1.DeploymentSpec{Selector: appSelector("web")},
 	}
 
 	kc := fake.NewSimpleClientset(dep)
