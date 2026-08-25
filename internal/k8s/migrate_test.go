@@ -179,12 +179,46 @@ func selectedNames(t *testing.T, kc *fake.Clientset) []string {
 	return names
 }
 
+func pausedDeployment(name, app string) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
+			Paused:   true,
+		},
+	}
+}
+
+func migratedMeta(name string) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Name:        name,
+		Namespace:   testNS,
+		Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
+		Labels: map[string]string{
+			k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue,
+			provider.LeaseUIDLabelKey:  testLease.UID,
+		},
+	}
+}
+
+func createPod(t *testing.T, kc *fake.Clientset, name, app, node string) {
+	t.Helper()
+	pod := makePod(name, testNS, node, corev1.PodRunning)
+	pod.Labels = map[string]string{"app": app}
+	if _, err := kc.CoreV1().Pods(testNS).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create pod %q: %v", name, err)
+	}
+}
+
 func TestMigrateEviction(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
-	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS}}
+	dep := pausedDeployment("app", "web")
 	appPod := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
+	appPod.Labels = map[string]string{"app": "web"}
 	dsPod := makeDSPod("ds-pod", testNS, "homelab-1")
+	dsPod.Labels = map[string]string{"app": "web"}
 	otherPod := makePod("other-pod", "default", "homelab-1", corev1.PodRunning)
+	otherPod.Labels = map[string]string{"app": "web"}
 
 	kc := fake.NewSimpleClientset(node, dep, appPod, dsPod, otherPod)
 	evictAndDelete(kc)
@@ -206,19 +240,41 @@ func TestMigrateEviction(t *testing.T) {
 	}
 }
 
+func TestMigrateEvictsOnlyThePodsOfTheWorkloadsItPatched(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
+	dep := pausedDeployment("app", "web")
+	owned := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
+	owned.Labels = map[string]string{"app": "web"}
+	bare := makePod("bare-pod", testNS, "homelab-1", corev1.PodRunning)
+
+	kc := fake.NewSimpleClientset(node, dep, owned, bare)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	evicted := evictionNames(kc)
+	if len(evicted) != 1 || evicted[0] != "app-pod" {
+		t.Errorf("evicted = %v, want [app-pod]: nothing would recreate a pod with no controlling workload", evicted)
+	}
+}
+
 func TestMigrateLeavesDeploymentPodsToItsRollout(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
-	dep := &appsv1.Deployment{
+	rolling := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
 		},
 	}
+	stalled := pausedDeployment("batch", "batch")
 	matched := makePod("app-pod", testNS, "homelab-1", corev1.PodRunning)
 	matched.Labels = map[string]string{"app": "web"}
 	unmatched := makePod("other-pod", testNS, "homelab-1", corev1.PodRunning)
+	unmatched.Labels = map[string]string{"app": "batch"}
 
-	kc := fake.NewSimpleClientset(node, dep, matched, unmatched)
+	kc := fake.NewSimpleClientset(node, rolling, stalled, matched, unmatched)
 	evictAndDelete(kc)
 
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
@@ -227,7 +283,7 @@ func TestMigrateLeavesDeploymentPodsToItsRollout(t *testing.T) {
 
 	evicted := evictionNames(kc)
 	if len(evicted) != 1 || evicted[0] != "other-pod" {
-		t.Errorf("evicted = %v, want [other-pod]: the deployment's own pod belongs to its rollout", evicted)
+		t.Errorf("evicted = %v, want [other-pod]: the rolling deployment's own pod belongs to its rollout", evicted)
 	}
 }
 
@@ -255,22 +311,25 @@ func TestMigrateLeavesStatefulSetPodsToItsRollout(t *testing.T) {
 }
 
 func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
-	dep := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "app",
-			Namespace:   testNS,
-			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
-			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
-		},
+	rolling := &appsv1.Deployment{
+		ObjectMeta: migratedMeta("app"),
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+		},
+	}
+	stalled := &appsv1.Deployment{
+		ObjectMeta: migratedMeta("batch"),
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "batch"}},
+			Paused:   true,
 		},
 	}
 	matched := makePod("app-pod", testNS, "burst-1", corev1.PodRunning)
 	matched.Labels = map[string]string{"app": "web"}
 	unmatched := makePod("other-pod", testNS, "burst-1", corev1.PodRunning)
+	unmatched.Labels = map[string]string{"app": "batch"}
 
-	kc := fake.NewSimpleClientset(dep, matched, unmatched)
+	kc := fake.NewSimpleClientset(rolling, stalled, matched, unmatched)
 	evictAndDelete(kc)
 
 	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
@@ -279,7 +338,7 @@ func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
 
 	evicted := evictionNames(kc)
 	if len(evicted) != 1 || evicted[0] != "other-pod" {
-		t.Errorf("evicted = %v, want [other-pod]: the deployment's own pod belongs to its rollout", evicted)
+		t.Errorf("evicted = %v, want [other-pod]: the rolling deployment's own pod belongs to its rollout", evicted)
 	}
 }
 
@@ -1138,6 +1197,47 @@ func TestRestorePlacementRescuesAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
 	}
 	if _, ok := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]; ok {
 		t.Error("an unowned workload stayed pinned to a lease that no longer exists")
+	}
+}
+
+func TestEvictionSparesTheWorkloadPodsOfAnotherLease(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	nodeA := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-a",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID},
+	}}
+	nodeB := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-b",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: leaseB.UID},
+	}}
+	kc := fake.NewSimpleClientset(nodeA, nodeB, pausedDeployment("app-a", "a"))
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate lease-a: %v", err)
+	}
+	if _, err := kc.AppsV1().Deployments(testNS).Create(context.Background(), pausedDeployment("app-b", "b"), metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create app-b: %v", err)
+	}
+	createPod(t, kc, "pod-a", "a", "burst-a")
+	createPod(t, kc, "pod-b", "b", "homelab-1")
+	kc.ClearActions()
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, leaseB); err != nil {
+		t.Fatalf("Migrate lease-b: %v", err)
+	}
+	if got := evictionNames(kc); len(got) != 1 || got[0] != "pod-b" {
+		t.Fatalf("lease-b's migrate evicted %v, want [pod-b]: lease-a's pod is not its to move", got)
+	}
+
+	createPod(t, kc, "pod-b", "b", "burst-b")
+	kc.ClearActions()
+
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, leaseB); err != nil {
+		t.Fatalf("RestorePlacement lease-b: %v", err)
+	}
+	if got := evictionNames(kc); len(got) != 1 || got[0] != "pod-b" {
+		t.Errorf("lease-b's restore evicted %v, want [pod-b]: lease-a's pod must survive another lease's teardown", got)
 	}
 }
 
