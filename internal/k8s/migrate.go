@@ -245,7 +245,11 @@ func (wc workloadClient) plural() string {
 }
 
 func (wc workloadClient) ref(name string) string {
-	return wc.namespace + workloadRefSeparator + wc.kind + workloadRefSeparator + name
+	return workloadRef(wc.namespace, wc.kind, name)
+}
+
+func workloadRef(namespace, kind, name string) string {
+	return namespace + workloadRefSeparator + kind + workloadRefSeparator + name
 }
 
 func NamespaceSetOfWorkloads(refs []string) (TargetSet, error) {
@@ -382,12 +386,8 @@ func Migrate(ctx context.Context, kc kubernetes.Interface, targets TargetSet, le
 		return MigrationResult{}, fmt.Errorf("migrate: %w", err)
 	}
 
-	hasNode, err := leaseNodePresent(ctx, kc, lease.UID)
-	if err != nil {
+	if err := requireLeaseNode(ctx, kc, lease.UID, opMigrate); err != nil {
 		return MigrationResult{}, err
-	}
-	if !hasNode {
-		return MigrationResult{}, fmt.Errorf("migrate: no node carries label %s=%s", LeaseUIDLabelKey, lease.UID)
 	}
 
 	var result MigrationResult
@@ -700,12 +700,15 @@ func restoreWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentit
 	return restored, notSelfRolling, firstErr
 }
 
-func leaseNodePresent(ctx context.Context, kc kubernetes.Interface, leaseUID string) (bool, error) {
+func requireLeaseNode(ctx context.Context, kc kubernetes.Interface, leaseUID, op string) error {
 	nodes, err := leaseNodes(ctx, kc, leaseUID)
 	if err != nil {
-		return false, fmt.Errorf("migrate: list nodes: %w", err)
+		return fmt.Errorf("%s: list nodes: %w", op, err)
 	}
-	return len(nodes) > 0, nil
+	if len(nodes) == 0 {
+		return fmt.Errorf("%s: no node carries label %s=%s", op, LeaseUIDLabelKey, leaseUID)
+	}
+	return nil
 }
 
 func isDaemonSetPod(pod *corev1.Pod) bool {
