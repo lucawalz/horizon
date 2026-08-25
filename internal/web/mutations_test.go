@@ -170,6 +170,47 @@ func TestLeaseCreateStoresExactlyTheSubmittedFields(t *testing.T) {
 	}
 }
 
+func TestLeaseCreateNormalisesTheSubmittedNamespaces(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "trimmed-run"
+	removeAfterTest(t, name)
+
+	request := createRequestFixture(name)
+	request.WorkloadNamespaces = []string{" batch ", "", "   ", "team-a"}
+
+	server := newWritingServer(t)
+	response := mutate(t, server, http.MethodPost, leasesEndpoint, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusCreated, response.Body)
+	}
+
+	workload := present(t, "workload", readLease(t, name).Spec.Workload)
+	if want := []string{"batch", "team-a"}; !reflect.DeepEqual(workload.Namespaces, want) {
+		t.Errorf("workload namespaces = %v, want %v: a padded name is the request's to normalise", workload.Namespaces, want)
+	}
+}
+
+func TestLeaseCreateCarriesNoWorkloadWhenEveryNamespaceIsBlank(t *testing.T) {
+	testEnv.SkipUnlessRunning(t)
+
+	const name = "unbound-run"
+	removeAfterTest(t, name)
+
+	request := createRequestFixture(name)
+	request.WorkloadNamespaces = []string{"", "   "}
+
+	server := newWritingServer(t)
+	response := mutate(t, server, http.MethodPost, leasesEndpoint, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d, body %s", response.Code, http.StatusCreated, response.Body)
+	}
+
+	if workload := readLease(t, name).Spec.Workload; workload != nil {
+		t.Errorf("workload = %+v, want none: a list of blank entries names no namespace", workload)
+	}
+}
+
 // a decimal suffix and a binary one differ by 7 percent, which is the difference between offering cx23 and excluding it
 func TestLeaseCreateKeepsTheSubmittedMemoryUnit(t *testing.T) {
 	testEnv.SkipUnlessRunning(t)

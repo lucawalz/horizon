@@ -153,14 +153,20 @@ describe('the create form', () => {
     await view.unmount()
   })
 
-  it('drops a namespace entry left blank', async () => {
+  it('drops a namespace entry left blank or holding only spaces', async () => {
     const respond = stubCluster(() => jsonResponse(leaseDetailBody(), 201))
     const { view, form } = await newLeaseForm()
 
     await fill(control<HTMLInputElement>(view.container, 'input[name="name"]'), 'batch-run')
     await fill(control<HTMLInputElement>(view.container, 'input[name="region"]'), 'nbg1')
-    await click(control<HTMLButtonElement>(view.container, 'button#add-workload-namespace'))
-    await fill(control<HTMLInputElement>(view.container, 'input[name="workload"]'), 'team-a')
+    const add = control<HTMLButtonElement>(view.container, 'button#add-workload-namespace')
+    await click(add)
+    await click(add)
+
+    const namespaces = [...view.container.querySelectorAll<HTMLInputElement>('input[name="workload"]')]
+    expect(namespaces).toHaveLength(3)
+    await fill(namespaces[0], 'team-a')
+    await fill(namespaces[1], '   ')
 
     await send(form)
 

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -128,9 +127,12 @@ func teardownGrace(elapsed *int64) *metav1.Duration {
 }
 
 func workloadRefFor(namespaces []string) *v1alpha1.WorkloadRef {
-	named := slices.DeleteFunc(slices.Clone(namespaces), func(namespace string) bool {
-		return strings.TrimSpace(namespace) == ""
-	})
+	var named []string
+	for _, namespace := range namespaces {
+		if trimmed := strings.TrimSpace(namespace); trimmed != "" {
+			named = append(named, trimmed)
+		}
+	}
 	if len(named) == 0 {
 		return nil
 	}
