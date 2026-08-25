@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 export const leasesHref = '/'
 export const machinesHref = '/machines'
 export const newLeaseHref = '/new'
+export const newConfigHref = '/configs/new'
 
 const leasePrefix = '/leases/'
 const configQueryKey = 'config'
@@ -12,6 +13,7 @@ const primaryButton = 0
 export type Route =
   | { name: 'leases' }
   | { name: 'new' }
+  | { name: 'new-config' }
   | { name: 'lease'; lease: string }
   | { name: 'machines'; config: string; region: string }
   | { name: 'unknown'; path: string }
@@ -31,6 +33,7 @@ export function machinesHrefFor(config: string, region: string): string {
 function parseRoute(path: string, search: string): Route {
   if (path === leasesHref) return { name: 'leases' }
   if (path === newLeaseHref) return { name: 'new' }
+  if (path === newConfigHref) return { name: 'new-config' }
 
   if (path.startsWith(leasePrefix)) {
     const lease = decodeURIComponent(path.slice(leasePrefix.length))

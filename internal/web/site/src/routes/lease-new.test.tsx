@@ -16,6 +16,7 @@ import {
   send,
   stubFetchWith,
 } from '@/routes/test-support'
+import { newConfigHref } from '@/routes/router'
 import { formatCount } from '@/routes/units'
 
 const catalogue = machinesBody([providerConfigSummary('hetzner')])
@@ -157,6 +158,21 @@ describe('the create form', () => {
     expect(view.container.querySelector('datalist')).toBeNull()
     expect(view.container.textContent).not.toContain('forbidden')
     expect(view.container.textContent).not.toContain('namespace could not')
+
+    await view.unmount()
+  })
+
+  it('offers the provider config form when the cluster holds none', async () => {
+    stubFetchWith((input) => {
+      const target = String(input)
+      if (target === machinesPath('', '')) return Promise.resolve(jsonResponse(machinesBody([])))
+      return Promise.resolve(refusedNamespaces())
+    })
+    const view = await mount(<LeaseNewRoute />)
+
+    const offered = control<HTMLAnchorElement>(view.container, `a[href="${newConfigHref}"]`)
+    expect(offered.textContent).toContain('provider config')
+    expect(view.container.textContent).not.toContain('kubectl')
 
     await view.unmount()
   })

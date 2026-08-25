@@ -1,15 +1,15 @@
 import type { FormEvent } from 'react'
 import { useEffect, useState } from 'react'
 
-import { Button, controlClass, Field } from '@/components/controls'
+import { Button, ButtonLink, controlClass, Field, Numeric } from '@/components/controls'
 import type { LeaseCreateRequest, MachineCatalogueResponse, ProviderConfigSummary } from '@/lib/api'
 import { createLease, fetchMachines, fetchNamespaces, machinesPath } from '@/lib/api'
 import { errorFor } from '@/lib/errors'
 import { fieldValue, numberValue } from '@/lib/form'
-import { EmptyState, Loading, Notice, PageHeader, Panel, Snippet } from '@/routes/page'
+import { EmptyState, Loading, Notice, PageHeader, Panel } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { leaseHref, navigate } from '@/routes/router'
+import { leaseHref, navigate, newConfigHref } from '@/routes/router'
 import {
   bytesFor,
   formatCount,
@@ -102,26 +102,6 @@ function memoryHint(sizing: Sizing): string {
     return 'Optional. The unit is part of the requirement, so choose it deliberately.'
   }
   return `Resolves to ${formatCount(bytesFor(Number(sizing.memory), sizing.unit))} bytes.`
-}
-
-function Numeric({
-  name,
-  bounds,
-}: {
-  name: string
-  bounds: { min: number; max: number; initial: number }
-}) {
-  return (
-    <input
-      name={name}
-      type="number"
-      required
-      min={bounds.min}
-      max={bounds.max}
-      defaultValue={bounds.initial}
-      className={controlClass}
-    />
-  )
 }
 
 function ModeChoice({ mode }: { mode: string }) {
@@ -372,10 +352,14 @@ function NoConfigs() {
   return (
     <EmptyState
       title="The cluster holds no provider config"
-      action={<Snippet>kubectl apply -f providerconfig.yaml</Snippet>}
+      action={
+        <ButtonLink href={newConfigHref} tone="primary">
+          Create a provider config
+        </ButtonLink>
+      }
     >
       A lease reserves capacity through a ProviderConfig, which carries the credentials and the
-      image a burst node boots. Apply one and it can be chosen here.
+      image a burst node boots. Create one and it can be chosen here.
     </EmptyState>
   )
 }

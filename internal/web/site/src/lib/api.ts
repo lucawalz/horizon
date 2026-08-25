@@ -122,6 +122,9 @@ export interface ProviderConfigSummary {
   name: string
   type: string
   ready: ConditionStatus | null
+  reason: string | null
+  message: string | null
+  cataloguePublished: ConditionStatus | null
   createdAt: string
 }
 
@@ -173,6 +176,34 @@ export interface LeaseCreateRequest {
   workloadNamespace: string
 }
 
+export interface SecretKeyRequest {
+  name: string
+  key: string
+}
+
+export interface HetznerProviderRequest {
+  credentialsSecretRef: SecretKeyRequest
+  nodeCredentialSecretRef: SecretKeyRequest | null
+  joinTokenSecretRef: SecretKeyRequest | null
+  cloudInitSecretRef: SecretKeyRequest
+  image: string
+  sshKeys: string[]
+  firewalls: string[]
+}
+
+export interface WatchdogRequest {
+  renewIntervalSeconds: number
+  slackSeconds: number
+  maxLifetimeSeconds: number
+}
+
+export interface ProviderConfigCreateRequest {
+  name: string
+  type: string
+  hetzner: HetznerProviderRequest | null
+  watchdog: WatchdogRequest
+}
+
 export interface LeaseReleaseResponse {
   name: string
   detail: string
@@ -222,6 +253,7 @@ const regionQueryKey = 'region'
 
 export const leasesPath = '/api/leases'
 export const namespacesPath = '/api/namespaces'
+export const providerConfigsPath = '/api/providerconfigs'
 const machinesBasePath = '/api/machines'
 
 export function leasePath(name: string): string {
@@ -288,6 +320,12 @@ export function deleteLease(name: string): Promise<LeaseReleaseResponse> {
 
 export function extendLease(name: string, durationSeconds: number): Promise<LeaseExtendResponse> {
   return change<LeaseExtendResponse>(leasePath(name), extendMethod, { durationSeconds })
+}
+
+export function createProviderConfig(
+  request: ProviderConfigCreateRequest,
+): Promise<ProviderConfigSummary> {
+  return change<ProviderConfigSummary>(providerConfigsPath, createMethod, request)
 }
 
 export function fetchNamespaces(): Promise<NamespaceListResponse> {

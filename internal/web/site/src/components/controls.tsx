@@ -51,6 +51,26 @@ export function ButtonLink({
   )
 }
 
+export interface Bounds {
+  min: number
+  max?: number
+  initial: number
+}
+
+export function Numeric({ name, bounds }: { name: string; bounds: Bounds }) {
+  return (
+    <input
+      name={name}
+      type="number"
+      required
+      min={bounds.min}
+      max={bounds.max}
+      defaultValue={bounds.initial}
+      className={controlClass}
+    />
+  )
+}
+
 export function Field({
   label,
   hint,

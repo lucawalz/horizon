@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react'
 import { useRef } from 'react'
 
-import { Button, controlClass } from '@/components/controls'
+import { Button, ButtonLink, controlClass } from '@/components/controls'
 import {
   Cell,
   HeadCell,
@@ -23,13 +23,13 @@ import { ConditionChip, Since } from '@/routes/chips'
 import { EmptyState, Loading, Notice, PageHeader } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { machinesHrefFor, navigate } from '@/routes/router'
+import { machinesHrefFor, navigate, newConfigHref } from '@/routes/router'
 import { absent, formatBytes, formatRate } from '@/routes/units'
 
 const configField = 'config'
 const regionField = 'region'
 const readyCondition = 'Ready'
-const configColumns = 4
+const configColumns = 5
 const typeColumns = 8
 
 function Picker({
@@ -154,13 +154,14 @@ function ConfigsPanel({ configs }: { configs: ProviderConfigSummary[] }) {
           <HeadCell>Config</HeadCell>
           <HeadCell>Provider</HeadCell>
           <HeadCell>Ready</HeadCell>
+          <HeadCell>Reason</HeadCell>
           <HeadCell numeric>Created</HeadCell>
         </Row>
       </TableHead>
       <TableBody>
         {configs.length === 0 ? (
           <TableEmpty span={configColumns}>
-            The cluster holds no ProviderConfig. Apply one with provider credentials before a lease
+            The cluster holds no ProviderConfig. Create one with provider credentials before a lease
             can reserve anything.
           </TableEmpty>
         ) : (
@@ -171,6 +172,7 @@ function ConfigsPanel({ configs }: { configs: ProviderConfigSummary[] }) {
               <Cell>
                 <ConditionChip type={readyCondition} status={one.ready} />
               </Cell>
+              <Cell muted>{one.reason ?? absent}</Cell>
               <Cell numeric muted>
                 <Since at={one.createdAt} />
               </Cell>
@@ -256,11 +258,14 @@ export function MachinesRoute({ config, region }: { config: string; region: stri
         title="Machines"
         lede="The instance types each provider config offers in a region, as the controller last fetched them."
         aside={
-          view.data !== null && view.data.state === 'Listed' && view.data.refreshedAt !== null ? (
-            <span className="text-label-12 text-subtle">
-              Refreshed <Since at={view.data.refreshedAt} />
-            </span>
-          ) : undefined
+          <>
+            {view.data !== null && view.data.state === 'Listed' && view.data.refreshedAt !== null ? (
+              <span className="text-label-12 text-subtle">
+                Refreshed <Since at={view.data.refreshedAt} />
+              </span>
+            ) : null}
+            <ButtonLink href={newConfigHref}>New provider config</ButtonLink>
+          </>
         }
       />
       <div className="space-y-gutter">

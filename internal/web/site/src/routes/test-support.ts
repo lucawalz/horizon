@@ -141,8 +141,20 @@ export function leaseListBody(leases: LeaseSummary[]): LeaseListResponse {
   return { leases, observedAt: '2026-08-21T12:00:00Z' }
 }
 
-export function providerConfigSummary(name: string): ProviderConfigSummary {
-  return { name, type: 'hetzner', ready: 'True', createdAt: '2026-08-21T10:00:00Z' }
+export function providerConfigSummary(
+  name: string,
+  overrides: Partial<ProviderConfigSummary> = {},
+): ProviderConfigSummary {
+  return {
+    name,
+    type: 'hetzner',
+    ready: 'True',
+    reason: null,
+    message: null,
+    cataloguePublished: 'True',
+    createdAt: '2026-08-21T10:00:00Z',
+    ...overrides,
+  }
 }
 
 export function machinesBody(configs: ProviderConfigSummary[]): MachineCatalogueResponse {

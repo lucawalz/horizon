@@ -13,6 +13,10 @@ const secondsPerHour = 60 * secondsPerMinute
 // the crd holds spec.duration between these through its own cel rule, so a control offering more only earns a refusal
 export const leaseMinutes = { min: 5, max: 8 * minutesPerHour }
 
+export const watchdogLifetimeMinutes = { min: 5, max: 24 * minutesPerHour }
+
+export const minRenewIntervalSeconds = 10
+
 export const absent = 'not set'
 
 export interface MemoryUnit {
