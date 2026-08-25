@@ -102,18 +102,24 @@ func replacingAffinity(a *corev1.Affinity, kind, name string) (map[string]any, e
 	return fields, nil
 }
 
-func savedPlacementMarkers(placement string) metadataPatch {
+func savedPlacementMarkers(placement, leaseUID string) metadataPatch {
 	value := BurstPlacementLabelValue
 	return metadataPatch{
 		Annotations: map[string]*string{PrePlacementAnnotationKey: &placement},
-		Labels:      map[string]*string{BurstPlacementLabelKey: &value},
+		Labels: map[string]*string{
+			BurstPlacementLabelKey: &value,
+			LeaseUIDLabelKey:       &leaseUID,
+		},
 	}
 }
 
 func clearedPlacementMarkers() metadataPatch {
 	return metadataPatch{
 		Annotations: map[string]*string{PrePlacementAnnotationKey: nil},
-		Labels:      map[string]*string{BurstPlacementLabelKey: nil},
+		Labels: map[string]*string{
+			BurstPlacementLabelKey: nil,
+			LeaseUIDLabelKey:       nil,
+		},
 	}
 }
 
@@ -160,6 +166,7 @@ func leaseNodeAffinity(leaseUID string) *corev1.Affinity {
 type workloadTarget struct {
 	name           string
 	annotations    map[string]string
+	labels         map[string]string
 	podSpec        *corev1.PodSpec
 	selector       labels.Selector
 	rolloutReason  string
@@ -217,6 +224,7 @@ func deploymentClient(kc kubernetes.Interface, namespace string) workloadClient 
 				targets = append(targets, workloadTarget{
 					name:           item.Name,
 					annotations:    item.Annotations,
+					labels:         item.Labels,
 					podSpec:        &item.Spec.Template.Spec,
 					selector:       selector,
 					rolloutReason:  deploymentRolloutReason(item.Spec),
@@ -253,6 +261,7 @@ func statefulSetClient(kc kubernetes.Interface, namespace string) workloadClient
 				targets = append(targets, workloadTarget{
 					name:          item.Name,
 					annotations:   item.Annotations,
+					labels:        item.Labels,
 					podSpec:       &item.Spec.Template.Spec,
 					selector:      selector,
 					rolloutReason: statefulSetRolloutReason(item.Spec.UpdateStrategy),
@@ -345,7 +354,7 @@ func buildMigratePatch(t workloadTarget, lease LeaseIdentity) ([]byte, error) {
 	if len(t.podSpec.NodeSelector) > 0 {
 		moved.NodeSelector = nodeSelectorPatch(nil, t.podSpec.NodeSelector)
 	}
-	patchData, err := buildPlacementPatch(savedPlacementMarkers(placement), moved)
+	patchData, err := buildPlacementPatch(savedPlacementMarkers(placement, lease.UID), moved)
 	if err != nil {
 		return nil, fmt.Errorf("migrate: marshal patch for %q: %w", t.name, err)
 	}

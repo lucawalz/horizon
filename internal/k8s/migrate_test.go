@@ -584,6 +584,50 @@ func TestMigrateRecordsPlacementInTheSamePatch(t *testing.T) {
 	}
 }
 
+func TestMigrateStampsTheOwningLeaseOnTheWorkload(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	stored := getDeployment(t, kc, "dep1")
+	if got := stored.Labels[provider.LeaseUIDLabelKey]; got != testLease.UID {
+		t.Errorf("owner label = %q, want %q: the marker must name the lease that moved the workload", got, testLease.UID)
+	}
+	if got := stored.Labels[k8s.BurstPlacementLabelKey]; got != k8s.BurstPlacementLabelValue {
+		t.Errorf("placement label = %q, want %q", got, k8s.BurstPlacementLabelValue)
+	}
+}
+
+func TestRestorePlacementClearsEveryPlacementMarker(t *testing.T) {
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
+	dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(node, dep)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+
+	stored := getDeployment(t, kc, "dep1")
+	if _, ok := stored.Annotations[k8s.PrePlacementAnnotationKey]; ok {
+		t.Error("restore left the placement annotation behind")
+	}
+	if _, ok := stored.Labels[k8s.BurstPlacementLabelKey]; ok {
+		t.Error("restore left the placement label behind")
+	}
+	if _, ok := stored.Labels[provider.LeaseUIDLabelKey]; ok {
+		t.Error("restore left the owner label behind, so a later lease would read the workload as taken")
+	}
+}
+
 func TestMigrateSavedPlacementHoldsOriginalAffinityAndTolerations(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
 	originalAffinity := hostSpreadAffinity(100)
