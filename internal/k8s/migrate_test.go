@@ -8,11 +8,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -54,6 +56,7 @@ const (
 	pinnedPlacementJSON = `{"nodeSelector":{"disktype":"ssd"}}`
 	hostSpreadWeight    = int32(100)
 	noEvictionRetry     = 0
+	evictionRetryBudget = 40 * time.Millisecond
 )
 
 func appSelector(app string) *metav1.LabelSelector {
@@ -2331,5 +2334,145 @@ func TestWorkloadOnBurstNodesFoldsEveryNamespaceTogether(t *testing.T) {
 	}
 	if ready {
 		t.Error("one namespace still off the burst nodes must hold the gate whatever the others report")
+	}
+}
+
+func refuseEvictions(kc *fake.Clientset, refuse func(name string) bool) {
+	kc.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetSubresource() != "eviction" {
+			return false, nil, nil
+		}
+		named, ok := action.(k8stesting.CreateAction).GetObject().(interface{ GetName() string })
+		if !ok || !refuse(named.GetName()) {
+			return false, nil, nil
+		}
+		return true, nil, apierrors.NewTooManyRequests("a disruption budget refuses this eviction", 1)
+	})
+}
+
+func guardedNamespace(t *testing.T) *fake.Clientset {
+	t.Helper()
+	return fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		pausedDeploymentIn(testNS, "guarded", "guarded"),
+		pausedDeploymentIn(testNS, "free", "free"),
+		podIn(testNS, "guarded-pod", "guarded", "homelab-1"),
+		podIn(testNS, "free-pod", "free", "homelab-1"),
+	)
+}
+
+func podGone(t *testing.T, kc *fake.Clientset, name string) bool {
+	t.Helper()
+	_, err := kc.CoreV1().Pods(testNS).Get(context.Background(), name, metav1.GetOptions{})
+	return apierrors.IsNotFound(err)
+}
+
+func TestMigrateFinishesTheNamespaceWhenADisruptionBudgetRefusesOnePod(t *testing.T) {
+	kc := guardedNamespace(t)
+	evictAndDelete(kc)
+	// refusing whichever pod is reached first is what tells an abort apart from a pass that attempts every pod
+	held := ""
+	refuseEvictions(kc, func(name string) bool {
+		if held == "" {
+			held = name
+		}
+		return name == held
+	})
+
+	if _, err := migrateNS(t, kc, testNS, testLease); err == nil {
+		t.Fatal("Migrate reported success while a disruption budget held a pod back")
+	}
+
+	got := evictionNames(kc)
+	slices.Sort(got)
+	want := []string{"free-pod", "guarded-pod"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("evicted = %v, want %v: one refusal must not abandon the rest of the namespace", got, want)
+	}
+	for _, name := range want {
+		if name != held && !podGone(t, kc, name) {
+			t.Errorf("%s was left where it was", name)
+		}
+	}
+}
+
+func TestMigrateLeavesATerminalPodAlone(t *testing.T) {
+	done := podIn(testNS, "batch-done", "settled", "homelab-1")
+	done.Status.Phase = corev1.PodSucceeded
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		pausedDeploymentIn(testNS, "settled", "settled"),
+		done,
+	)
+	evictAndDelete(kc)
+
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if got := evictionNames(kc); len(got) != 0 {
+		t.Errorf("evicted = %v, want none: a pod that has finished holds no capacity to move", got)
+	}
+}
+
+func TestMigrateEvictsAPodADisruptionBudgetHeldBackOnALaterPass(t *testing.T) {
+	kc := guardedNamespace(t)
+	evictAndDelete(kc)
+	guarded := true
+	refuseEvictions(kc, func(name string) bool { return guarded && name == "guarded-pod" })
+
+	if _, err := migrateNS(t, kc, testNS, testLease); err == nil {
+		t.Fatal("Migrate reported success while a disruption budget held a pod back")
+	}
+	guarded = false
+	kc.ClearActions()
+
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
+		t.Fatalf("second Migrate: %v", err)
+	}
+
+	if got := patchCount(kc, "deployments", ""); got != 0 {
+		t.Fatalf("second pass patched %d deployments, so the retry proves nothing about a pass that patches none", got)
+	}
+	if got := evictionNames(kc); len(got) != 1 || got[0] != "guarded-pod" {
+		t.Errorf("second pass evicted %v, want [guarded-pod]: a half migrated namespace must not be permanent", got)
+	}
+	if !podGone(t, kc, "guarded-pod") {
+		t.Error("the pod a budget once refused was never moved")
+	}
+}
+
+func TestMigrateRetriesARefusedEvictionWithinItsBudget(t *testing.T) {
+	kc := guardedNamespace(t)
+	evictAndDelete(kc)
+	attempts := 0
+	refuseEvictions(kc, func(name string) bool {
+		if name != "guarded-pod" {
+			return false
+		}
+		attempts++
+		return attempts == 1
+	})
+
+	if _, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS), testLease, evictionRetryBudget); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if !podGone(t, kc, "guarded-pod") {
+		t.Error("a budget that allows another attempt still left the pod where a single refusal put it")
+	}
+}
+
+func TestMigrateLeavesAPodOnItsOwnBurstNodeAlone(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		burstNode("burst-1", testLease.UID),
+		pausedDeploymentIn(testNS, "settled", "settled"),
+		podIn(testNS, "settled-pod", "settled", "burst-1"),
+	)
+	evictAndDelete(kc)
+
+	if _, err := migrateNS(t, kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if got := evictionNames(kc); len(got) != 0 {
+		t.Errorf("evicted = %v, want none: a pod already where it belongs needs no eviction", got)
 	}
 }
