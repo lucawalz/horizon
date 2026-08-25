@@ -83,6 +83,8 @@ A read-only operator is a role of the adopter's own with `create`, `patch` and `
 
 Creating a provider configuration needs `create` on `providerconfigs` and nothing more. The form references the Secrets a configuration points at and never creates one, so no rule anywhere grants the impersonated identity anything over Secrets, and the Secrets themselves are made with `kubectl` in the namespace the controller runs in. The reasoning is recorded in [ADR 0033](adr/0033-create-a-provider-config-from-the-interface.md).
 
+Viewing a provider configuration needs `get` on `providerconfigs`, which the rendered role already grants. The detail view names the Secrets a configuration references and never resolves one, so an identity that may read a configuration gains nothing over the Secrets it points at.
+
 ### Narrow the impersonation permission
 
 Left unrestricted, the interface's ClusterRole permits `impersonate` on every user and every group in the cluster, including a cluster administrator. That makes the interface pod the most valuable target in its namespace, since anything that compromises it inherits the ability to act as anybody. The defaults are empty because the set of names is rarely known at install time, not because empty is a good production value.

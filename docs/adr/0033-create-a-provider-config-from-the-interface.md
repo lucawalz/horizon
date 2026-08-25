@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-25
+amended: 2026-08-26
 ---
 
 # 0033. Create a provider config from the interface, behind a second narrow writer
@@ -50,3 +51,19 @@ A `501` no longer means the process holds no writer at all. It means the process
 An adopter who applied the role from the old documentation has an unmanaged `horizon-lease-operator` in the cluster and a rendered `<release>-interface-operator` beside it. Moving the binding to the rendered role is the upgrade, and until it moves the interface answers the apiserver's own refusal to a provider config create, naming the user, the resource and the missing verb.
 
 The form offers a single provider type and an image named rather than selected, so a configuration that needs `imageSelector`, a numeric image id, or a provider horizon does not yet support is still written with `kubectl`. Every one of those is refused by the apiserver with its own message when the form cannot express it, rather than accepted and silently reshaped.
+
+## Update 2026-08-26, the detail route is added for what the summary cannot carry
+
+"Add a provider config detail route to carry the reason. Rejected" was the right answer to the question it was asked. The reason and the message of `Ready` are one field each, the machines route already carries a summary per configuration, and a second route for them would have been a second thing to keep in step.
+
+It was not the answer to a different question, which is what a configuration is actually configured with. The summary carries a name, a type, two condition statuses and a timestamp, and nothing in the interface showed the image, the SSH keys, the firewalls, the watchdog timings or the Secrets a configuration references. `kubectl` was the only way to see any of it, including for an operator whose configuration is unready because a reference names a Secret that is not there.
+
+`GET /api/providerconfigs/{name}` is therefore added, read-only, served through the same read path as the lease routes and impersonated the same way. It is not behind `mutating`, because that guard exists for writes and a read carries none of the risk it answers. The response mirrors `leaseDetailResponse`, including its `conditions` array, which the lease detail page and this one now render through the same component rather than through two copies of one table.
+
+**Secrets are quoted by name and key and never resolved.** The reference is what tells a missing Secret apart from a misnamed one, and that is the whole of what an operator needs to see here: the controller already reports `Ready=False` with reason `SecretUnresolved` when a reference does not resolve. Reading the Secret would put a provider token in a browser and would need `get secrets` in the namespace holding the controller's own credentials, which is the grant this record refused for creating them. Nothing in the change grants the impersonated identity anything over Secrets, and the property is pinned by a test that asserts each of the four references encodes exactly a name and a key, and by one that serves a configuration referencing a real Secret and fails if its contents appear anywhere in the response.
+
+**A published catalogue is tallied rather than listed.** `MaxPublishedInstanceTypes` is 512, so rendering the catalogue would make it the page. The detail carries the count and a per-region tally, and each region links to the machines route, which is where the instance types are listed and was already built to list them. The absence of a catalogue is stated rather than shown as a tally of zero.
+
+The user-facing role is unchanged. It already granted `get`, `list` and `watch` on `providerconfigs`, so an identity bound to it can open the view with no new rule.
+
+The interface's route for creating a configuration moves from `/configs/new` to `/new-config`. The detail page is at `/configs/{name}`, so leaving the create page inside that prefix would have made `new` a name no configuration could be viewed under, and the leases half of the interface already keeps its create page out of the resource prefix at `/new`.
