@@ -68,6 +68,15 @@ kubectl patch deployment horizon --namespace horizon-system --type merge \
   -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
 ```
 
+Upgrading to 0.11.0 changes the controller Deployment selector. Before 0.11.0 it matched on `app.kubernetes.io/name` and `app.kubernetes.io/instance` alone, and the interface pod carries both, so the controller Deployment owned the interface pod as well and a command such as `kubectl logs deployment/horizon` resolved either pod. The controller pod now carries `app.kubernetes.io/component: controller` and the Deployment selects on it, which leaves the two selectors disjoint. Kubernetes treats `spec.selector` as immutable, so the upgrade is rejected until the old Deployment is deleted once:
+
+```
+kubectl delete deployment horizon --namespace horizon-system
+helm upgrade horizon oci://ghcr.io/lucawalz/charts/horizon --namespace horizon-system
+```
+
+The controller is absent for as long as the upgrade takes, and no leased server depends on it in that window. The node-side watchdog reads its deadline from its own Node object rather than from the controller, and fires on a clock of its own, so teardown holds while the controller is down. That independence is what [ADR 0021](../../docs/adr/0021-node-side-dead-mans-switch-on-two-clocks.md) exists to guarantee.
+
 ### Networking
 
 | Key | Default | Description |
