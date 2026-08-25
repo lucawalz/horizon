@@ -134,7 +134,7 @@ func TestLeaseDetailRendersStatusConditionsAndInstances(t *testing.T) {
 		t.Errorf("summary.name = %q, want %q", detail.Summary.Name, "detail-run")
 	}
 
-	armed := findCondition(detail.Conditions, v1alpha1.ConditionWatchdogArmed)
+	armed := conditionEntryNamed(detail.Conditions, v1alpha1.ConditionWatchdogArmed)
 	if armed == nil {
 		t.Fatalf("the conditions omit %q", v1alpha1.ConditionWatchdogArmed)
 	}
@@ -215,7 +215,7 @@ func TestLeaseDetailReportsNoBackstopWhereNoneIsLatched(t *testing.T) {
 	}
 }
 
-func findCondition(conditions []conditionEntry, name string) *conditionEntry {
+func conditionEntryNamed(conditions []conditionEntry, name string) *conditionEntry {
 	for i := range conditions {
 		if conditions[i].Type == name {
 			return &conditions[i]

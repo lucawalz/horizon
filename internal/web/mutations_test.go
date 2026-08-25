@@ -34,7 +34,12 @@ const (
 func leaseEndpoint(name string) string { return leasesEndpoint + "/" + name }
 
 func writingOptions() Options {
-	return Options{Client: testEnv.Client, Writer: LeaseWriterFor(testEnv.Client), Catalogue: AbsentCatalogue()}
+	return Options{
+		Client:       testEnv.Client,
+		Writer:       LeaseWriterFor(testEnv.Client),
+		ConfigWriter: ProviderConfigWriterFor(testEnv.Client),
+		Catalogue:    AbsentCatalogue(),
+	}
 }
 
 func newWritingServer(t *testing.T) *Server {

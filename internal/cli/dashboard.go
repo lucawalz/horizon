@@ -40,7 +40,12 @@ func newDashboardCmd() *cobra.Command {
 
 // the interface writes with the caller's own kubeconfig credentials, which is the whole of its authorisation
 func dashboardOptions(api client.Client) web.Options {
-	return web.Options{Client: api, Writer: web.LeaseWriterFor(api), Catalogue: web.AbsentCatalogue()}
+	return web.Options{
+		Client:       api,
+		Writer:       web.LeaseWriterFor(api),
+		ConfigWriter: web.ProviderConfigWriterFor(api),
+		Catalogue:    web.AbsentCatalogue(),
+	}
 }
 
 func runDashboard(ctx context.Context, out io.Writer, port uint16) error {

@@ -44,10 +44,13 @@ func (absentCatalogue) List(string, string) ([]provider.InstanceType, error) {
 
 func (absentCatalogue) Age(string) (time.Duration, bool) { return 0, false }
 
+// the reason and the message belong to Ready, so an unready config states why rather than only that
 type providerConfigSummary struct {
 	Name               string                  `json:"name"`
 	Type               string                  `json:"type"`
 	Ready              *metav1.ConditionStatus `json:"ready"`
+	Reason             *string                 `json:"reason"`
+	Message            *string                 `json:"message"`
 	CataloguePublished *metav1.ConditionStatus `json:"cataloguePublished"`
 	CreatedAt          string                  `json:"createdAt"`
 }
@@ -86,17 +89,25 @@ type catalogueResult struct {
 	detail *string
 }
 
+func newProviderConfigSummary(config *v1alpha1.ProviderConfig) providerConfigSummary {
+	summary := providerConfigSummary{
+		Name:               config.Name,
+		Type:               config.Spec.Type,
+		CataloguePublished: conditionStatus(config.Status.Conditions, v1alpha1.ConditionCataloguePublished),
+		CreatedAt:          rfc3339(config.CreationTimestamp.Time),
+	}
+	if ready := findCondition(config.Status.Conditions, v1alpha1.ConditionReady); ready != nil {
+		summary.Ready = ptr(ready.Status)
+		summary.Reason = nullable(ready.Reason)
+		summary.Message = nullable(ready.Message)
+	}
+	return summary
+}
+
 func newProviderConfigSummaries(configs []v1alpha1.ProviderConfig) []providerConfigSummary {
 	summaries := make([]providerConfigSummary, 0, len(configs))
 	for i := range configs {
-		config := &configs[i]
-		summaries = append(summaries, providerConfigSummary{
-			Name:               config.Name,
-			Type:               config.Spec.Type,
-			Ready:              conditionStatus(config.Status.Conditions, v1alpha1.ConditionReady),
-			CataloguePublished: conditionStatus(config.Status.Conditions, v1alpha1.ConditionCataloguePublished),
-			CreatedAt:          rfc3339(config.CreationTimestamp.Time),
-		})
+		summaries = append(summaries, newProviderConfigSummary(&configs[i]))
 	}
 	return summaries
 }

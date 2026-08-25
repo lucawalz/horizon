@@ -21,8 +21,9 @@ type Clients struct {
 }
 
 var (
-	_ web.ReaderFactory = (*Clients)(nil)
-	_ web.WriterFactory = (*Clients)(nil)
+	_ web.ReaderFactory       = (*Clients)(nil)
+	_ web.WriterFactory       = (*Clients)(nil)
+	_ web.ConfigWriterFactory = (*Clients)(nil)
 )
 
 // the resource mapping is the same for every caller, so it is discovered once rather than on every request
@@ -55,6 +56,14 @@ func (c *Clients) WriterFor(identity web.Identity) (web.LeaseWriter, error) {
 		return nil, err
 	}
 	return web.LeaseWriterFor(api), nil
+}
+
+func (c *Clients) ConfigWriterFor(identity web.Identity) (web.ProviderConfigWriter, error) {
+	api, err := c.clientFor(identity)
+	if err != nil {
+		return nil, err
+	}
+	return web.ProviderConfigWriterFor(api), nil
 }
 
 // an unnamed identity sends no impersonation header at all, so the request would reach the cluster as this process

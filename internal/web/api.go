@@ -43,14 +43,21 @@ func writeAPIError(w http.ResponseWriter, status int, detail string) {
 	writeJSON(w, status, apiError{Status: status, Title: http.StatusText(status), Detail: detail})
 }
 
-func conditionStatus(conditions []metav1.Condition, name string) *metav1.ConditionStatus {
+func findCondition(conditions []metav1.Condition, name string) *metav1.Condition {
 	for i := range conditions {
 		if conditions[i].Type == name {
-			status := conditions[i].Status
-			return &status
+			return &conditions[i]
 		}
 	}
 	return nil
+}
+
+func conditionStatus(conditions []metav1.Condition, name string) *metav1.ConditionStatus {
+	found := findCondition(conditions, name)
+	if found == nil {
+		return nil
+	}
+	return ptr(found.Status)
 }
 
 func conditionHolds(conditions []metav1.Condition, name string) bool {

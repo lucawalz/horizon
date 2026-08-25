@@ -132,19 +132,26 @@ func workloadRefFor(namespace string) *v1alpha1.WorkloadRef {
 	return &v1alpha1.WorkloadRef{Namespace: namespace}
 }
 
-// the apiserver names the rule a rejected lease broke, which is more accurate than anything this handler can restate
-func writeClusterRefusal(w http.ResponseWriter, r *http.Request, err error, name, fallback string) {
-	if apierrors.IsNotFound(err) {
-		writeLeaseNotFound(w, name)
-		return
-	}
+// the apiserver names the rule a rejected object broke, which is more accurate than anything this handler can restate
+func refusedByCluster(w http.ResponseWriter, r *http.Request, err error) bool {
 	if refusedByAuthorisation(w, r, err) {
-		return
+		return true
 	}
 
 	var refused apierrors.APIStatus
 	if errors.As(err, &refused) && refused.Status().Code >= http.StatusBadRequest && refused.Status().Message != "" {
 		writeAPIError(w, int(refused.Status().Code), refused.Status().Message)
+		return true
+	}
+	return false
+}
+
+func writeClusterRefusal(w http.ResponseWriter, r *http.Request, err error, name, fallback string) {
+	if apierrors.IsNotFound(err) {
+		writeLeaseNotFound(w, name)
+		return
+	}
+	if refusedByCluster(w, r, err) {
 		return
 	}
 
@@ -153,7 +160,7 @@ func writeClusterRefusal(w http.ResponseWriter, r *http.Request, err error, name
 }
 
 func (s *Server) leaseCreate(w http.ResponseWriter, r *http.Request) {
-	writer, held := requestClient(w, r, s.writers)
+	writer, held := requestClient(w, r, s.writers.leases)
 	if !held {
 		return
 	}
@@ -182,7 +189,7 @@ func (s *Server) leaseCreate(w http.ResponseWriter, r *http.Request) {
 
 // deleting the lease asks the controller for a teardown through its finalizer rather than destroying anything here
 func (s *Server) leaseRelease(w http.ResponseWriter, r *http.Request) {
-	writer, held := requestClient(w, r, s.writers)
+	writer, held := requestClient(w, r, s.writers.leases)
 	if !held {
 		return
 	}
@@ -201,7 +208,7 @@ func (s *Server) leaseRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) leaseExtend(w http.ResponseWriter, r *http.Request) {
-	writer, held := requestClient(w, r, s.writers)
+	writer, held := requestClient(w, r, s.writers.leases)
 	if !held {
 		return
 	}

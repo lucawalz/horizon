@@ -27,11 +27,17 @@ type WriterFactory interface {
 	WriterFor(identity Identity) (LeaseWriter, error)
 }
 
+type ConfigWriterFactory interface {
+	ConfigWriterFor(identity Identity) (ProviderConfigWriter, error)
+}
+
 // each request reaches the cluster as the identity it carries rather than as this process
 type Impersonation struct {
 	Client ReaderFactory
 
 	Writer WriterFactory
+
+	ConfigWriter ConfigWriterFactory
 }
 
 type source[T any] interface {
@@ -63,7 +69,7 @@ func readerSource(opts Options) (source[client.Reader], error) {
 		}
 		return constructed[client.Reader]{held: opts.Client}, nil
 	}
-	if opts.Client != nil || opts.Writer != nil {
+	if opts.Client != nil || opts.Writer != nil || opts.ConfigWriter != nil {
 		return nil, errors.New("web: a cluster client and impersonated clients are alternatives, not a pair")
 	}
 	if opts.Authentication == nil {
@@ -75,18 +81,44 @@ func readerSource(opts Options) (source[client.Reader], error) {
 	return perIdentity[client.Reader]{build: opts.Impersonation.Client.ReaderFor}, nil
 }
 
-// an absent writer leaves the server holding no writer at all, so a mutation is refused before any client is built for it
-func writerSource(opts Options) source[LeaseWriter] {
-	if opts.Impersonation != nil {
-		if opts.Impersonation.Writer == nil {
-			return nil
-		}
-		return perIdentity[LeaseWriter]{build: opts.Impersonation.Writer.WriterFor}
+// the seams are held apart, so a process handed one of them cannot be made to write through the other
+type writerSet struct {
+	leases  source[LeaseWriter]
+	configs source[ProviderConfigWriter]
+}
+
+func writerSources(opts Options) writerSet {
+	return writerSet{
+		leases:  writerSource(leaseWriterFactory(opts.Impersonation), opts.Writer),
+		configs: writerSource(configWriterFactory(opts.Impersonation), opts.ConfigWriter),
 	}
-	if opts.Writer == nil {
+}
+
+// an absent writer leaves the server holding no source at all, so a mutation is refused before any client is built for it
+func writerSource[T comparable](build func(Identity) (T, error), held T) source[T] {
+	var absent T
+	switch {
+	case build != nil:
+		return perIdentity[T]{build: build}
+	case held != absent:
+		return constructed[T]{held: held}
+	default:
 		return nil
 	}
-	return constructed[LeaseWriter]{held: opts.Writer}
+}
+
+func leaseWriterFactory(impersonation *Impersonation) func(Identity) (LeaseWriter, error) {
+	if impersonation == nil || impersonation.Writer == nil {
+		return nil
+	}
+	return impersonation.Writer.WriterFor
+}
+
+func configWriterFactory(impersonation *Impersonation) func(Identity) (ProviderConfigWriter, error) {
+	if impersonation == nil || impersonation.ConfigWriter == nil {
+		return nil
+	}
+	return impersonation.ConfigWriter.ConfigWriterFor
 }
 
 func requestClient[T any](w http.ResponseWriter, r *http.Request, from source[T]) (T, bool) {

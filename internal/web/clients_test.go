@@ -50,12 +50,19 @@ func (f failingWriter) Extend(context.Context, string, time.Duration) error {
 	return f.err
 }
 
+type failingConfigWriter struct{ err error }
+
+func (f failingConfigWriter) Create(context.Context, *v1alpha1.ProviderConfig) error {
+	return f.err
+}
+
 type identityClients struct {
-	mu       sync.Mutex
-	asked    []Identity
-	failWith error
-	read     func(Identity) client.Reader
-	write    func(Identity) LeaseWriter
+	mu          sync.Mutex
+	asked       []Identity
+	failWith    error
+	read        func(Identity) client.Reader
+	write       func(Identity) LeaseWriter
+	writeConfig func(Identity) ProviderConfigWriter
 }
 
 func (c *identityClients) record(identity Identity) error {
@@ -85,10 +92,20 @@ func (c *identityClients) WriterFor(identity Identity) (LeaseWriter, error) {
 	return c.write(identity), nil
 }
 
+func (c *identityClients) ConfigWriterFor(identity Identity) (ProviderConfigWriter, error) {
+	if err := c.record(identity); err != nil {
+		return nil, err
+	}
+	return c.writeConfig(identity), nil
+}
+
 func refusingClients() *identityClients {
 	return &identityClients{
 		read:  func(identity Identity) client.Reader { return failingReader{err: refusalFor(identity.Username)} },
 		write: func(identity Identity) LeaseWriter { return failingWriter{err: refusalFor(identity.Username)} },
+		writeConfig: func(identity Identity) ProviderConfigWriter {
+			return failingConfigWriter{err: refusalFor(identity.Username)}
+		},
 	}
 }
 
@@ -99,7 +116,7 @@ func newServedServer(t *testing.T, clients *identityClients) *Server {
 	server, err := New(Options{
 		Catalogue:      AbsentCatalogue(),
 		Authentication: &auth,
-		Impersonation:  &Impersonation{Client: clients, Writer: clients},
+		Impersonation:  &Impersonation{Client: clients, Writer: clients, ConfigWriter: clients},
 	})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
@@ -152,6 +169,8 @@ func TestTheServedInterfaceRefusesAMutationCarryingNoVerifiedIdentity(t *testing
 		"create":  newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("unreachable")),
 		"extend":  newMutation(t, http.MethodPatch, leaseEndpoint("unreachable"), extendRequestFixture(3*time.Hour)),
 		"release": newMutation(t, http.MethodDelete, leaseEndpoint("unreachable"), nil),
+		"configure": newMutation(t, http.MethodPost, providerConfigsEndpoint,
+			configRequestFixture("unreachable")),
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := send(server, request)
@@ -270,6 +289,9 @@ func TestAClusterRefusalAnswersAsAnAuthorisationFailureNamingTheUser(t *testing.
 		"release": send(server, asIdentity(
 			newMutation(t, http.MethodDelete, leaseEndpoint("named"), nil), servedIdentity(),
 		)),
+		"configure": send(server, asIdentity(
+			newMutation(t, http.MethodPost, providerConfigsEndpoint, configRequestFixture("named")), servedIdentity(),
+		)),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if response.Code != http.StatusForbidden {
@@ -307,12 +329,18 @@ func TestTheServedInterfaceWithoutAWriterFactoryRefusesEveryMutation(t *testing.
 	}
 	anchor(t, server)
 
-	response := send(server, asIdentity(
-		newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")), servedIdentity(),
-	))
+	for name, request := range map[string]*http.Request{
+		"create": newMutation(t, http.MethodPost, leasesEndpoint, createRequestFixture("named")),
+		"configure": newMutation(t, http.MethodPost, providerConfigsEndpoint,
+			configRequestFixture("named")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := send(server, asIdentity(request, servedIdentity()))
 
-	if response.Code != http.StatusNotImplemented {
-		t.Errorf("status = %d, want %d", response.Code, http.StatusNotImplemented)
+			if response.Code != http.StatusNotImplemented {
+				t.Errorf("status = %d, want %d", response.Code, http.StatusNotImplemented)
+			}
+		})
 	}
 	if asked := clients.identities(); len(asked) != 0 {
 		t.Errorf("the factory was asked for %v, want no writer built at all", asked)
@@ -351,6 +379,12 @@ func TestNewRefusesAConstructedClientBesideImpersonation(t *testing.T) {
 		},
 		"a writer": {
 			Writer:         failingWriter{err: errors.New("unused")},
+			Catalogue:      AbsentCatalogue(),
+			Authentication: &auth,
+			Impersonation:  &Impersonation{Client: refusingClients()},
+		},
+		"a provider config writer": {
+			ConfigWriter:   failingConfigWriter{err: errors.New("unused")},
 			Catalogue:      AbsentCatalogue(),
 			Authentication: &auth,
 			Impersonation:  &Impersonation{Client: refusingClients()},

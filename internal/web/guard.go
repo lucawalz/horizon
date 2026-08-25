@@ -86,13 +86,14 @@ func (s *Server) crossOriginRefusal(r *http.Request) (string, bool) {
 	return "", false
 }
 
-func (s *Server) mutating(next http.HandlerFunc) http.HandlerFunc {
+// a route names the seam it writes through, so a process holding one writer and not the other refuses only what it cannot serve
+func mutating[T any](s *Server, writers source[T], next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if refusal, refused := s.crossOriginRefusal(r); refused {
 			writeAPIError(w, http.StatusForbidden, refusal)
 			return
 		}
-		if s.writers == nil {
+		if writers == nil {
 			writeAPIError(w, http.StatusNotImplemented, readOnlyInterface)
 			return
 		}

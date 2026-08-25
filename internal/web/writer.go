@@ -36,6 +36,16 @@ func (w clusterWriter) Delete(ctx context.Context, obj client.Object, opts ...cl
 	return w.api.Delete(ctx, obj, opts...)
 }
 
+func ProviderConfigWriterFor(api client.Writer) ProviderConfigWriter {
+	return providerConfigWriter{api: api}
+}
+
+type providerConfigWriter struct{ api client.Writer }
+
+func (w providerConfigWriter) Create(ctx context.Context, config *v1alpha1.ProviderConfig) error {
+	return w.api.Create(ctx, config)
+}
+
 func (w clusterWriter) Extend(ctx context.Context, name string, duration time.Duration) error {
 	lease := &v1alpha1.CapacityLease{}
 	if err := w.api.Get(ctx, client.ObjectKey{Name: name}, lease); err != nil {

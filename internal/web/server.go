@@ -13,6 +13,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lucawalz/horizon/api/v1alpha1"
 	"github.com/lucawalz/horizon/internal/catalogue"
 )
 
@@ -28,11 +29,18 @@ type LeaseWriter interface {
 	Extend(ctx context.Context, name string, duration time.Duration) error
 }
 
+// the parameter is the object itself rather than a client.Object, so this seam reaches no other kind
+type ProviderConfigWriter interface {
+	Create(ctx context.Context, config *v1alpha1.ProviderConfig) error
+}
+
 type Options struct {
 	Client client.Reader
 
-	// the read-only guarantee is the type of this field, so an embedder that supplies none cannot be made to write
+	// the read-only guarantee is the type of these fields, so an embedder that supplies none cannot be made to write
 	Writer LeaseWriter
+
+	ConfigWriter ProviderConfigWriter
 
 	// clients built per request from the verified identity, in place of the pair above
 	Impersonation *Impersonation
@@ -45,7 +53,7 @@ type Options struct {
 
 type Server struct {
 	readers   source[client.Reader]
-	writers   source[LeaseWriter]
+	writers   writerSet
 	catalogue catalogue.Reader
 	auth      *Authentication
 	external  originAnchor
@@ -66,7 +74,7 @@ func New(opts Options) (*Server, error) {
 	}
 	return &Server{
 		readers:   readers,
-		writers:   writerSource(opts),
+		writers:   writerSources(opts),
 		catalogue: opts.Catalogue,
 		auth:      opts.Authentication,
 		external:  external,

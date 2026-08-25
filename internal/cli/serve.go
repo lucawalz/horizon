@@ -86,7 +86,7 @@ func newServeCmd() (*cobra.Command, *ServeOptions) {
 // every request reaches the cluster as the verified end user, so this process lends none of its own permissions to a caller
 func serveOptions(clients *impersonate.Clients, auth web.Authentication) web.Options {
 	return web.Options{
-		Impersonation:  &web.Impersonation{Client: clients, Writer: clients},
+		Impersonation:  &web.Impersonation{Client: clients, Writer: clients, ConfigWriter: clients},
 		Catalogue:      web.AbsentCatalogue(),
 		Authentication: &auth,
 	}
