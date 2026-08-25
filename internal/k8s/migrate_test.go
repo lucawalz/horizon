@@ -273,7 +273,7 @@ func TestRestorePlacementLeavesDeploymentPodsToItsRollout(t *testing.T) {
 	kc := fake.NewSimpleClientset(dep, matched, unmatched)
 	evictAndDelete(kc)
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -612,7 +612,7 @@ func TestRestorePlacementClearsEveryPlacementMarker(t *testing.T) {
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -823,7 +823,7 @@ func TestRestorePlacementFollowsRepeatedMigratePasses(t *testing.T) {
 		}
 	}
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
@@ -868,7 +868,7 @@ func TestMigrateSavesOriginalAffinity(t *testing.T) {
 	}
 	kc.ClearActions()
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -913,7 +913,7 @@ func TestRestorePlacementNeedsNoInProcessState(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
@@ -949,7 +949,7 @@ func TestBurstPlacementLabelFindsMigratedWorkloads(t *testing.T) {
 		t.Errorf("burst label query = %v, want %v", got, want)
 	}
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 	if got := selectedNames(t, kc); len(got) != 0 {
@@ -988,7 +988,7 @@ func TestRestorePlacementRestoresTolerationsAndLeavesNode(t *testing.T) {
 	}
 	kc.ClearActions()
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -1029,7 +1029,7 @@ func TestRestorePlacementIsIdempotent(t *testing.T) {
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	first, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	first, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("first RestorePlacement: %v", err)
 	}
@@ -1038,7 +1038,7 @@ func TestRestorePlacementIsIdempotent(t *testing.T) {
 	}
 	kc.ClearActions()
 
-	second, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	second, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("second RestorePlacement: %v", err)
 	}
@@ -1058,7 +1058,7 @@ func TestRestorePlacementWithoutAnnotationIsNoop(t *testing.T) {
 	kc := fake.NewSimpleClientset(dep, pod)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement = %v, want nil", err)
 	}
@@ -1072,9 +1072,85 @@ func TestRestorePlacementWithoutAnnotationIsNoop(t *testing.T) {
 	}
 }
 
+func TestRestorePlacementRestoresOnlyTheWorkloadsThisLeaseOwns(t *testing.T) {
+	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
+	nodeA := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-a",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID},
+	}}
+	nodeB := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name:   "burst-b",
+		Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: leaseB.UID},
+	}}
+	depA := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-a", Namespace: testNS}}
+	kc := fake.NewSimpleClientset(nodeA, nodeB, depA)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
+		t.Fatalf("Migrate lease-a: %v", err)
+	}
+	depB := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "app-b", Namespace: testNS}}
+	if _, err := kc.AppsV1().Deployments(testNS).Create(context.Background(), depB, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create app-b: %v", err)
+	}
+	if _, err := k8s.Migrate(context.Background(), kc, testNS, leaseB); err != nil {
+		t.Fatalf("Migrate lease-b: %v", err)
+	}
+
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, leaseB)
+	if err != nil {
+		t.Fatalf("RestorePlacement lease-b: %v", err)
+	}
+	if len(restored) != 1 || restored[0] != "deployment/app-b" {
+		t.Fatalf("restored = %v, want [deployment/app-b]", restored)
+	}
+
+	held := getDeployment(t, kc, "app-a")
+	if _, ok := held.Annotations[k8s.PrePlacementAnnotationKey]; !ok {
+		t.Error("lease-b's teardown restored a workload lease-a still holds")
+	}
+	if got := held.Labels[provider.LeaseUIDLabelKey]; got != testLease.UID {
+		t.Errorf("app-a owner label = %q, want it left at %q", got, testLease.UID)
+	}
+	if got := getDeployment(t, kc, "app-b").Annotations[k8s.PrePlacementAnnotationKey]; got != "" {
+		t.Errorf("app-b placement annotation = %q, want it cleared", got)
+	}
+}
+
+func TestRestorePlacementRescuesAnAnnotatedWorkloadWithNoOwner(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "dep1",
+			Namespace:   testNS,
+			Annotations: map[string]string{k8s.PrePlacementAnnotationKey: emptyPlacementJSON},
+			Labels:      map[string]string{k8s.BurstPlacementLabelKey: k8s.BurstPlacementLabelValue},
+		},
+	}
+	kc := fake.NewSimpleClientset(dep)
+	evictAndDelete(kc)
+
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
+	if err != nil {
+		t.Fatalf("RestorePlacement: %v", err)
+	}
+	if len(restored) != 1 || restored[0] != "deployment/dep1" {
+		t.Fatalf("restored = %v, want [deployment/dep1]: no live lease claims that workload", restored)
+	}
+	if _, ok := getDeployment(t, kc, "dep1").Annotations[k8s.PrePlacementAnnotationKey]; ok {
+		t.Error("an unowned workload stayed pinned to a lease that no longer exists")
+	}
+}
+
+func TestRestorePlacementRejectsAnEmptyIdentity(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, k8s.LeaseIdentity{}); err == nil {
+		t.Fatal("RestorePlacement accepted an empty lease identity")
+	}
+}
+
 func TestRestorePlacementRejectsInvalidNamespace(t *testing.T) {
 	kc := fake.NewSimpleClientset()
-	if _, err := k8s.RestorePlacement(context.Background(), kc, ""); err == nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, "", testLease); err == nil {
 		t.Fatal("expected error for an empty namespace")
 	}
 }
@@ -1091,7 +1167,7 @@ func TestRestorePlacementReportsUnreadableAnnotation(t *testing.T) {
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err == nil {
 		t.Fatal("expected an error for an unreadable placement annotation")
 	}
@@ -1116,7 +1192,7 @@ func TestRestorePlacementReportsPatchFailure(t *testing.T) {
 		return true, nil, errors.New("forbidden")
 	})
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err == nil {
 		t.Fatal("expected the patch failure to surface")
 	}
@@ -1459,7 +1535,7 @@ func TestRestorePlacementReturnsTheNodeSelector(t *testing.T) {
 	if _, err := k8s.Migrate(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -1491,7 +1567,7 @@ func TestRestorePlacementDropsNodeSelectorKeysAddedWhileOnBurst(t *testing.T) {
 		t.Fatalf("update deployment: %v", err)
 	}
 
-	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS); err != nil {
+	if _, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease); err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}
 
@@ -1518,7 +1594,7 @@ func TestRestorePlacementLeavesTheNodeSelectorOfAnOlderAnnotation(t *testing.T) 
 	kc := fake.NewSimpleClientset(dep)
 	evictAndDelete(kc)
 
-	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS)
+	restored, err := k8s.RestorePlacement(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("RestorePlacement: %v", err)
 	}

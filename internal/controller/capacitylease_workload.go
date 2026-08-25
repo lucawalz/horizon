@@ -94,7 +94,7 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 	}
 
 	namespace := lease.Spec.Workload.Namespace
-	if _, restoreErr := k8s.RestorePlacement(ctx, r.Kube, namespace); restoreErr != nil {
+	if _, restoreErr := k8s.RestorePlacement(ctx, r.Kube, namespace, leaseIdentity(lease)); restoreErr != nil {
 		restoreErr = fmt.Errorf("restore placement in %q: %w", namespace, restoreErr)
 		r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reasonRestoreFailed, restoreErr.Error())
 		if err := r.writeStatus(ctx, lease); err != nil {

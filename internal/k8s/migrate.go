@@ -457,8 +457,11 @@ func recordFirst(firstErr *error, err error) {
 	}
 }
 
-func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace string) ([]string, error) {
+func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]string, error) {
 	if err := ValidateNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("restore-placement: %w", err)
+	}
+	if err := lease.validate(); err != nil {
 		return nil, fmt.Errorf("restore-placement: %w", err)
 	}
 
@@ -466,7 +469,7 @@ func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace st
 	var restoredSelectors []labels.Selector
 	var firstErr error
 	for _, wc := range workloadClients(kc, namespace) {
-		names, selectors, err := restoreWorkloads(ctx, wc)
+		names, selectors, err := restoreWorkloads(ctx, wc, lease)
 		restored = append(restored, names...)
 		restoredSelectors = append(restoredSelectors, selectors...)
 		recordFirst(&firstErr, err)
@@ -478,7 +481,7 @@ func RestorePlacement(ctx context.Context, kc kubernetes.Interface, namespace st
 	return restored, firstErr
 }
 
-func restoreWorkloads(ctx context.Context, wc workloadClient) ([]string, []labels.Selector, error) {
+func restoreWorkloads(ctx context.Context, wc workloadClient, lease LeaseIdentity) ([]string, []labels.Selector, error) {
 	targets, err := wc.list(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("restore-placement: list %s in %q: %w", wc.plural(), wc.namespace, err)
@@ -489,6 +492,10 @@ func restoreWorkloads(ctx context.Context, wc workloadClient) ([]string, []label
 	for _, t := range targets {
 		placement, ok := t.annotations[PrePlacementAnnotationKey]
 		if !ok {
+			continue
+		}
+		// an unowned workload is left pinned to a lease that can no longer restore it, so restoring it here is the only recovery
+		if owner, owned := placementOwner(t.labels); owned && owner != lease.UID {
 			continue
 		}
 		patchData, err := buildRestorePatch(wc.kind, t.name, placement, t.podSpec.NodeSelector)
