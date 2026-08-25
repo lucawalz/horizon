@@ -109,6 +109,20 @@ func TestBurstCopyNameStaysWithinTheObjectNameLimit(t *testing.T) {
 	}
 }
 
+func TestBurstCopyNamesTwoLongNamedOriginalsApart(t *testing.T) {
+	const nameLimit = 253
+	shared := strings.Repeat("a", nameLimit-len("one"))
+	first := originalDeployment(func(d *appsv1.Deployment) { d.Name = shared + "one" })
+	second := originalDeployment(func(d *appsv1.Deployment) { d.Name = shared + "two" })
+
+	firstCopy := k8s.BurstCopy(first, replicationOf(testLease)).Name
+	secondCopy := k8s.BurstCopy(second, replicationOf(testLease)).Name
+
+	if firstCopy == secondCopy {
+		t.Errorf("two originals sharing a trimmed prefix both copy to %q, so one of them gets no capacity at all", firstCopy)
+	}
+}
+
 func TestBurstCopySelectorNamesOnlyItsOwnPods(t *testing.T) {
 	original := originalDeployment()
 

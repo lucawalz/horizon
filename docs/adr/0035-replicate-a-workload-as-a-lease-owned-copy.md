@@ -51,10 +51,14 @@ exists one level up and counts machines. Two quantities under one name in one ob
 someone rents eight servers to run two pods, so both fields now carry a description in the
 CRD as well.
 
-The copy is named `<original>-burst-<hash8>`, the hash taken from the lease UID. That is
-deterministic, so a repeated pass finds the copy it already made rather than making another,
-and it is distinct per lease, so two leases replicating one workload do not collide. The
-name is trimmed to fit the 253 character object name limit whatever the original is called.
+The copy is named `<original>-burst-<hash8>`, the hash taken from the lease UID and the
+original's name together. That is deterministic, so a repeated pass finds the copy it already
+made rather than making another; it is distinct per lease, so two leases replicating one
+workload do not collide; and it is distinct per workload, so the trim that fits the name into
+the 253 character object name limit cannot fold two long-named originals of one lease onto a
+single copy. Hashing the lease UID alone did exactly that, and the second create came back
+`AlreadyExists`, which the repeated pass has to tolerate, so one workload would have been
+reported as replicated while running no burst pods at all.
 
 The copy carries the `horizon.dev/lease-uid` label, which is the ownership convention
 [0031](0031-identify-a-leases-nodes-by-lease-uid.md) and 0032 established and which every

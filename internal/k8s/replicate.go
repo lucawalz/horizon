@@ -31,6 +31,8 @@ const (
 	opDeleteCopies      = "delete-burst-copies"
 	burstCopyInfix      = "-burst-"
 	burstCopyHashLength = 8
+	// neither a lease UID nor an object name can hold it, so no pair of them digests to the same bytes as another
+	burstCopyDigestSeparator = "/"
 	maxObjectNameLength = 253
 	minBurstReplicas    = 1
 	deploymentKind      = "Deployment"
@@ -87,7 +89,8 @@ func (r ReplicationResult) Matched() int {
 }
 
 func burstCopyName(original, leaseUID string) string {
-	digest := sha256.Sum256([]byte(leaseUID))
+	// the digest covers the original's name too, because the trim below can leave two originals of one lease sharing a prefix and so a copy
+	digest := sha256.Sum256([]byte(leaseUID + burstCopyDigestSeparator + original))
 	suffix := burstCopyInfix + hex.EncodeToString(digest[:])[:burstCopyHashLength]
 	return trimTo(original, maxObjectNameLength-len(suffix)) + suffix
 }
