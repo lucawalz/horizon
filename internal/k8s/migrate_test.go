@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -245,13 +246,32 @@ func plainStatefulSet(name string) *appsv1.StatefulSet {
 }
 
 func pausedDeployment(name, app string) *appsv1.Deployment {
+	return pausedDeploymentIn(testNS, name, app)
+}
+
+func pausedDeploymentIn(namespace, name, app string) *appsv1.Deployment {
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
 			Paused:   true,
 		},
 	}
+}
+
+func rollingDeploymentIn(namespace, name, app string) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": app}},
+		},
+	}
+}
+
+func podIn(namespace, name, app, node string) *corev1.Pod {
+	pod := makePod(name, namespace, node, corev1.PodRunning)
+	pod.Labels = map[string]string{"app": app}
+	return pod
 }
 
 func migratedMeta(name string) metav1.ObjectMeta {
@@ -2095,5 +2115,101 @@ func TestTwoLeasesDoNotShareNodes(t *testing.T) {
 	}
 	if onWrongLease {
 		t.Fatal("lease-b's readiness gate counted its own workload's pod while that pod sits on lease-a's node")
+	}
+}
+
+func TestMigrateKeepsEverySelectorInsideItsOwnNamespace(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	kc := fake.NewSimpleClientset(
+		node,
+		pausedDeploymentIn(testNS, "a-paused", "shared"),
+		rollingDeploymentIn(testNS, "a-rolling", "other"),
+		rollingDeploymentIn(testNSB, "b-rolling", "shared"),
+		pausedDeploymentIn(testNSB, "b-paused", "other"),
+		podIn(testNS, "a-shared", "shared", "homelab-1"),
+		podIn(testNS, "a-other", "other", "homelab-1"),
+		podIn(testNSB, "b-shared", "shared", "homelab-1"),
+		podIn(testNSB, "b-other", "other", "homelab-1"),
+	)
+	evictAndDelete(kc)
+
+	if _, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS, testNSB), testLease, noEvictionRetry); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	got := evictionNames(kc)
+	slices.Sort(got)
+	want := []string{"a-shared", "b-other"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("evicted = %v, want %v: a label two namespaces share must not let one govern eviction in the other", got, want)
+	}
+}
+
+func TestMigrateReportsEveryTargetNamespace(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	kc := fake.NewSimpleClientset(
+		node,
+		rollingDeploymentIn(testNS, "a-app", "a"),
+		rollingDeploymentIn(testNSB, "b-app", "b"),
+	)
+	evictAndDelete(kc)
+
+	result, err := k8s.Migrate(context.Background(), kc, nsSet(t, testNS, testNSB), testLease, noEvictionRetry)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	wantWorkloads := []string{"sentio-systems/deployment/a-app", "sentio-systems-b/deployment/b-app"}
+	if !reflect.DeepEqual(result.Workloads, wantWorkloads) {
+		t.Errorf("migrated = %v, want %v", result.Workloads, wantWorkloads)
+	}
+	wantNamespaces := []string{testNS, testNSB}
+	if !reflect.DeepEqual(result.MigratedNamespaces, wantNamespaces) {
+		t.Errorf("migrated namespaces = %v, want %v", result.MigratedNamespaces, wantNamespaces)
+	}
+}
+
+func TestMigrateMovesOnlyTheWorkloadsTheSelectorNames(t *testing.T) {
+	node := burstNode("burst-1", testLease.UID)
+	batch := rollingDeploymentIn(testNS, "batch-app", "batch")
+	batch.Labels = map[string]string{"tier": "batch"}
+	kc := fake.NewSimpleClientset(node, batch, rollingDeploymentIn(testNS, "web-app", "web"))
+	evictAndDelete(kc)
+
+	targets, err := k8s.NewTargetSet([]string{testNS}, &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "batch"}})
+	if err != nil {
+		t.Fatalf("NewTargetSet: %v", err)
+	}
+	result, err := k8s.Migrate(context.Background(), kc, targets, testLease, noEvictionRetry)
+	if err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	want := []string{"sentio-systems/deployment/batch-app"}
+	if !reflect.DeepEqual(result.Workloads, want) {
+		t.Errorf("migrated = %v, want %v", result.Workloads, want)
+	}
+	if got := getDeployment(t, kc, "web-app").Annotations[k8s.PrePlacementAnnotationKey]; got != "" {
+		t.Errorf("web-app placement annotation = %q, want it untouched by a selector that names it not", got)
+	}
+}
+
+func TestClassifyMigratabilityCoversEveryTargetNamespace(t *testing.T) {
+	kc := fake.NewSimpleClientset(
+		pausedDeploymentIn(testNS, "api", "a"),
+		pausedDeploymentIn(testNSB, "api", "b"),
+	)
+
+	got, err := k8s.ClassifyMigratability(context.Background(), kc, nsSet(t, testNS, testNSB), testLease)
+	if err != nil {
+		t.Fatalf("ClassifyMigratability: %v", err)
+	}
+
+	want := []k8s.WorkloadMigratability{
+		{Workload: "sentio-systems/deployment/api", Verdict: k8s.VerdictDisruptive, Reasons: []string{k8s.ReasonRolloutPaused}},
+		{Workload: "sentio-systems-b/deployment/api", Verdict: k8s.VerdictDisruptive, Reasons: []string{k8s.ReasonRolloutPaused}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("assessments = %+v, want %+v", got, want)
 	}
 }
