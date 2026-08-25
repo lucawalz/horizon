@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	"github.com/lucawalz/horizon/api/v1alpha1"
+	"github.com/lucawalz/horizon/internal/k8s"
 	"github.com/lucawalz/horizon/internal/provider"
 )
 
@@ -735,5 +736,27 @@ func TestTheWaitingReportSpeaksOnlyForTheStageItCanRecompute(t *testing.T) {
 	}
 	if got := h.condition(v1alpha1.ConditionInstancesReady); got.Message != settled.Message {
 		t.Errorf("the waiting report contradicted a ready lease: %q", got.Message)
+	}
+}
+
+func TestHasBurstTaintRejectsAnotherLeasesTaint(t *testing.T) {
+	node := &corev1.Node{Spec: corev1.NodeSpec{Taints: []corev1.Taint{{
+		Key:    k8s.BurstTaintKey,
+		Value:  "lease-b",
+		Effect: corev1.TaintEffectNoSchedule,
+	}}}}
+	if hasBurstTaint(node, "lease-a") {
+		t.Fatal("a node tainted for lease-b read as tainted for lease-a")
+	}
+}
+
+func TestHasBurstTaintAcceptsOwnTaint(t *testing.T) {
+	node := &corev1.Node{Spec: corev1.NodeSpec{Taints: []corev1.Taint{{
+		Key:    k8s.BurstTaintKey,
+		Value:  "lease-a",
+		Effect: corev1.TaintEffectNoSchedule,
+	}}}}
+	if !hasBurstTaint(node, "lease-a") {
+		t.Fatal("a node tainted for lease-a did not read as tainted for lease-a")
 	}
 }

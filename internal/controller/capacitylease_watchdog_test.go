@@ -225,7 +225,7 @@ func TestEnsureBurstTaintRetriesAConflictedUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the node back: %v", err)
 	}
-	if !hasBurstTaint(stored) {
+	if !hasBurstTaint(stored, lease.Name) {
 		t.Errorf("node carries no %s taint after the retry", k8s.BurstTaintKey)
 	}
 	if !conflicted {
@@ -247,7 +247,7 @@ func TestEnsureBurstTaintKeepsTaintsItDoesNotOwn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the node back: %v", err)
 	}
-	if len(stored.Spec.Taints) != 2 || !hasBurstTaint(stored) {
+	if len(stored.Spec.Taints) != 2 || !hasBurstTaint(stored, lease.Name) {
 		t.Errorf("node taints = %v, want the existing taint plus the burst taint", stored.Spec.Taints)
 	}
 }

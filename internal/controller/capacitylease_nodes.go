@@ -377,7 +377,7 @@ func (r *CapacityLeaseReconciler) patchNodeMarks(ctx context.Context, lease *v1a
 }
 
 func (r *CapacityLeaseReconciler) ensureBurstTaint(ctx context.Context, lease *v1alpha1.CapacityLease, node *corev1.Node) error {
-	if hasBurstTaint(node) {
+	if hasBurstTaint(node, lease.Name) {
 		return nil
 	}
 	nodes := r.Kube.CoreV1().Nodes()
@@ -386,7 +386,7 @@ func (r *CapacityLeaseReconciler) ensureBurstTaint(ctx context.Context, lease *v
 		if err != nil {
 			return err
 		}
-		if hasBurstTaint(current) {
+		if hasBurstTaint(current, lease.Name) {
 			return nil
 		}
 		current.Spec.Taints = append(current.Spec.Taints, burstTaint(lease))
@@ -411,9 +411,9 @@ func burstTaint(lease *v1alpha1.CapacityLease) corev1.Taint {
 	return corev1.Taint{Key: k8s.BurstTaintKey, Value: lease.Name, Effect: corev1.TaintEffectNoSchedule}
 }
 
-func hasBurstTaint(node *corev1.Node) bool {
+func hasBurstTaint(node *corev1.Node, leaseName string) bool {
 	for _, taint := range node.Spec.Taints {
-		if taint.Key == k8s.BurstTaintKey && taint.Effect == corev1.TaintEffectNoSchedule {
+		if taint.Key == k8s.BurstTaintKey && taint.Effect == corev1.TaintEffectNoSchedule && taint.Value == leaseName {
 			return true
 		}
 	}

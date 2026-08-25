@@ -294,7 +294,7 @@ func TestAJoinedNodeIsLabelledTaintedAndCountedReady(t *testing.T) {
 	if got := node.Labels[LeaseUIDLabelKey]; got != string(h.lease().UID) {
 		t.Errorf("node label %s is %q, want the lease uid", LeaseUIDLabelKey, got)
 	}
-	if !hasBurstTaint(node) {
+	if !hasBurstTaint(node, h.lease().Name) {
 		t.Errorf("node %q carries no %s taint", name, k8s.BurstTaintKey)
 	}
 	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionTrue)
