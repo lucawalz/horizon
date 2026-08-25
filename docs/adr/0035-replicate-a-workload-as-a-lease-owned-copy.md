@@ -187,6 +187,12 @@ after which the list is the only record that the copy ever existed. A copy that 
 delete degrades the lease with `BurstCopyDeleteFailed` and keeps the record, rather than
 clearing the list and leaving the copy to run on nodes that are about to be deleted.
 
+A lease name is bounded at 63 characters by the CRD. The name is a label value on the copy,
+on the copy's pods and in the copy's selector, and it is the value of the burst taint on
+every leased node, so a longer name is refused by the apiserver on the create that carries
+it. Bounding the name rather than deriving the copy label from the UID keeps one bound over
+every place the name is carried, including the node taint that both modes write.
+
 `status.migrationWarnings` carries skips as well as warnings in replicate mode. The web
 interface has wording for the move-mode reasons only, so a replicate-mode reason renders
 through the fallback the bundle already carries for a reason it does not know, and the panel

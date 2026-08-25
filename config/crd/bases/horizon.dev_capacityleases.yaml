@@ -436,6 +436,10 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: the lease name is carried as a label value and a node taint value,
+            so it may be at most 63 characters
+          rule: self.metadata.name.size() <= 63
     served: true
     storage: true
     subresources:

@@ -46,11 +46,32 @@ func apiServerClient(t *testing.T) client.Client {
 	return testEnv.Client
 }
 
+// the CRD bounds a lease name at the label value limit, and a test name is longer than that often enough to matter
+const maxLeaseNameLength = 63
+
 var nonNameCharacters = regexp.MustCompile(`[^a-z0-9]+`)
 
 func objectName(t *testing.T) string {
 	t.Helper()
-	return strings.Trim(nonNameCharacters.ReplaceAllString(strings.ToLower(t.Name()), "-"), "-")
+	return boundedName(nonNameCharacters.ReplaceAllString(strings.ToLower(t.Name()), "-"))
+}
+
+func suffixedObjectName(t *testing.T, suffix string) string {
+	t.Helper()
+	// the suffix is what tells two objects of one test apart, so the room for it comes out of the name rather than out of the suffix
+	base := objectName(t)
+	if room := maxLeaseNameLength - len(suffix) - 1; len(base) > room {
+		base = base[:room]
+	}
+	return boundedName(base + "-" + suffix)
+}
+
+func boundedName(name string) string {
+	trimmed := strings.Trim(name, "-")
+	if len(trimmed) <= maxLeaseNameLength {
+		return trimmed
+	}
+	return strings.Trim(trimmed[:maxLeaseNameLength], "-")
 }
 
 func assertUpdate(t *testing.T, c client.Client, obj client.Object, wantRejected bool) {

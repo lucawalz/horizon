@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -245,6 +246,26 @@ func TestCapacityLeaseDefaultsTheWorkloadModeToMove(t *testing.T) {
 
 	if got := lease.Spec.Workload.Mode; got != v1alpha1.WorkloadModeMove {
 		t.Errorf("mode defaulted to %q, want %q", got, v1alpha1.WorkloadModeMove)
+	}
+}
+
+func TestCapacityLeaseNameStaysWithinTheLabelValueLimit(t *testing.T) {
+	tests := []struct {
+		name         string
+		length       int
+		wantRejected bool
+	}{
+		{"at the limit", maxLeaseNameLength, false},
+		{"past the limit", maxLeaseNameLength + 1, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := apiServerClient(t)
+			lease := validLease(t)
+			lease.Name = strings.Repeat("a", tc.length)
+			assertCreate(t, c, lease, tc.wantRejected)
+		})
 	}
 }
 

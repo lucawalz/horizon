@@ -309,6 +309,7 @@ func (s *CapacityLeaseStatus) LifetimeBackstop() *metav1.Time {
 // +kubebuilder:printcolumn:name="Type",type="string",JSONPath=".status.instanceType"
 // +kubebuilder:printcolumn:name="ReadyAt",type="date",JSONPath=".status.readyAt",priority=1
 // +kubebuilder:printcolumn:name="ReleasedAt",type="date",JSONPath=".status.releasedAt",priority=1
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.size() <= 63",message="the lease name is carried as a label value and a node taint value, so it may be at most 63 characters"
 type CapacityLease struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

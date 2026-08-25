@@ -90,7 +90,7 @@ func (f *orphanFixture) buildProvider(_ context.Context, cfg *v1alpha1.ProviderC
 func (f *orphanFixture) createProviderConfig(suffix string) string {
 	f.t.Helper()
 
-	cfg := validProviderConfig(objectName(f.t) + "-" + suffix)
+	cfg := validProviderConfig(suffixedObjectName(f.t, suffix))
 	if err := f.client.Create(f.t.Context(), cfg); err != nil {
 		f.t.Fatalf("create providerconfig: %v", err)
 	}
@@ -112,7 +112,7 @@ func (f *orphanFixture) createLease(suffix string) *v1alpha1.CapacityLease {
 	f.t.Helper()
 
 	lease := &v1alpha1.CapacityLease{
-		ObjectMeta: metav1.ObjectMeta{Name: objectName(f.t) + "-" + suffix},
+		ObjectMeta: metav1.ObjectMeta{Name: suffixedObjectName(f.t, suffix)},
 		Spec: v1alpha1.CapacityLeaseSpec{
 			ProviderRef: "hetzner",
 			Region:      "nbg1",
@@ -163,7 +163,7 @@ func (f *orphanFixture) createNode(suffix, leaseUID string, ready corev1.Conditi
 	if leaseUID != "" {
 		labels[LeaseUIDLabelKey] = leaseUID
 	}
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: objectName(f.t) + "-" + suffix, Labels: labels}}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: suffixedObjectName(f.t, suffix), Labels: labels}}
 	if err := f.client.Create(f.t.Context(), node); err != nil {
 		f.t.Fatalf("create node: %v", err)
 	}
