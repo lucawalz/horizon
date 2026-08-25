@@ -22,7 +22,6 @@ import type {
   LeaseReleaseResponse,
   LeaseRequirements,
   LeaseSelection,
-  MigrationWarning,
 } from '@/lib/api'
 import {
   badRequest,
@@ -668,9 +667,33 @@ function RecordPanel({ name }: { name: string }) {
 }
 
 const replicateMode = 'replicate'
+const moveMode = 'move'
+
+const workloadCopy = {
+  [moveMode]: {
+    warningsTitle: 'Migration warnings',
+    warningsIntro:
+      'Each workload here either moves onto the leased nodes at a cost or is left where it is, and the reason beside it says which. A workload that does move goes dark while it does, because nothing stands in for a pod between the moment it stops and the moment its replacement is ready.',
+    placedTitle: 'Migrated workloads',
+    placedEmpty:
+      'Nothing has been moved off this lease. Workloads appear here once the controller drains the leased nodes ahead of teardown.',
+  },
+  [replicateMode]: {
+    warningsTitle: 'Replication warnings',
+    warningsIntro:
+      'Each workload here is either copied onto the leased nodes at a cost or left uncopied, and the reason beside it says which. Nothing is written to the workload itself on either path, so none of it goes dark.',
+    placedTitle: 'Burst copies',
+    placedEmpty:
+      'No copy is running for this lease. Copies appear here once the controller creates one on the leased nodes, and teardown deletes them again.',
+  },
+} as const
 
 function replicates(lease: LeaseDetailResponse): boolean {
   return lease.workloadMode === replicateMode
+}
+
+function copyFor(lease: LeaseDetailResponse) {
+  return workloadCopy[replicates(lease) ? replicateMode : moveMode]
 }
 
 function WorkloadModeFact({ lease }: { lease: LeaseDetailResponse }) {
@@ -765,15 +788,15 @@ const migrationReasons: Record<string, string> = {
 // a newer controller can classify a shape this bundle predates, and dropping its reason would hide the warning entirely
 const unworded = 'the binary serving this interface reports a reason this build has no wording for'
 
-function MigrationWarningsPanel({ warnings }: { warnings: MigrationWarning[] }) {
+function MigrationWarningsPanel({ lease }: { lease: LeaseDetailResponse }) {
+  const warnings = lease.migrationWarnings
   if (warnings.length === 0) return null
 
+  const copy = copyFor(lease)
   return (
-    <Panel title="Migration warnings">
+    <Panel title={copy.warningsTitle}>
       <p className="row-rule max-w-[70ch] px-gutter py-cell text-copy-13 text-subtle">
-        Every workload here still moves onto the leased nodes. Each one goes dark while it does,
-        because nothing stands in for a pod between the moment it stops and the moment its
-        replacement is ready.
+        {copy.warningsIntro}
       </p>
       <ul>
         {warnings.map((warning) => (
@@ -800,15 +823,14 @@ function MigrationWarningsPanel({ warnings }: { warnings: MigrationWarning[] }) 
   )
 }
 
-function MigratedPanel({ workloads }: { workloads: string[] }) {
+function MigratedPanel({ lease }: { lease: LeaseDetailResponse }) {
+  const workloads = lease.migratedWorkloads
+  const copy = copyFor(lease)
   return (
-    <Panel title="Migrated workloads">
+    <Panel title={copy.placedTitle}>
       <div className="p-gutter">
         {workloads.length === 0 ? (
-          <p className="text-copy-13 text-subtle">
-            Nothing has been moved off this lease. Workloads appear here once the controller drains
-            the leased nodes ahead of teardown.
-          </p>
+          <p className="text-copy-13 text-subtle">{copy.placedEmpty}</p>
         ) : (
           <ul className="flex flex-wrap gap-snug">
             {workloads.map((workload) => (
@@ -846,8 +868,8 @@ function LeaseDetailBody({ name, view }: { name: string; view: Polled<LeaseDetai
       <SelectionPanel selection={view.data.selection} size={view.data.size} />
       <InstancesPanel instances={view.data.instances} />
       <ConditionsPanel conditions={view.data.conditions} />
-      <MigrationWarningsPanel warnings={view.data.migrationWarnings} />
-      <MigratedPanel workloads={view.data.migratedWorkloads} />
+      <MigrationWarningsPanel lease={view.data} />
+      <MigratedPanel lease={view.data} />
       {view.data.summary.releasedAt === null ? (
         <ReleasePanel name={name} />
       ) : (

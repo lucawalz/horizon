@@ -350,7 +350,70 @@ describe('the lease detail', () => {
     }
     const panel = pillLabelled(view.container, migrationCopy[0][0]).closest('section')
     expect(panel?.querySelector('[data-severity="danger"]')).toBeNull()
-    expect(panel?.textContent).toContain('still moves onto the leased nodes')
+    expect(panel?.textContent).toContain('Migration warnings')
+    expect(panel?.textContent).toContain('or is left where it is')
+
+    await view.unmount()
+  })
+
+  // a lease that skipped a workload never moved it, so a panel promising a move of every entry reports a move that did not happen
+  it('promises no move of a workload the lease may have left alone', async () => {
+    stubLease(leaseDetailBody({ migrationWarnings: everyReason }))
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    const panel = pillLabelled(view.container, migrationCopy[0][0]).closest('section')
+    expect(panel?.textContent).not.toContain('Every workload here still moves')
+
+    await view.unmount()
+  })
+
+  it('describes a copy rather than a move on a replicating lease', async () => {
+    stubLease(
+      leaseDetailBody({
+        workloadMode: 'replicate',
+        workloadBurstReplicas: 2,
+        migrationWarnings: warningsFor(replicationCopy),
+      }),
+    )
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    const panel = pillLabelled(view.container, replicationCopy[0][0]).closest('section')
+    expect(panel?.textContent).toContain('Replication warnings')
+    expect(panel?.textContent).toContain('copied onto the leased nodes')
+    expect(panel?.textContent).not.toContain('moves onto the leased nodes')
+
+    await view.unmount()
+  })
+
+  // replicate mode reports WorkloadReplicable and never WorkloadMigrated, so a page keyed on the move condition reads blank
+  it('reads a replicating lease that reports no migration at all', async () => {
+    stubLease(
+      leaseDetailBody({
+        workloadNamespaces: ['batch'],
+        workloadMode: 'replicate',
+        workloadBurstReplicas: 2,
+        migratedWorkloads: ['batch/deployment/api-burst-1a2b3c4d'],
+        conditions: [
+          {
+            type: 'WorkloadReplicable',
+            status: 'False',
+            reason: 'EveryWorkloadSkipped',
+            message: 'batch/deployment/api was not replicated',
+            lastTransitionTime: '2026-08-21T11:00:00Z',
+          },
+        ],
+      }),
+    )
+    const view = await mount(<LeaseDetailRoute name={leaseName} />)
+
+    const conditions = [...view.container.querySelectorAll('tbody tr')].find((row) =>
+      row.textContent?.includes('WorkloadReplicable'),
+    )
+    expect(conditions?.textContent).toContain('EveryWorkloadSkipped')
+    const shown = view.container.textContent ?? ''
+    expect(shown).toContain('Burst copies')
+    expect(shown).toContain('batch/deployment/api-burst-1a2b3c4d')
+    expect(shown).not.toContain('Migrated workloads')
 
     await view.unmount()
   })
