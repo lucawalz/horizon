@@ -4,7 +4,7 @@ metadata:
   name: {{ include "horizon.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "horizon.labels" . | nindent 4 }}
+    {{- include "horizon.controllerLabels" . | nindent 4 }}
   {{- with .Values.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
@@ -12,7 +12,7 @@ metadata:
 spec:
   type: {{ .Values.service.type }}
   selector:
-    {{- include "horizon.selectorLabels" . | nindent 4 }}
+    {{- include "horizon.controllerSelectorLabels" . | nindent 4 }}
   ports:
     - name: metrics
       port: {{ .Values.service.metricsPort }}

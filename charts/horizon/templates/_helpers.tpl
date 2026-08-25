@@ -33,6 +33,18 @@ app.kubernetes.io/name: {{ include "horizon.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "horizon.controllerComponent" -}}controller{{- end -}}
+
+{{- define "horizon.controllerSelectorLabels" -}}
+{{ include "horizon.selectorLabels" . }}
+app.kubernetes.io/component: {{ include "horizon.controllerComponent" . }}
+{{- end -}}
+
+{{- define "horizon.controllerLabels" -}}
+{{ include "horizon.labels" . }}
+app.kubernetes.io/component: {{ include "horizon.controllerComponent" . }}
+{{- end -}}
+
 {{- define "horizon.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "horizon.fullname" .) .Values.serviceAccount.name -}}

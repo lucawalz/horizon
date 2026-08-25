@@ -97,7 +97,7 @@ helm template horizon ./charts/horizon \
   --set serviceMonitor.enabled=true --api-versions monitoring.coreos.com/v1
 ```
 
-The monitor is created in the release namespace and selects the chart's own Service by `app.kubernetes.io/name` and `app.kubernetes.io/instance`, so a Prometheus whose `serviceMonitorNamespaceSelector` is empty picks it up wherever the release lives.
+The monitor is created in the release namespace and selects the chart's own Service by `app.kubernetes.io/name`, `app.kubernetes.io/instance` and `app.kubernetes.io/component: controller`, so it matches the metrics Service and never the interface Service, and a Prometheus whose `serviceMonitorNamespaceSelector` is empty picks it up wherever the release lives.
 
 ### Web interface
 
