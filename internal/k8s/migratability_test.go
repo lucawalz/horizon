@@ -272,7 +272,7 @@ func TestClassifyMigratabilityReportsAListFailure(t *testing.T) {
 }
 
 func TestMigrateSkipsPodsOfWorkloadsThatRollThemselves(t *testing.T) {
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "burst-1", Labels: map[string]string{k8s.PoolLabelKey: poolValue, provider.LeaseUIDLabelKey: testLease.UID}}}
+	node := burstNode("burst-1", testLease.UID)
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: testNS},
 		Spec: appsv1.DeploymentSpec{

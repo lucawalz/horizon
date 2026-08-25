@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	PoolLabelKey              = provider.PoolLabelKey
 	LeaseUIDLabelKey          = provider.LeaseUIDLabelKey
 	BurstTaintKey             = "horizon.dev/burst"
 	PrePlacementAnnotationKey = "horizon.dev/pre-burst-placement"
