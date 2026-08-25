@@ -1,5 +1,6 @@
 import { AppFrame, AppHeader, AppMain, NavLink } from '@/components/app-frame'
 import { ConfigDetailRoute } from '@/routes/config-detail'
+import { ConfigEditRoute } from '@/routes/config-edit'
 import { ConfigNewRoute } from '@/routes/config-new'
 import { LeaseDetailRoute } from '@/routes/lease-detail'
 import { LeaseListRoute } from '@/routes/lease-list'
@@ -23,6 +24,8 @@ function View({ route }: { route: Route }) {
       return <MachinesRoute config={route.config} region={route.region} />
     case 'new-config':
       return <ConfigNewRoute />
+    case 'edit-config':
+      return <ConfigEditRoute name={route.config} />
     default:
       return <UnknownRoute path={route.path} />
   }
@@ -43,7 +46,10 @@ export default function App() {
         <NavLink
           href={machinesHref}
           current={
-            route.name === 'machines' || route.name === 'new-config' || route.name === 'config'
+            route.name === 'machines' ||
+            route.name === 'new-config' ||
+            route.name === 'config' ||
+            route.name === 'edit-config'
           }
         >
           Machines

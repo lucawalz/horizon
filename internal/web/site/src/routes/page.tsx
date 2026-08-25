@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 
+import { Button } from '@/components/controls'
 import type { Severity } from '@/lib/status'
 import { cn } from '@/lib/utils'
 
@@ -121,5 +122,59 @@ export function Snippet({ children }: { children: ReactNode }) {
     <code className="rounded-control bg-recessed px-tight py-hair font-mono text-label-12 text-ink">
       {children}
     </code>
+  )
+}
+
+export function Prompt({
+  severity,
+  heading,
+  children,
+}: {
+  severity: Severity
+  heading: string
+  children: ReactNode
+}) {
+  return (
+    <div
+      data-severity={severity}
+      className="space-y-cell rounded-panel border border-tint-line bg-tint p-gutter"
+    >
+      <p className="text-label-14 font-emphasis text-tint-fg">{heading}</p>
+      {children}
+    </div>
+  )
+}
+
+export function Confirmation({
+  heading,
+  confirmLabel,
+  pendingLabel,
+  declineLabel,
+  pending,
+  onConfirm,
+  onDecline,
+  children,
+}: {
+  heading: string
+  confirmLabel: string
+  pendingLabel: string
+  declineLabel: string
+  pending: boolean
+  onConfirm: () => void
+  onDecline: () => void
+  children: ReactNode
+}) {
+  return (
+    <Prompt severity="attention" heading={heading}>
+      <p className="max-w-[70ch] text-copy-13 text-tint-fg/85">{children}</p>
+      <div className="flex flex-wrap gap-snug">
+        <Button type="button" tone="danger" onClick={onConfirm} disabled={pending}>
+          {pending ? pendingLabel : confirmLabel}
+        </Button>
+        <Button type="button" onClick={onDecline} disabled={pending}>
+          {declineLabel}
+        </Button>
+      </div>
+    </Prompt>
   )
 }

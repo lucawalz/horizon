@@ -13,7 +13,11 @@ const secondsPerHour = 60 * secondsPerMinute
 // the crd holds spec.duration between these through its own cel rule, so a control offering more only earns a refusal
 export const leaseMinutes = { min: 5, max: 8 * minutesPerHour }
 
-export const watchdogLifetimeMinutes = { min: 5, max: 24 * minutesPerHour }
+// the whole watchdog policy is submitted in seconds, so a stored lifetime that is not a whole number of minutes still fills the control exactly
+export const watchdogLifetimeSeconds = {
+  min: 5 * secondsPerMinute,
+  max: 24 * minutesPerHour * secondsPerMinute,
+}
 
 export const minRenewIntervalSeconds = 10
 

@@ -47,6 +47,7 @@ import {
 } from '@/routes/chips'
 import { ConditionsTable } from '@/routes/conditions'
 import {
+  Confirmation,
   Definition,
   DefinitionGrid,
   EmptyState,
@@ -54,6 +55,7 @@ import {
   Notice,
   PageHeader,
   Panel,
+  Prompt,
   Snippet,
 } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
@@ -246,60 +248,6 @@ function SelectionPanel({
         </Definition>
       </DefinitionGrid>
     </Panel>
-  )
-}
-
-function Prompt({
-  severity,
-  heading,
-  children,
-}: {
-  severity: Severity
-  heading: string
-  children: ReactNode
-}) {
-  return (
-    <div
-      data-severity={severity}
-      className="space-y-cell rounded-panel border border-tint-line bg-tint p-gutter"
-    >
-      <p className="text-label-14 font-emphasis text-tint-fg">{heading}</p>
-      {children}
-    </div>
-  )
-}
-
-function Confirmation({
-  heading,
-  confirmLabel,
-  pendingLabel,
-  declineLabel,
-  pending,
-  onConfirm,
-  onDecline,
-  children,
-}: {
-  heading: string
-  confirmLabel: string
-  pendingLabel: string
-  declineLabel: string
-  pending: boolean
-  onConfirm: () => void
-  onDecline: () => void
-  children: ReactNode
-}) {
-  return (
-    <Prompt severity="attention" heading={heading}>
-      <p className="max-w-[70ch] text-copy-13 text-tint-fg/85">{children}</p>
-      <div className="flex flex-wrap gap-snug">
-        <Button type="button" tone="danger" onClick={onConfirm} disabled={pending}>
-          {pending ? pendingLabel : confirmLabel}
-        </Button>
-        <Button type="button" onClick={onDecline} disabled={pending}>
-          {declineLabel}
-        </Button>
-      </div>
-    </Prompt>
   )
 }
 

@@ -7,6 +7,7 @@ export const newConfigHref = '/new-config'
 
 const leasePrefix = '/leases/'
 const configPrefix = '/configs/'
+const editSuffix = '/edit'
 const configQueryKey = 'config'
 const regionQueryKey = 'region'
 const primaryButton = 0
@@ -15,6 +16,7 @@ export type Route =
   | { name: 'leases' }
   | { name: 'new' }
   | { name: 'new-config' }
+  | { name: 'edit-config'; config: string }
   | { name: 'lease'; lease: string }
   | { name: 'config'; config: string }
   | { name: 'machines'; config: string; region: string }
@@ -29,6 +31,10 @@ export function configHref(name: string): string {
   return configPrefix + encodeURIComponent(name)
 }
 
+export function editConfigHref(name: string): string {
+  return configPrefix + encodeURIComponent(name) + editSuffix
+}
+
 export function machinesHrefFor(config: string, region: string): string {
   const query = new URLSearchParams()
   if (config !== '') query.set(configQueryKey, config)
@@ -41,6 +47,11 @@ function parseRoute(path: string, search: string): Route {
   if (path === leasesHref) return { name: 'leases' }
   if (path === newLeaseHref) return { name: 'new' }
   if (path === newConfigHref) return { name: 'new-config' }
+
+  if (path.startsWith(configPrefix) && path.endsWith(editSuffix)) {
+    const config = decodeURIComponent(path.slice(configPrefix.length, -editSuffix.length))
+    if (config !== '') return { name: 'edit-config', config }
+  }
 
   if (path.startsWith(leasePrefix)) {
     const lease = decodeURIComponent(path.slice(leasePrefix.length))

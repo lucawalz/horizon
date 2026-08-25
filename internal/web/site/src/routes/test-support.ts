@@ -12,6 +12,7 @@ import type {
   MachineCatalogueResponse,
   NamespaceListResponse,
   ProviderConfigDetailResponse,
+  ProviderConfigSpecRequest,
   ProviderConfigSummary,
 } from '@/lib/api'
 
@@ -125,6 +126,7 @@ export async function settle(): Promise<void> {
 export function leaseSummary(overrides: Partial<LeaseSummary> = {}): LeaseSummary {
   return {
     name: 'batch-run',
+    providerRef: 'hetzner',
     replicas: 1,
     region: 'nbg1',
     phase: 'Active',
@@ -143,6 +145,25 @@ export function leaseListBody(leases: LeaseSummary[]): LeaseListResponse {
   return { leases, observedAt: '2026-08-21T12:00:00Z' }
 }
 
+export function providerConfigSpec(
+  overrides: Partial<ProviderConfigSpecRequest> = {},
+): ProviderConfigSpecRequest {
+  return {
+    type: 'hetzner',
+    hetzner: {
+      credentialsSecretRef: { name: 'horizon-hetzner', key: 'token' },
+      nodeCredentialSecretRef: { name: 'horizon-hetzner-node', key: 'token' },
+      joinTokenSecretRef: null,
+      cloudInitSecretRef: { name: 'horizon-cloud-init', key: 'cloud-init' },
+      image: 'ubuntu-24.04',
+      sshKeys: ['workstation'],
+      firewalls: [],
+    },
+    watchdog: { renewIntervalSeconds: 60, slackSeconds: 120, maxLifetimeSeconds: 28800 },
+    ...overrides,
+  }
+}
+
 export function providerConfigSummary(
   name: string,
   overrides: Partial<ProviderConfigSummary> = {},
@@ -154,6 +175,7 @@ export function providerConfigSummary(
     reason: null,
     message: null,
     cataloguePublished: 'True',
+    spec: providerConfigSpec(),
     createdAt: '2026-08-21T10:00:00Z',
     ...overrides,
   }

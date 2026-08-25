@@ -34,6 +34,7 @@ export type WorkloadMode = Open<'move' | 'replicate'>
 
 export interface LeaseSummary {
   name: string
+  providerRef: string
   replicas: number
   region: string
   phase: LeasePhase | null
@@ -129,6 +130,8 @@ export interface ProviderConfigSummary {
   reason: string | null
   message: string | null
   cataloguePublished: ConditionStatus | null
+  // null where the configuration holds something this interface cannot submit, such as an image chosen by selector
+  spec: ProviderConfigSpecRequest | null
   createdAt: string
 }
 
@@ -252,14 +255,22 @@ export interface WatchdogRequest {
   maxLifetimeSeconds: number
 }
 
-export interface ProviderConfigCreateRequest {
-  name: string
+export interface ProviderConfigSpecRequest {
   type: string
   hetzner: HetznerProviderRequest | null
   watchdog: WatchdogRequest
 }
 
+export interface ProviderConfigCreateRequest extends ProviderConfigSpecRequest {
+  name: string
+}
+
 export interface LeaseReleaseResponse {
+  name: string
+  detail: string
+}
+
+export interface ProviderConfigDeleteResponse {
   name: string
   detail: string
 }
@@ -303,6 +314,8 @@ const jsonContentType = 'application/json'
 const createMethod = 'POST'
 const deleteMethod = 'DELETE'
 const extendMethod = 'PATCH'
+// a whole spec replaces the stored one, so the verb is the idempotent one rather than the partial one an extension uses
+const replaceMethod = 'PUT'
 const configQueryKey = 'config'
 const regionQueryKey = 'region'
 
@@ -389,6 +402,17 @@ export function createProviderConfig(
   request: ProviderConfigCreateRequest,
 ): Promise<ProviderConfigSummary> {
   return change<ProviderConfigSummary>(providerConfigsPath, createMethod, request)
+}
+
+export function replaceProviderConfig(
+  name: string,
+  spec: ProviderConfigSpecRequest,
+): Promise<ProviderConfigSummary> {
+  return change<ProviderConfigSummary>(providerConfigPath(name), replaceMethod, spec)
+}
+
+export function deleteProviderConfig(name: string): Promise<ProviderConfigDeleteResponse> {
+  return change<ProviderConfigDeleteResponse>(providerConfigPath(name), deleteMethod)
 }
 
 export function fetchNamespaces(): Promise<NamespaceListResponse> {

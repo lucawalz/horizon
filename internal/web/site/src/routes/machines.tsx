@@ -23,13 +23,19 @@ import { ConditionChip, Since } from '@/routes/chips'
 import { EmptyState, Loading, Notice, PageHeader } from '@/routes/page'
 import type { Polled } from '@/routes/poll'
 import { usePolled } from '@/routes/poll'
-import { configHref, machinesHrefFor, navigate, newConfigHref } from '@/routes/router'
+import {
+  configHref,
+  editConfigHref,
+  machinesHrefFor,
+  navigate,
+  newConfigHref,
+} from '@/routes/router'
 import { absent, formatBytes, formatRate } from '@/routes/units'
 
 const configField = 'config'
 const regionField = 'region'
 const readyCondition = 'Ready'
-const configColumns = 5
+const configColumns = 6
 const typeColumns = 8
 
 function Picker({
@@ -156,6 +162,7 @@ function ConfigsPanel({ configs }: { configs: ProviderConfigSummary[] }) {
           <HeadCell>Ready</HeadCell>
           <HeadCell>Reason</HeadCell>
           <HeadCell numeric>Created</HeadCell>
+          <HeadCell>Change</HeadCell>
         </Row>
       </TableHead>
       <TableBody>
@@ -182,6 +189,9 @@ function ConfigsPanel({ configs }: { configs: ProviderConfigSummary[] }) {
               <Cell muted>{one.reason ?? absent}</Cell>
               <Cell numeric muted>
                 <Since at={one.createdAt} />
+              </Cell>
+              <Cell>
+                <ButtonLink href={editConfigHref(one.name)}>Edit or delete</ButtonLink>
               </Cell>
             </Row>
           ))
