@@ -325,13 +325,42 @@ func disruptionBudgetSelectors(ctx context.Context, kc kubernetes.Interface, nam
 	return selectors, nil
 }
 
-func DeleteBurstCopies(ctx context.Context, kc kubernetes.Interface, targets TargetSet, lease LeaseIdentity) error {
+func DeleteBurstCopies(ctx context.Context, kc kubernetes.Interface, copies []string, lease LeaseIdentity) error {
 	if err := lease.validate(); err != nil {
+		return fmt.Errorf("%s: %w", opDeleteCopies, err)
+	}
+	targets, err := NamespaceSetOfWorkloads(copies)
+	if err != nil {
 		return fmt.Errorf("%s: %w", opDeleteCopies, err)
 	}
 	var failures error
 	for _, namespace := range targets.namespaces {
 		failures = errors.Join(failures, deleteNamespaceCopies(ctx, kc, namespace, lease))
+	}
+	return errors.Join(failures, confirmCopiesGone(ctx, kc, copies))
+}
+
+func confirmCopiesGone(ctx context.Context, kc kubernetes.Interface, copies []string) error {
+	// the delete is label scoped, so a copy stripped of either label falls out of it silently and this list is the only remaining record of it
+	var failures error
+	for _, ref := range copies {
+		namespace, kind, name, err := parseWorkloadRef(ref)
+		if err != nil {
+			failures = errors.Join(failures, fmt.Errorf("%s: %w", opDeleteCopies, err))
+			continue
+		}
+		if kind != kindDeployment {
+			failures = errors.Join(failures, fmt.Errorf("%s: %q names a %s, and only a deployment is ever copied", opDeleteCopies, ref, kind))
+			continue
+		}
+		_, err = kc.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		switch {
+		case apierrors.IsNotFound(err):
+		case err != nil:
+			failures = errors.Join(failures, fmt.Errorf("%s: confirm deployment %q in %q is gone: %w", opDeleteCopies, name, namespace, err))
+		default:
+			failures = errors.Join(failures, fmt.Errorf("%s: burst copy %q outlived the delete of every copy this lease owns", opDeleteCopies, ref))
+		}
 	}
 	return failures
 }

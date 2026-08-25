@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -170,6 +171,25 @@ func TestReplicateModeDeletesTheCopyAtTeardown(t *testing.T) {
 	h.assertConditionDetail(v1alpha1.ConditionWorkloadReplicable, reasonCopiesDeleted, "burst copies deleted")
 	if h.deploymentIn(testWorkloadNS, "api") == nil {
 		t.Error("teardown deleted the original alongside the copy")
+	}
+}
+
+func TestReplicateModeDegradesWhenACopyOutlivesTheDelete(t *testing.T) {
+	h := replicated(t)
+	h.seedWorkload()
+	h.settle()
+	h.orphanBurstCopy(testWorkloadNS)
+	owed := h.lease().Status.MigratedWorkloads
+
+	h.deleteLease()
+	h.settleIgnoringErrors(3)
+
+	h.assertConditionDetail(v1alpha1.ConditionDegraded, reasonCopyDeleteFailed, "outlived")
+	if got := h.lease().Status.MigratedWorkloads; !slices.Equal(got, owed) {
+		t.Errorf("the lease records %v after a delete that removed nothing, want the copies %v it still owes", got, owed)
+	}
+	if got := len(h.burstCopiesIn(testWorkloadNS)); got != 1 {
+		t.Errorf("the namespace holds %d burst copies, want the orphaned one still reported", got)
 	}
 }
 

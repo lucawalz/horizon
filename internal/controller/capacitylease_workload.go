@@ -200,11 +200,7 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 		return ctrl.Result{}, nil
 	}
 
-	namespaces, err := migratedNamespaces(lease)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if reason, releaseErr := r.releaseBurstWorkload(ctx, lease, namespaces); releaseErr != nil {
+	if reason, releaseErr := r.releaseBurstWorkload(ctx, lease); releaseErr != nil {
 		r.setCondition(lease, v1alpha1.ConditionDegraded, metav1.ConditionTrue, reason, releaseErr.Error())
 		if err := r.writeStatus(ctx, lease); err != nil {
 			return ctrl.Result{}, errors.Join(releaseErr, err)
@@ -225,12 +221,16 @@ func (r *CapacityLeaseReconciler) restoreWorkload(ctx context.Context, lease *v1
 	return ctrl.Result{RequeueAfter: stepRequeue}, nil
 }
 
-func (r *CapacityLeaseReconciler) releaseBurstWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, namespaces k8s.TargetSet) (string, error) {
+func (r *CapacityLeaseReconciler) releaseBurstWorkload(ctx context.Context, lease *v1alpha1.CapacityLease) (string, error) {
 	if replicateMode(lease) {
-		if err := k8s.DeleteBurstCopies(ctx, r.Kube, namespaces, leaseIdentity(lease)); err != nil {
+		if err := k8s.DeleteBurstCopies(ctx, r.Kube, lease.Status.MigratedWorkloads, leaseIdentity(lease)); err != nil {
 			return reasonCopyDeleteFailed, fmt.Errorf("delete burst copies: %w", err)
 		}
 		return "", nil
+	}
+	namespaces, err := migratedNamespaces(lease)
+	if err != nil {
+		return reasonRestoreFailed, err
 	}
 	if _, err := k8s.RestorePlacement(ctx, r.Kube, namespaces, leaseIdentity(lease)); err != nil {
 		return reasonRestoreFailed, fmt.Errorf("restore placement: %w", err)

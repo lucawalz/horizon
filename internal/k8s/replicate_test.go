@@ -530,11 +530,12 @@ func TestReplicateCopiesTheNeighboursOfASkippedWorkload(t *testing.T) {
 func TestDeleteBurstCopiesRemovesOnlyThisLeasesCopies(t *testing.T) {
 	moved := ownedDeployment("moved", "moved", testLease)
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), originalDeployment(), moved)
-	if _, err := replicate(t, kc, testNS); err != nil {
+	replicated, err := replicate(t, kc, testNS)
+	if err != nil {
 		t.Fatalf("Replicate: %v", err)
 	}
 
-	if err := k8s.DeleteBurstCopies(context.Background(), kc, nsSet(t, testNS), testLease); err != nil {
+	if err := k8s.DeleteBurstCopies(context.Background(), kc, replicated.Copies, testLease); err != nil {
 		t.Fatalf("DeleteBurstCopies: %v", err)
 	}
 
@@ -551,20 +552,43 @@ func TestDeleteBurstCopiesRemovesOnlyThisLeasesCopies(t *testing.T) {
 func TestDeleteBurstCopiesLeavesAnotherLeasesCopyRunning(t *testing.T) {
 	leaseB := k8s.LeaseIdentity{UID: "uid-b", Name: "lease-b"}
 	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), burstNode("burst-2", leaseB.UID), originalDeployment())
-	if _, err := replicate(t, kc, testNS); err != nil {
+	replicated, err := replicate(t, kc, testNS)
+	if err != nil {
 		t.Fatalf("Replicate for the first lease: %v", err)
 	}
 	if _, err := k8s.Replicate(context.Background(), kc, nsSet(t, testNS), replicationOf(leaseB)); err != nil {
 		t.Fatalf("Replicate for the second lease: %v", err)
 	}
 
-	if err := k8s.DeleteBurstCopies(context.Background(), kc, nsSet(t, testNS), testLease); err != nil {
+	if err := k8s.DeleteBurstCopies(context.Background(), kc, replicated.Copies, testLease); err != nil {
 		t.Fatalf("DeleteBurstCopies: %v", err)
 	}
 
 	copies := burstCopiesIn(t, kc, testNS)
 	if len(copies) != 1 || copies[0].Labels[k8s.BurstCopyLabelKey] != leaseB.Name {
 		t.Errorf("the namespace holds %d burst copies, want the second lease's alone", len(copies))
+	}
+}
+
+func TestDeleteBurstCopiesReportsACopyItCannotSelect(t *testing.T) {
+	kc := fake.NewSimpleClientset(burstNode("burst-1", testLease.UID), originalDeployment())
+	replicated, err := replicate(t, kc, testNS)
+	if err != nil {
+		t.Fatalf("Replicate: %v", err)
+	}
+	copied := burstCopiesIn(t, kc, testNS)[0]
+	delete(copied.Labels, provider.LeaseUIDLabelKey)
+	if _, err := kc.AppsV1().Deployments(testNS).Update(context.Background(), &copied, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("relabel the copy: %v", err)
+	}
+
+	err = k8s.DeleteBurstCopies(context.Background(), kc, replicated.Copies, testLease)
+
+	if err == nil {
+		t.Fatal("DeleteBurstCopies reported success while a copy it recorded still runs on the lease's nodes")
+	}
+	if !strings.Contains(err.Error(), copied.Name) {
+		t.Errorf("the failure reads %q, want it to name the copy that survived", err)
 	}
 }
 

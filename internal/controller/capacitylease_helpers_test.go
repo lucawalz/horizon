@@ -610,6 +610,19 @@ func (h *harness) retargetWorkload(namespaces ...string) {
 	}
 }
 
+func (h *harness) orphanBurstCopy(namespace string) {
+	h.t.Helper()
+	copies := h.burstCopiesIn(namespace)
+	if len(copies) != 1 {
+		h.t.Fatalf("the namespace holds %d burst copies, want the one to orphan", len(copies))
+	}
+	orphan := copies[0]
+	delete(orphan.Labels, LeaseUIDLabelKey)
+	if _, err := h.kube.AppsV1().Deployments(namespace).Update(h.t.Context(), &orphan, metav1.UpdateOptions{}); err != nil {
+		h.t.Fatalf("relabel the burst copy: %v", err)
+	}
+}
+
 func (h *harness) dropWorkloadTarget() {
 	h.t.Helper()
 	lease := h.lease()

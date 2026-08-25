@@ -252,12 +252,20 @@ func workloadRef(namespace, kind, name string) string {
 	return namespace + workloadRefSeparator + kind + workloadRefSeparator + name
 }
 
+func parseWorkloadRef(ref string) (namespace, kind, name string, err error) {
+	parts := strings.Split(ref, workloadRefSeparator)
+	if len(parts) != 3 || slices.Contains(parts, "") {
+		return "", "", "", fmt.Errorf("workload reference %q does not read as namespace/kind/name", ref)
+	}
+	return parts[0], parts[1], parts[2], nil
+}
+
 func NamespaceSetOfWorkloads(refs []string) (TargetSet, error) {
 	var namespaces []string
 	for _, ref := range refs {
-		namespace, _, qualified := strings.Cut(ref, workloadRefSeparator)
-		if !qualified || namespace == "" {
-			return TargetSet{}, fmt.Errorf("target set: workload reference %q names no namespace", ref)
+		namespace, _, _, err := parseWorkloadRef(ref)
+		if err != nil {
+			return TargetSet{}, fmt.Errorf("target set: %w", err)
 		}
 		if !slices.Contains(namespaces, namespace) {
 			namespaces = append(namespaces, namespace)

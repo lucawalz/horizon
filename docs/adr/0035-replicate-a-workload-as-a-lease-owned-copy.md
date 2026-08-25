@@ -179,8 +179,13 @@ into scheduling the original, and it is the reason such a workload is not copied
 
 `status.migratedWorkloads` names the copies a replicate-mode lease has to delete, in the same
 `namespace/kind/name` form and with the same growth rule 0034 gave it. Teardown reads its
-namespaces out of that list, deletes the copies, and holds the node release until no pod of
-the lease sits on a burst node, which is the node-scoped gate move mode already used.
+namespaces out of that list, deletes every copy the two ownership labels select in each of
+them, and then confirms by name that each copy the list records is gone before the list is
+cleared. The delete is label scoped so that it can never reach a workload the lease only
+moved, and that same scoping means a copy stripped of either label falls out of it silently,
+after which the list is the only record that the copy ever existed. A copy that outlives the
+delete degrades the lease with `BurstCopyDeleteFailed` and keeps the record, rather than
+clearing the list and leaving the copy to run on nodes that are about to be deleted.
 
 `status.migrationWarnings` carries skips as well as warnings in replicate mode. The web
 interface has wording for the move-mode reasons only, so a replicate-mode reason renders
