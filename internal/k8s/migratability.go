@@ -24,6 +24,7 @@ const (
 	ReasonRecreateStrategy   = "RecreateStrategy"
 	ReasonNoSurgeCapacity    = "NoSurgeCapacity"
 	ReasonNodeSelectorPinned = "NodeSelectorPinned"
+	ReasonHeldByAnotherLease = "HeldByAnotherLease"
 )
 
 const (
@@ -37,8 +38,11 @@ type WorkloadMigratability struct {
 	Reasons  []string
 }
 
-func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespace string) ([]WorkloadMigratability, error) {
+func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespace string, lease LeaseIdentity) ([]WorkloadMigratability, error) {
 	if err := ValidateNamespace(namespace); err != nil {
+		return nil, fmt.Errorf("classify: %w", err)
+	}
+	if err := lease.validate(); err != nil {
 		return nil, fmt.Errorf("classify: %w", err)
 	}
 
@@ -49,7 +53,7 @@ func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespa
 			return nil, fmt.Errorf("classify: list %s in %q: %w", wc.plural(), wc.namespace, err)
 		}
 		for _, t := range targets {
-			assessment, err := t.migratability(wc.kind)
+			assessment, err := t.migratability(wc.kind, lease)
 			if err != nil {
 				return nil, err
 			}
@@ -59,8 +63,16 @@ func ClassifyMigratability(ctx context.Context, kc kubernetes.Interface, namespa
 	return assessments, nil
 }
 
-func (t workloadTarget) migratability(kind string) (WorkloadMigratability, error) {
+func (t workloadTarget) migratability(kind string, lease LeaseIdentity) (WorkloadMigratability, error) {
 	ref := workloadRef(kind, t.name)
+	// a workload another lease holds is never moved, so the impediments to moving it say nothing useful
+	if owner, owned := placementOwner(t.labels); owned && owner != lease.UID {
+		return WorkloadMigratability{
+			Workload: ref,
+			Verdict:  VerdictDisruptive,
+			Reasons:  []string{ReasonHeldByAnotherLease},
+		}, nil
+	}
 	if t.replicas == 0 {
 		return WorkloadMigratability{Workload: ref, Verdict: VerdictSeamless}, nil
 	}

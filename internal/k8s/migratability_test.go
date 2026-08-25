@@ -21,7 +21,7 @@ import (
 func classifyOne(t *testing.T, object runtime.Object) k8s.WorkloadMigratability {
 	t.Helper()
 	kc := fake.NewSimpleClientset(object)
-	got, err := k8s.ClassifyMigratability(context.Background(), kc, testNS)
+	got, err := k8s.ClassifyMigratability(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("ClassifyMigratability: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestClassifyMigratabilityCoversBothWorkloadKinds(t *testing.T) {
 	elsewhere := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "default"}}
 
 	kc := fake.NewSimpleClientset(dep, sts, elsewhere)
-	got, err := k8s.ClassifyMigratability(context.Background(), kc, testNS)
+	got, err := k8s.ClassifyMigratability(context.Background(), kc, testNS, testLease)
 	if err != nil {
 		t.Fatalf("ClassifyMigratability: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestClassifyMigratabilityCoversBothWorkloadKinds(t *testing.T) {
 
 func TestClassifyMigratabilityRefusesAnInvalidNamespace(t *testing.T) {
 	kc := fake.NewSimpleClientset()
-	if _, err := k8s.ClassifyMigratability(context.Background(), kc, "Not Valid"); err == nil {
+	if _, err := k8s.ClassifyMigratability(context.Background(), kc, "Not Valid", testLease); err == nil {
 		t.Fatal("ClassifyMigratability accepted an invalid namespace")
 	}
 }
@@ -265,7 +265,7 @@ func TestClassifyMigratabilityReportsAListFailure(t *testing.T) {
 		return true, nil, errors.New("api server unreachable")
 	})
 
-	_, err := k8s.ClassifyMigratability(context.Background(), kc, testNS)
+	_, err := k8s.ClassifyMigratability(context.Background(), kc, testNS, testLease)
 	if err == nil || !strings.Contains(err.Error(), "list deployments") {
 		t.Fatalf("err = %v, want a deployment list failure", err)
 	}
@@ -311,6 +311,37 @@ func TestClassifyMigratabilityStillFlagsAWorkloadAlreadyMovedOntoBurst(t *testin
 	}
 }
 
+func TestClassifyMigratabilityNamesAWorkloadHeldByAnotherLease(t *testing.T) {
+	held := migratedMeta("dep1")
+	held.Labels[provider.LeaseUIDLabelKey] = "uid-b"
+	dep := &appsv1.Deployment{ObjectMeta: held}
+
+	got := classifyOne(t, dep)
+	if got.Verdict != k8s.VerdictDisruptive {
+		t.Errorf("verdict = %q, want %q", got.Verdict, k8s.VerdictDisruptive)
+	}
+	want := []string{k8s.ReasonHeldByAnotherLease}
+	if !reflect.DeepEqual(got.Reasons, want) {
+		t.Errorf("reasons = %v, want %v: the conflict must reach status before a move is attempted", got.Reasons, want)
+	}
+}
+
+func TestClassifyMigratabilityAcceptsThisLeasesOwnWorkload(t *testing.T) {
+	dep := &appsv1.Deployment{ObjectMeta: migratedMeta("dep1")}
+
+	got := classifyOne(t, dep)
+	if got.Verdict != k8s.VerdictSeamless {
+		t.Errorf("verdict = %q with reasons %v, want %q", got.Verdict, got.Reasons, k8s.VerdictSeamless)
+	}
+}
+
+func TestClassifyMigratabilityRefusesAnEmptyIdentity(t *testing.T) {
+	kc := fake.NewSimpleClientset()
+	if _, err := k8s.ClassifyMigratability(context.Background(), kc, testNS, k8s.LeaseIdentity{}); err == nil {
+		t.Fatal("ClassifyMigratability accepted an empty lease identity")
+	}
+}
+
 func TestClassifyMigratabilityRefusesACorruptPlacementAnnotation(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -321,7 +352,7 @@ func TestClassifyMigratabilityRefusesACorruptPlacementAnnotation(t *testing.T) {
 	}
 
 	kc := fake.NewSimpleClientset(dep)
-	_, err := k8s.ClassifyMigratability(context.Background(), kc, testNS)
+	_, err := k8s.ClassifyMigratability(context.Background(), kc, testNS, testLease)
 	if err == nil || !strings.Contains(err.Error(), "dep1") {
 		t.Fatalf("err = %v, want the corrupt placement annotation named rather than a quiet seamless verdict", err)
 	}

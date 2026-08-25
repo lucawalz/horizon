@@ -37,7 +37,7 @@ func (r *CapacityLeaseReconciler) reconcileWorkload(ctx context.Context, lease *
 }
 
 func (r *CapacityLeaseReconciler) migrateWorkload(ctx context.Context, lease *v1alpha1.CapacityLease, namespace string) (ctrl.Result, error) {
-	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, namespace)
+	assessments, classifyErr := k8s.ClassifyMigratability(ctx, r.Kube, namespace, leaseIdentity(lease))
 	r.recordMigratability(lease, assessments, classifyErr)
 
 	migrated, migrateErr := k8s.Migrate(ctx, r.Kube, namespace, leaseIdentity(lease))
