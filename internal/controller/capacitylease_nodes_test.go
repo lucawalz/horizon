@@ -739,6 +739,29 @@ func TestTheWaitingReportSpeaksOnlyForTheStageItCanRecompute(t *testing.T) {
 	}
 }
 
+func TestAnInstanceConfirmedGoneTakesItsNodeWithIt(t *testing.T) {
+	h := newHarness(t)
+	name := h.becomeReady()
+	h.clock.Advance(testRenewInterval + testSlack + time.Minute)
+	if err := h.prov.Delete(t.Context(), name); err != nil {
+		t.Fatalf("destroy the instance behind the controller: %v", err)
+	}
+
+	h.settle()
+
+	if _, present := h.node(name); present {
+		t.Fatalf("node %q outlived the machine it named", name)
+	}
+	if got := len(h.prov.CreateCalls()); got != 2 {
+		t.Fatalf("the lease made %d create calls, want 2 so the destroyed machine is replaced", got)
+	}
+
+	h.joinNode(name, true)
+	h.settle()
+
+	h.assertCondition(v1alpha1.ConditionInstancesReady, metav1.ConditionTrue)
+}
+
 func TestHasBurstTaintRejectsAnotherLeasesTaint(t *testing.T) {
 	node := &corev1.Node{Spec: corev1.NodeSpec{Taints: []corev1.Taint{{
 		Key:    k8s.BurstTaintKey,

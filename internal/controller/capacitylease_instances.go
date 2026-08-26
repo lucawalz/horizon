@@ -110,6 +110,11 @@ func (r *CapacityLeaseReconciler) adoptVanishedInstance(ctx context.Context, lea
 		return false, nil
 	}
 
+	// the node object would otherwise hold the instance name against the replacement that takes its slot
+	if err := r.deleteOwnedNode(ctx, lease, entry.NodeName); err != nil {
+		return false, fmt.Errorf("release the node of vanished instance %q of lease %q: %w", entry.Name, lease.Name, err)
+	}
+
 	markReleased(entry)
 	records.add(r.instanceReleaseRecord(lease, *entry, vanishedPath(lease, r.now())))
 	return true, nil
