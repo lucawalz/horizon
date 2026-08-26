@@ -135,9 +135,35 @@ func TestReadyNodeIsRetainedEvenWithoutALeaseOrAnInstance(t *testing.T) {
 	f.assertNoLeaks()
 }
 
-func TestNodeWithoutALeaseLabelIsIgnored(t *testing.T) {
+func TestReRegisteredNodeIsDeletedOnceItsInstanceIsGone(t *testing.T) {
 	f := newOrphanFixture(t)
-	node := f.createNode("unlabelled", "", corev1.ConditionFalse)
+	node := f.createNode("re-registered", "", corev1.ConditionFalse)
+
+	f.reconcileNode(node)
+
+	f.assertNodePresent(node, false)
+	f.assertNoLeaks()
+}
+
+func TestJoiningNodeIsRetainedBeforeItsLeaseAdoptsIt(t *testing.T) {
+	f := newOrphanFixture(t)
+	lease := f.createLease("live")
+	node := f.createNode("registering", "", corev1.ConditionFalse)
+	f.createInstance(node.Name, string(lease.UID), f.instant.Add(time.Hour))
+
+	result := f.reconcileNode(node)
+
+	f.assertNodePresent(node, true)
+	f.assertInstancePresent(node.Name, true)
+	if result.RequeueAfter != orphanSweepInterval {
+		t.Errorf("requeue after %s, want %s", result.RequeueAfter, orphanSweepInterval)
+	}
+	f.assertNoLeaks()
+}
+
+func TestReadyNodeWithoutALeaseLabelIsRetained(t *testing.T) {
+	f := newOrphanFixture(t)
+	node := f.createNode("ready-unlabelled", "", corev1.ConditionTrue)
 
 	result := f.reconcileNode(node)
 
@@ -146,7 +172,7 @@ func TestNodeWithoutALeaseLabelIsIgnored(t *testing.T) {
 		t.Errorf("requeue after %s, want no requeue", result.RequeueAfter)
 	}
 	if calls := f.provider.GetCalls(); len(calls) != 0 {
-		t.Errorf("provider consulted for an unlabelled node: %v", calls)
+		t.Errorf("provider consulted for a ready node: %v", calls)
 	}
 	f.assertNoLeaks()
 }

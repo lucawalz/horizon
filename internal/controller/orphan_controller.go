@@ -41,16 +41,12 @@ func (r *OrphanReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	leaseUID, owned := node.Labels[LeaseUIDLabelKey]
-	if !owned {
-		return ctrl.Result{}, nil
-	}
-
 	// a node that strands later must first lose readiness, and that transition wakes the watch
 	if nodeReady(&node) {
 		return ctrl.Result{}, nil
 	}
 
+	leaseUID := node.Labels[LeaseUIDLabelKey]
 	stranded, err := r.leaseAndInstanceAreGone(ctx, &node, leaseUID)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -66,13 +62,16 @@ func (r *OrphanReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
+// a re-registered node carries the pool label from cloud-init but never the adoption label, so absence at the provider is all that is left to ask
 func (r *OrphanReconciler) leaseAndInstanceAreGone(ctx context.Context, node *corev1.Node, leaseUID string) (bool, error) {
-	live, err := r.liveLeaseUIDs(ctx)
-	if err != nil {
-		return false, err
-	}
-	if live[leaseUID] {
-		return false, nil
+	if leaseUID != "" {
+		live, err := r.liveLeaseUIDs(ctx)
+		if err != nil {
+			return false, err
+		}
+		if live[leaseUID] {
+			return false, nil
+		}
 	}
 
 	return r.instanceIsAbsentEverywhere(ctx, node.Name)
