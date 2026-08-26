@@ -77,6 +77,14 @@ helm upgrade horizon oci://ghcr.io/lucawalz/charts/horizon --namespace horizon-s
 
 The controller is absent for as long as the upgrade takes, and no leased server depends on it in that window. The node-side watchdog reads its deadline from its own Node object rather than from the controller, and fires on a clock of its own, so teardown holds while the controller is down. That independence is what [ADR 0021](../../docs/adr/0021-node-side-dead-mans-switch-on-two-clocks.md) exists to guarantee.
 
+Upgrading to 0.12.0 replaces `spec.workload.namespace` with `spec.workload.namespaces`, a list. The API is `v1alpha1` and carries no compatibility promise, and no `CapacityLease` is stored in Git, so nothing is migrated. Any lease already in the cluster names a field the new schema does not have and cannot be read back or edited. Delete them before upgrading:
+
+```
+kubectl delete capacityleases --all
+```
+
+A lease still holding capacity should be released rather than deleted outright, so its machines are torn down by the controller instead of by the node-side watchdog. [ADR 0034](../../docs/adr/0034-target-a-set-of-namespaces-rather-than-one.md) records why the field was replaced rather than supplemented. The same release adds `spec.workload.mode`, which selects between moving a workload and replicating it, and bounds a lease name at 63 characters because the name is carried as a label value and as the burst taint's value.
+
 ### Networking
 
 | Key | Default | Description |
