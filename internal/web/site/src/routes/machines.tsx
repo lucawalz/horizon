@@ -216,16 +216,14 @@ function Catalogue({ answer }: { answer: MachineCatalogueResponse }) {
     case 'CatalogueAbsent':
       return (
         <EmptyState title="This process holds no catalogue">
-          Instance types are fetched and cached in memory by the horizon controller process. The
-          interface runs as a separate process and keeps no copy of that cache, wherever it runs,
-          so there is nothing here to list. Lease phases and expiry are unaffected.
+          Instance types are fetched and cached in memory by the horizon controller process, and
+          this process keeps no copy of that cache. Lease phases and expiry are unaffected.
         </EmptyState>
       )
     case 'CatalogueUnfilled':
       return (
         <EmptyState title={`The catalogue has not been filled for ${answer.config}`}>
-          The refresher has not completed a fetch for this provider config. It runs on an interval,
-          so the list usually appears within a few minutes of the controller starting.
+          The list usually appears within a few minutes of the controller starting.
         </EmptyState>
       )
     case 'NoMatch':
@@ -273,7 +271,7 @@ export function MachinesRoute({ config, region }: { config: string; region: stri
     <>
       <PageHeader
         title="Machines"
-        lede="The instance types each provider config offers in a region, as the controller last fetched them."
+        lede="The instance types each provider config offers in a region."
         aside={
           <>
             {view.data !== null && view.data.state === 'Listed' && view.data.refreshedAt !== null ? (

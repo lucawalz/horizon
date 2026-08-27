@@ -109,7 +109,7 @@ export function LeaseListRoute() {
     <>
       <PageHeader
         title="Leases"
-        lede="Every capacity lease the cluster holds, and how long each one has left before its machines are released."
+        lede="Every capacity lease the cluster holds and how long each has left."
         aside={
           <ButtonLink href={newLeaseHref} tone="primary">
             New lease

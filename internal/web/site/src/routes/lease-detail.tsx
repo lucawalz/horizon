@@ -216,8 +216,8 @@ function SelectionPanel({
       <Panel title="Selection">
         <p className="px-gutter py-section text-center text-copy-13 text-subtle">
           {size === null
-            ? 'The controller has not chosen a machine type for this lease yet. It records the choice, and what it beat, as soon as the lease is accepted.'
-            : `This lease named ${size} itself, so no policy chose it and there is nothing to explain.`}
+            ? 'The controller has not chosen a machine type for this lease yet.'
+            : `This lease named ${size} itself, so no policy chose it.`}
         </p>
       </Panel>
     )
@@ -378,8 +378,7 @@ function ExtensionForm({
     <Prompt severity="info" heading={`Extend ${name}`}>
       <form onSubmit={submit} className="space-y-cell">
         <p className="text-copy-13 text-tint-fg/85">
-          The deadline is derived from the moment the lease was accepted, so this is how long the
-          lease runs in total rather than the time added to it. {bounds.ceiling}
+          This is how long the lease runs in total, not the time added to it. {bounds.ceiling}
         </p>
         <span className="flex flex-wrap items-center gap-snug">
           <input
@@ -492,10 +491,6 @@ function ReleasePanel({ name }: { name: string }) {
   return (
     <Panel title="Release">
       <div className="space-y-cell p-gutter">
-        <p className="max-w-[70ch] text-copy-13 text-subtle">
-          Releasing deletes the CapacityLease, which is how the controller is asked for a teardown.
-          The interface destroys nothing itself.
-        </p>
         {asked === null ? (
           release.confirming ? (
             <Confirmation
@@ -540,8 +535,7 @@ function RecordPanel({ name }: { name: string }) {
     <Panel title="Record">
       <div className="space-y-cell p-gutter">
         <p className="max-w-[70ch] text-copy-13 text-subtle">
-          This lease has been released. Its machines are gone and the controller has nothing left to
-          tear down, so what remains is the record of it in the cluster.
+          This lease has been released. Its machines are gone and only its record remains.
         </p>
         {removal.confirming ? (
           <Confirmation
@@ -579,7 +573,7 @@ const workloadCopy = {
   [moveMode]: {
     warningsTitle: 'Migration warnings',
     warningsIntro:
-      'Each workload here either moves onto the leased nodes at a cost or is left where it is, and the reason beside it says which. A workload that does move goes dark while it does, because nothing stands in for a pod between the moment it stops and the moment its replacement is ready.',
+      'A workload that moves goes dark between the moment its pod stops and the moment its replacement is ready.',
     placedTitle: 'Migrated workloads',
     placedEmpty:
       'Nothing has been moved off this lease. Workloads appear here once the controller drains the leased nodes ahead of teardown.',
@@ -587,7 +581,7 @@ const workloadCopy = {
   [replicateMode]: {
     warningsTitle: 'Replication warnings',
     warningsIntro:
-      'Each workload here is either copied onto the leased nodes at a cost or left uncopied, and the reason beside it says which. Nothing is written to the workload itself on either path, so none of it goes dark.',
+      'Nothing is written to the workload itself on either path, so no workload goes dark.',
     placedTitle: 'Burst copies',
     placedEmpty:
       'No copy is running for this lease. Copies appear here once the controller creates one on the leased nodes, and teardown deletes them again.',

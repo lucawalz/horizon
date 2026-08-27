@@ -43,7 +43,10 @@ export function ConditionsTable({
               </Cell>
               <Cell muted>{condition.reason ?? absent}</Cell>
               <Cell muted>
-                <span className="block max-w-[40ch] truncate" title={condition.message ?? undefined}>
+                <span
+                  className="block max-w-[40ch] break-words"
+                  title={condition.message ?? undefined}
+                >
                   {condition.message ?? absent}
                 </span>
               </Cell>

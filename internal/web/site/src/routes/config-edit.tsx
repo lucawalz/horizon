@@ -60,8 +60,7 @@ function BoundLeases({ leases }: { leases: LeaseSummary[] }) {
     <Panel title="Bound leases" note="What a change here reaches">
       {leases.length === 0 ? (
         <p className="px-gutter py-cell text-copy-13 text-subtle">
-          No capacity lease names this provider config. Nothing in the cluster is holding capacity
-          through it right now.
+          No capacity lease names this provider config.
         </p>
       ) : (
         <Table>
@@ -122,9 +121,8 @@ function EditForm({ config, onReplaced }: { config: ProviderConfigSummary; onRep
       )}
       {replaced ? (
         <Notice severity="success" title={`${config.name} was replaced`}>
-          The controller reads it on its next pass and resolves every reference again. A machine
-          already running keeps the lifetime backstop latched when it was created, so no deadline
-          moves under a lease that is already holding capacity.
+          A machine already running keeps the lifetime backstop latched when it was created, so no
+          deadline moves under a lease that is already holding capacity.
         </Notice>
       ) : null}
 
@@ -132,9 +130,7 @@ function EditForm({ config, onReplaced }: { config: ProviderConfigSummary; onRep
 
       <div className="flex flex-wrap items-center justify-between gap-gutter">
         <p className="max-w-[60ch] text-copy-13 text-subtle">
-          Every field is submitted, so a reference cleared here is cleared in the cluster. The
-          controller reports what it resolved, and a wrong name reads back as the reason the config
-          is unready.
+          Every field is submitted, so a reference cleared here is cleared in the cluster.
         </p>
         <Button type="submit" tone="primary" disabled={pending}>
           {pending ? 'Replacing the provider config' : 'Replace the provider config'}
@@ -176,11 +172,6 @@ function DeletePanel({ name, bound }: { name: string; bound: LeaseSummary[] }) {
   return (
     <Panel title="Delete">
       <div className="space-y-cell p-gutter">
-        <p className="max-w-[70ch] text-copy-13 text-subtle">
-          Horizon tears a lease down with the credentials this configuration resolves. The
-          controller therefore holds the object back through a finalizer until no capacity lease
-          names it, whichever client asked for the deletion.
-        </p>
         {bound.length > 0 ? (
           <Prompt severity="attention" heading={boundHeading(bound.length, name)}>
             <p className="max-w-[70ch] text-copy-13 text-tint-fg/85">
@@ -247,7 +238,7 @@ export function ConfigEditRoute({ name }: { name: string }) {
       <PageHeader
         eyebrow={<BackLink />}
         title={name}
-        lede="A configuration can be changed while capacity is held, because rotating a credential during a long lease is the reason to reach for this at all."
+        lede="A configuration can be changed while capacity is held."
         aside={<ButtonLink href={machinesHref}>Machines</ButtonLink>}
       />
       <div className="space-y-gutter">

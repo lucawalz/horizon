@@ -154,14 +154,8 @@ function secretRows(hetzner: HetznerProviderDetail): SecretRow[] {
 }
 
 function SecretsPanel({ hetzner }: { hetzner: HetznerProviderDetail }) {
-  // the reference is what tells a missing secret apart from a misnamed one, and no interface reads what a secret holds
   return (
-    <Panel title="Secrets">
-      <p className="row-rule max-w-[70ch] px-gutter py-cell text-copy-13 text-subtle">
-        A configuration points at Secrets and horizon resolves them in the namespace the controller
-        runs in. Only the reference is shown here, never what a Secret holds, so a name that resolves
-        to nothing reads as an unready configuration rather than as a blank field.
-      </p>
+    <Panel title="Secrets" note="Only the reference is shown, never what a Secret holds">
       <Table>
         <TableHead>
           <Row>
@@ -200,12 +194,7 @@ function SecretsPanel({ hetzner }: { hetzner: HetznerProviderDetail }) {
 
 function WatchdogPanel({ watchdog }: { watchdog: WatchdogDetail }) {
   return (
-    <Panel title="Watchdog">
-      <p className="row-rule max-w-[70ch] px-gutter py-cell text-copy-13 text-subtle">
-        Every leased node runs a dead man switch on these timings. It renews its own lease on the
-        interval, powers the node off once the slack past a renewal is spent, and powers it off at
-        the lifetime whatever the controller is doing.
-      </p>
+    <Panel title="Watchdog" note="The clock each leased node powers itself off on">
       <DefinitionGrid>
         <Definition label="Renew interval">{formatSpan(watchdog.renewIntervalSeconds)}</Definition>
         <Definition label="Slack">{formatSpan(watchdog.slackSeconds)}</Definition>
@@ -231,8 +220,7 @@ function CataloguePanel({ name, catalogue }: { name: string; catalogue: Publishe
       <div className="space-y-cell p-gutter">
         {catalogue.types === 0 ? (
           <p className="max-w-[70ch] text-copy-13 text-subtle">
-            The controller has published no instance type for this configuration. It fetches the
-            provider catalogue on an interval and writes it to the status, so the tally appears
+            The controller has published no instance type for this configuration. The tally appears
             within a few minutes of the controller starting.
           </p>
         ) : (
@@ -240,7 +228,6 @@ function CataloguePanel({ name, catalogue }: { name: string; catalogue: Publishe
             <p className="max-w-[70ch] text-copy-13 text-subtle">
               {counted(catalogue.types, 'instance type')} across{' '}
               {counted(catalogue.regions.length, 'region')}, as the controller last fetched them.
-              Each region opens the machines page, which lists what is offered there.
             </p>
             <ul className="flex flex-wrap gap-snug">
               {catalogue.regions.map((region) => (

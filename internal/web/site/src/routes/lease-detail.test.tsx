@@ -359,7 +359,7 @@ describe('the lease detail', () => {
     const panel = pillLabelled(view.container, migrationCopy[0][0]).closest('section')
     expect(panel?.querySelector('[data-severity="danger"]')).toBeNull()
     expect(panel?.textContent).toContain('Migration warnings')
-    expect(panel?.textContent).toContain('or is left where it is')
+    expect(panel?.textContent).toContain('A workload that moves goes dark')
 
     await view.unmount()
   })
@@ -387,8 +387,8 @@ describe('the lease detail', () => {
 
     const panel = pillLabelled(view.container, replicationCopy[0][0]).closest('section')
     expect(panel?.textContent).toContain('Replication warnings')
-    expect(panel?.textContent).toContain('copied onto the leased nodes')
-    expect(panel?.textContent).not.toContain('moves onto the leased nodes')
+    expect(panel?.textContent).toContain('no workload goes dark')
+    expect(panel?.textContent).not.toContain('A workload that moves goes dark')
 
     await view.unmount()
   })

@@ -428,11 +428,7 @@ function CreateForm({ configs }: { configs: ProviderConfigSummary[] }) {
 
       <WorkloadPanel mode={workloadMode} suggestions={namespaces} />
 
-      <div className="flex flex-wrap items-center justify-between gap-gutter">
-        <p className="max-w-[60ch] text-copy-13 text-subtle">
-          The controller reads the requirement against the provider catalogue and records the type it
-          chose, what it beat and why the rest were rejected.
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-gutter">
         <Button type="submit" tone="primary" disabled={pending}>
           {pending ? 'Creating the lease' : 'Create the lease'}
         </Button>
@@ -471,7 +467,7 @@ export function LeaseNewRoute() {
     <>
       <PageHeader
         title="New lease"
-        lede="Describe the capacity the work needs and the controller picks the machine. Naming a type stays available for the times the choice is already made."
+        lede="Describe the capacity the work needs and the controller picks the machine."
       />
       <div className="space-y-gutter">
         {view.error ? (

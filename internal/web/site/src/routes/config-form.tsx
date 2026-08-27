@@ -13,8 +13,8 @@ const slackBounds = { min: 1, initial: 2 * secondsPerMinute }
 const lifetimeBounds = { ...watchdogLifetimeSeconds, initial: 8 * 60 * secondsPerMinute }
 
 const secretsAreReferenced =
-  'This form references Secrets and never creates a Secret. Create each one in the namespace the ' +
-  'controller runs in, then name it and the key it holds here.'
+  'This form references Secrets and never creates a Secret; each must already exist in the ' +
+  'namespace the controller runs in'
 
 export function Text({
   name,
@@ -165,10 +165,7 @@ export function ConfigFields({
         </div>
       </Panel>
 
-      <Panel
-        title="Watchdog"
-        note="Each leased node powers itself off on this clock, whatever the control plane is doing"
-      >
+      <Panel title="Watchdog">
         <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-gutter p-gutter">
           <Field label="Renew interval in seconds" hint="How often a node renews its lease on itself.">
             <Numeric

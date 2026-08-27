@@ -51,11 +51,7 @@ function ConfigForm({ onCreated }: { onCreated: (name: string) => void }) {
         }
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-gutter">
-        <p className="max-w-[60ch] text-copy-13 text-subtle">
-          The controller resolves every reference and reports what it found, so a wrong name or a
-          missing key reads back here as the reason the config is unready.
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-gutter">
         <Button type="submit" tone="primary" disabled={pending}>
           {pending ? 'Creating the provider config' : 'Create the provider config'}
         </Button>
@@ -101,10 +97,7 @@ export function ConfigNewRoute() {
 
   return (
     <>
-      <PageHeader
-        title="New provider config"
-        lede="Name the Secrets the controller resolves, the image a burst node boots, and the clock each node powers itself off on."
-      />
+      <PageHeader title="New provider config" />
       {created === null ? <ConfigForm onCreated={setCreated} /> : <CreatedConfig name={created} />}
     </>
   )
