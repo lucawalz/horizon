@@ -145,6 +145,18 @@ The three capability flags above compose, and each defaults to what the generato
 
 `horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--kubernetes-version`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
 
+## The watchdog clock
+
+Every leased node runs a dead man switch of its own, configured by `spec.watchdog` on the `ProviderConfig` and written into `horizon-watchdog.service` when the node boots. It is the second of the two clocks that end a lease, and it runs whether or not the control plane is reachable. [ADR 0021](adr/0021-node-side-dead-mans-switch-on-two-clocks.md) records why there are two.
+
+`renewInterval` is how often the node renews its own lease against the apiserver. `slack` is how long a missed renewal is tolerated: once the slack past the last renewal is spent, the node powers itself off. `maxLifetime` is the backstop, the longest a machine may run from the moment it was created, and no extension moves a deadline past it. The three cross-validate against each other, so a configuration whose slack is shorter than its renew interval is refused by the schema rather than accepted and ignored.
+
+A machine already running keeps the backstop latched when it was created. Editing `spec.watchdog`, with `kubectl` or from the edit form the interface serves, therefore moves no deadline under a lease that is already holding capacity, and the change reaches the next machine instead. The lease detail reads the earliest backstop the machines of a lease latched, so the extension it offers is one the controller will not clamp.
+
+The controller is the first clock. Releasing a lease deletes the `CapacityLease`, which is how the controller is asked for a teardown: it drains the leased nodes, deletes their machines at the provider, and removes the lease once its finalizer completes. Nothing in the interface destroys a machine itself. Where the controller cannot act at all, the watchdog still powers each node off at its own deadline, which is the guarantee the two clocks exist for.
+
+A `ProviderConfig` is held back by a finalizer of its own until no capacity lease names it, since horizon tears a lease down with the credentials that configuration resolves. Releasing those leases is what frees it; deleting the configuration first would leave their machines billing until each node's watchdog powers it off.
+
 ## Web interface
 
 `horizon dashboard` serves the web interface from the machine it runs on:
