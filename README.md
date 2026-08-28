@@ -110,7 +110,7 @@ horizon carries six commands in one binary, and `horizon` with no subcommand pri
 
 ### The smallest example
 
-With the chart installed and a `ProviderConfig` applied, a lease is the whole interface. This one asks for a single `cx22` in `nbg1` for thirty minutes:
+With the chart installed and a `ProviderConfig` applied, a lease is the whole interface. This one asks for a single `cpx22` in `nbg1` for thirty minutes:
 
 ```yaml
 apiVersion: horizon.dev/v1alpha1
@@ -120,7 +120,7 @@ metadata:
 spec:
   providerRef: hetzner
   region: nbg1
-  size: cx22
+  size: cpx22
   replicas: 1
   duration: 30m
 ```
@@ -166,7 +166,7 @@ That prints the lease once its node has registered and its watchdog has armed:
 
 ```
 NAME        REPLICAS   REGION   PHASE    EXPIRES                READY   ARMED   AGE   TYPE
-batch-run   1          nbg1     Active   2026-08-24T14:30:00Z   True    True    92s   cx22
+batch-run   1          nbg1     Active   2026-08-24T14:30:00Z   True    True    92s   cpx22
 ```
 
 Deleting the lease releases the capacity early; leaving it alone releases it at `EXPIRES`. Either way the finalizer holds the deletion open until the provider confirms every instance gone.

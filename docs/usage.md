@@ -121,7 +121,7 @@ metadata:
 spec:
   providerRef: hetzner
   region: nbg1
-  size: cx22
+  size: cpx22
   replicas: 1
   duration: 30m
   workload:

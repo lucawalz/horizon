@@ -319,11 +319,11 @@ function WorkloadPanel({ mode, suggestions }: { mode: string; suggestions: strin
 
 function SizeField() {
   return (
-    <Field label="Machine type" hint="The provider's own name for a type, such as cx23.">
+    <Field label="Machine type" hint="The provider's own name for a type, such as cpx22.">
       <input
         name={field.size}
         required
-        placeholder="cx23"
+        placeholder="cpx22"
         spellCheck={false}
         autoComplete="off"
         className={controlClass}
