@@ -16,4 +16,4 @@ Report a suspected vulnerability privately through the "Report a vulnerability" 
 
 ## Supported versions
 
-Only the `main` branch is maintained.
+Fixes land on `main` and reach consumers in the next release. Only the latest release line, currently `0.12.x`, receives them, and the floating `0` and `0.12` image tags move with it. Earlier tags are not backported.
