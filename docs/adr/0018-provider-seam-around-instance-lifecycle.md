@@ -19,7 +19,7 @@ AWS terminates an instance on an in-guest shutdown when `InstanceInitiatedShutdo
 
 Google Compute Engine enforces `maxRunDuration` with `instanceTerminationAction` set to delete, server-side, on ordinary instances. No agent and no credential are needed.
 
-The same requirement therefore costs nothing on one provider, a kernel timer on another, and a security compromise on a third. That is a capability difference, not a cosmetic one, and an interface that cannot express it forces the controller to hard-code provider knowledge it was supposed to abstract.
+The same requirement therefore costs nothing on one provider, a server-side deadline on another, and a security compromise on a third. That is a capability difference, not a cosmetic one, and an interface that cannot express it forces the controller to hard-code provider knowledge it was supposed to abstract.
 
 ## Decision
 
