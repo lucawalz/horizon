@@ -15,37 +15,6 @@ Renting capacity is easy. Guaranteeing it goes away is the engineering problem, 
 
 The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: three bare-metal nodes running NixOS and K3s, reconciled by Flux v2, with Tailscale carrying connectivity for nodes that are not on the home network. bedrock defines the cluster; horizon adds and removes temporary capacity on top of it. horizon is optional and never load-bearing: routine operation happens without it and the cluster keeps running when it is gone.
 
-### Features
-
-- Capacity is declared as a `CapacityLease` and reconciled by an operator, so `kubectl`, k9s and Headlamp are the whole client.
-- Teardown is layered across a finalizer, an orphan collector, launch and registration deadlines, and a dead man's switch on the leased server itself.
-- A leased server destroys itself once the cluster stops renewing its deadline, so the guarantee holds with the operator, the cluster and the network all gone.
-- A lease either pins an instance type or states a minimum core count, memory floor, architecture and CPU type, and horizon resolves the cheapest offered type that qualifies.
-- Naming a namespace moves its Deployments and StatefulSets onto the leased nodes and restores their original placement during teardown.
-- `horizon cloud-init` renders the join document a burst node needs, for a stock image and for one that already ships Kubernetes or cannot take a systemd unit.
-- The same binary serves a web interface, on loopback for one operator and on a routable address behind an OIDC issuer for a team.
-
-## How teardown is enforced
-
-Teardown is layered, so no single failure leaves a machine running and billing.
-
-- A finalizer blocks lease deletion until the provider confirms the instance gone, not merely reports a successful delete call.
-- Ownership and deadline labels are written in the same call that creates the instance, so nothing horizon creates is ever unlabelled or unaccounted for.
-- An orphan collector sweeps every configured provider on a timer and reclaims what no live lease claims; a matching reconciler does the same for stranded `Node` objects.
-- Launch and registration are each bounded by their own deadline, past which a stuck instance is released rather than left waiting.
-- A lease is refused before acceptance if neither the provider nor its configuration can guarantee teardown, and the schema itself bounds `replicas`, `duration` and `teardownGrace`.
-- `teardownGrace` is one deadline anchored at the instant teardown falls due, by expiry or by early deletion, and the workload restore wait and every instance's drain share it. It is not a fresh allowance per instance. Once it is spent, release proceeds without further grace, beyond at most one eviction retry already in flight.
-
-The last layer runs on the leased server itself. `horizon watchdog` is a dead man's switch on two independent clocks, a monotonic backstop and a renewable wall-clock deadline pulled from the cluster, so the guarantee survives the operator, the cluster, and the network all being gone at once.
-
-See [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) for the crash-safety layers and their exact parameters, [ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md) for the provider seam and the label set, and [ADR 0021](docs/adr/0021-node-side-dead-mans-switch-on-two-clocks.md) for the watchdog's two clocks.
-
-## Capacity model
-
-Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. See [Node join contract](#node-join-contract) for how a node identifies itself once it joins.
-
-The operator writes back to `ProviderConfig.status`. A `Ready` condition says whether the config can serve a lease, and it is false with a named reason when a referenced Secret does not resolve, when nothing guarantees teardown, when the resolved configuration cannot build a provider, or when the provider answers with no instance type at all. Readiness runs the same provider build the first lease runs, so a cloud-init that resolves but carries no pool label is reported here rather than passing and failing at admission. A `CataloguePublished` condition says whether the list in status is the whole list, and `status.instanceTypes` carries the types the provider offered at the last refresh, so the interface lists them wherever it runs rather than only inside the controller process. Status is written only when its content changes.
-
 ```mermaid
 flowchart LR
   lease[CapacityLease] --> controller[horizon controller]
@@ -56,16 +25,25 @@ flowchart LR
   orphan[Orphan collector] -->|sweep| hcloud
 ```
 
-## Node join contract
+### Features
 
-A burst node satisfies four requirements. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
+- Capacity is a `CapacityLease`; `kubectl`, k9s and Headlamp are the whole client.
+- Teardown layers a finalizer, orphan collector, deadline checks, and a node watchdog.
+- A leased server self-destructs if the cluster stops renewing its deadline.
+- A lease pins a type or states requirements; horizon resolves cheapest match.
+- Naming a namespace moves its workloads onto leased nodes, restored at teardown.
+- `horizon cloud-init` renders the join document for stock and non-stock images.
+- That binary serves the interface, on loopback or OIDC-secured for a team.
 
-1. It runs a Kubernetes agent pointed at the control plane, at the version `--kubernetes-version` names rather than whatever release is newest. A kubelet newer than the apiserver is outside the Kubernetes version skew policy, so a node that installs the latest release against an older control plane is unsupported the moment it joins. An image that already ships the agent takes `--install-kubernetes=false`, which drops the install command and keeps the join configuration. Re-rendering pins nothing rendered earlier: the provider reads the blob behind `cloudInitSecretRef` and never regenerates it, so a Secret written before the version was pinned keeps installing the newest release on every node it boots until a fresh render is applied over it. Upgrading the control plane needs the same re-render.
-2. It carries `horizon.dev/pool=reserved` and the burst taint. The provider build rejects a cloud-init missing the pool label, before any instance is created. The taint, `horizon.dev/burst=<lease>:NoSchedule`, is applied by the controller once it matches the node to its lease, since its value is the lease name and one cloud-init blob serves every lease a `ProviderConfig` provisions.
-3. It installs and arms the watchdog. `horizon cloud-init` writes the node token and a systemd unit that starts `horizon watchdog` on boot, unless `--install-watchdog-unit=false`. An image whose `/etc/systemd/system` is read-only, a NixOS image among them, takes `--transient-watchdog-unit` instead, which writes the unit to `/run/systemd/system` from a per-boot script and starts it rather than enabling it.
-4. It reaches the control plane. horizon has no VPN, no firewall management and no opinion about how a leased server reaches the cluster beyond the `--server` URL it is given; getting a packet from Hetzner's network to the control plane is the adopter's problem. Where that path is a VPN, the agent also has to be told to run its pod network over the tunnel, which is `--flavor-config flannel-iface=<interface>` for k3s.
+## How teardown is enforced
 
-Four sentinels are substituted when the provider builds the cloud-init: `${HORIZON_NODE_TOKEN}` and `${HORIZON_JOIN_TOKEN}` from their Secret references, `${HORIZON_VERSION}` from the controller's build stamp, `${HORIZON_MAX_LIFETIME}` from `spec.watchdog.maxLifetime`. Substitution is literal text replacement; anything else starting `${HORIZON_` left standing afterward fails the provider build rather than boot with a placeholder where a credential belongs.
+Teardown is layered, so no single failure leaves a machine running and billing. On the cluster side, a finalizer blocks lease deletion until the provider confirms the instance gone, ownership and deadline labels are written at creation so nothing horizon makes goes unaccounted for, an orphan collector and a matching reconciler sweep on a timer for anything no live lease or Node claims, and launch and registration deadlines release a stuck instance rather than wait on it forever. On the machine itself, `horizon watchdog` is a dead man's switch on a monotonic backstop and a renewable wall-clock deadline pulled from the cluster, so the guarantee survives the operator, the cluster, and the network all being gone at once.
+
+See [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) for the crash-safety layers and their exact parameters, [ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md) for the provider seam and the label set, and [ADR 0021](docs/adr/0021-node-side-dead-mans-switch-on-two-clocks.md) for the watchdog's two clocks. [docs/usage.md](docs/usage.md#how-teardown-is-enforced) carries the full mechanism, including `teardownGrace`.
+
+## Capacity model
+
+Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. [docs/usage.md](docs/usage.md#images-and-clusters-that-are-not-stock) carries the node join contract: the four requirements a burst node satisfies to register, and the sentinels substituted into its cloud-init.
 
 ## Installation
 
@@ -185,7 +163,7 @@ Getting an empty cluster to that point is eight steps: the chart, three Secrets,
 horizon dashboard
 ```
 
-That credential is the whole of its authentication, so the listener binds `127.0.0.1` and nothing else; only the port is a flag. The interface lists leases with a countdown that ticks in the browser rather than on the network, and opens each lease onto its reservation, timeline, conditions, instances and migrated workloads. It creates a lease from a form, releases one by deleting it, and creates, replaces and deletes a `ProviderConfig` from forms that reference Secrets and create none. What it shows and how mutation is guarded is in [docs/usage.md](docs/usage.md#web-interface); the reasoning is in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md), [ADR 0033](docs/adr/0033-create-a-provider-config-from-the-interface.md) and [ADR 0036](docs/adr/0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md).
+That credential is the whole of its authentication, so the listener binds `127.0.0.1` and nothing else; only the port is a flag. The interface lists leases with a countdown that ticks in the browser rather than on the network, and opens each lease onto its reservation, timeline, conditions, instances and migrated workloads. It creates a lease from a form, extends or releases one, and creates, replaces and deletes a `ProviderConfig` from forms that reference Secrets and create none. What it shows and how mutation is guarded is in [docs/usage.md](docs/usage.md#web-interface); the reasoning is in [ADR 0025](docs/adr/0025-replace-server-rendered-interface-with-embedded-spa.md), [ADR 0027](docs/adr/0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md), [ADR 0033](docs/adr/0033-create-a-provider-config-from-the-interface.md) and [ADR 0036](docs/adr/0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md).
 
 `horizon serve` serves the same interface on a routable address, for a team rather than for one operator at one terminal:
 
@@ -204,7 +182,7 @@ Every request has to carry a signed JWT, verified against the key set discovered
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command and every flag, with its default. |
 | [docs/serving-the-interface.md](docs/serving-the-interface.md) | Serving the interface in a cluster, granting an impersonated operator its rights, and reading a refusal. |
 | [charts/horizon/README.md](charts/horizon/README.md) | Every chart value, and why the custom resource definitions live in `crds/` rather than `templates/`. |
-| [docs/adr/](docs/adr/) | Twenty-eight architecture decision records in MADR format, superseded ones included. |
+| [docs/adr/](docs/adr/) | Thirty-seven architecture decision records in MADR format, superseded ones included. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Repository layout, the test commands, the web interface bundle, and the branch and commit conventions. |
 | [SECURITY.md](SECURITY.md) | The credential model and how to report a vulnerability. |
 
@@ -212,7 +190,7 @@ Every request has to carry a signed JWT, verified against the key set discovered
 
 `charts/horizon/Chart.yaml` is the source of truth for the released version; bumping it is a deliberate commit that precedes the tag. Pushing a `v*` tag builds the linux amd64 and arm64 image, packages the chart, and only then publishes the GitHub release, in that order, so a published release always advertises an image and a chart that exist. See [ADR 0020](docs/adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) for the full contract.
 
-The image is distroless and runs as uid 65532. The archive binaries and the image binary are built with `-trimpath` and identical linker flags, so the two are byte-identical for a given platform.
+The image is distroless and runs as uid 65532. The archive binaries and the image binary are built with `-trimpath` and the same linker flags.
 
 ## Support
 
@@ -228,11 +206,11 @@ Report a suspected vulnerability privately, through the "Report a vulnerability"
 
 ## Roadmap
 
-- Secret writing from the interface. Leases and provider configurations are created, changed and deleted from the browser. The Secrets a configuration points at are the half of the mutating surface that stays unbuilt, because creating them would need `create secrets` in the namespace holding the controller's own credentials, so they are still a `kubectl` job.
-- A better answer for a node that never joins. `InstancesReady` reports a count and does not separate a machine still booting from one that booted a quarter of an hour ago and is never going to join.
-- A second provider behind the conformance suite. `spec.type` accepts `hetzner` and nothing else today. The seam and the contract suite in `internal/provider/conformance/` exist so that a second implementation is a package satisfying an interface rather than a rewrite; none has been written.
-- A second cloud-init flavour. `--flavor` accepts `k3s` and nothing else, on the same shape: one file per flavour under `internal/cloudinit/`.
-- `site` as a required status check. CI rebuilds the committed web bundle and fails when it differs from what is in the tree, but branch protection does not require the job, so a stale `dist/` is reported rather than blocked.
+- Secret writing from the interface: it is created, changed and deleted from the browser, but the Secrets a configuration points at still need `kubectl`.
+- A better answer for a node that never joins, since `InstancesReady` counts without separating one still booting from one stuck.
+- A second provider behind the conformance suite in `internal/provider/conformance/`; only `hetzner` exists today.
+- A second cloud-init flavour; only `k3s` exists today, on the same one-file-per-flavour shape under `internal/cloudinit/`.
+- `site` as a required status check, so a stale committed web bundle blocks a merge rather than only being reported.
 
 The `watch` command and the lease verbs are not on this list and are not planned. Printer columns on `kubectl get capacityleases` cover what they would have done.
 
