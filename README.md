@@ -178,13 +178,13 @@ Every request has to carry a signed JWT, verified against the key set discovered
 
 | Document | What it covers |
 | --- | --- |
-| [docs/usage.md](docs/usage.md) | The eight-step path from an empty cluster to a registered node, images and clusters that are not stock, and what the web interface serves. |
+| [docs/usage.md](docs/usage.md) | The eight-step path from an empty cluster to a registered node, how teardown is enforced, images and clusters that are not stock, and what the web interface serves, including `ProviderConfig` status. |
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command and every flag, with its default. |
 | [docs/serving-the-interface.md](docs/serving-the-interface.md) | Serving the interface in a cluster, granting an impersonated operator its rights, and reading a refusal. |
 | [charts/horizon/README.md](charts/horizon/README.md) | Every chart value, and why the custom resource definitions live in `crds/` rather than `templates/`. |
 | [docs/adr/](docs/adr/) | Thirty-seven architecture decision records in MADR format, superseded ones included. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Repository layout, the test commands, the web interface bundle, and the branch and commit conventions. |
-| [SECURITY.md](SECURITY.md) | The credential model and how to report a vulnerability. |
+| [SECURITY.md](SECURITY.md) | The credential model, how to report a vulnerability, and the supported release line. |
 
 ## Releases
 
