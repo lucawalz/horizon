@@ -20,7 +20,8 @@ builds:
       - -trimpath
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
-      - -s -w -X github.com/lucawalz/horizon/internal/version.version={{.Version}}
+      # the stamped version is the release tag a burst node downloads its binary from, so it keeps the v
+      - -s -w -X github.com/lucawalz/horizon/internal/version.version={{.Tag}}
 
 archives:
   - ids: [horizon]
