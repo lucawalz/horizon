@@ -15,3 +15,5 @@ keywords:
 maintainers:
   - name: Luca Walz
     url: https://github.com/lucawalz
+annotations:
+  artifacthub.io/license: MIT

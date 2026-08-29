@@ -16,6 +16,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
+LABEL org.opencontainers.image.licenses="MIT"
+
+COPY --from=build /src/LICENSE /licenses/LICENSE
 COPY --from=build /out/horizon /usr/local/bin/horizon
 
 USER 65532:65532
