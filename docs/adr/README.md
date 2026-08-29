@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-These records capture horizon's own design decisions, the choices behind the Go operator that leases on-demand capacity with a guaranteed teardown. They follow the [MADR](https://adr.github.io/madr/) format. The infrastructure decisions horizon builds on, generated cloud-init and Tailscale connectivity, live in the companion [bedrock](https://github.com/lucawalz/bedrock/tree/main/docs/adr) repository.
+These records capture horizon's own design decisions, the choices behind the Go operator that leases on-demand capacity with a guaranteed teardown. They follow the [MADR](https://adr.github.io/madr/) format. The infrastructure decisions horizon builds on, the node image its leased servers boot and Tailscale connectivity, live in the companion [bedrock](https://github.com/lucawalz/bedrock/tree/main/docs/adr) repository.
 
 The arc runs from a Terraform driver, through a Cluster API operator, to a standalone burst scaler, and now to a lease controller. Superseded records are kept rather than deleted, because the reasoning that was later overturned is the useful part.
 
