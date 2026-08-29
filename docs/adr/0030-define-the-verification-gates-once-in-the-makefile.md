@@ -64,3 +64,15 @@ A linter bump is now a diff. The finding it introduces lands on the pull request
 One skew is left open. `.github/workflows/release.yml` still installs goreleaser through the action under a `~> v2` constraint, so the release publishes with whichever v2 is newest at tag time while `release-check` validates the configuration against the pinned version. That was not a gap before, because both sides floated together. Pointing the release job at the same pin is the remaining work, and it belongs in a change that can be exercised against a real tag.
 
 `make site` runs `npm ci`, which removes and reinstalls `node_modules`. Running the full `verify` therefore costs a clean install of the frontend dependencies every time, which is what makes the bundle comparison meaningful and what makes the target the slowest one in the chain.
+
+## Update 2026-08-29
+
+Four statements above are now out of date.
+
+"The `test` job runs `tidy-check`, `vet`, `build`, `test` and `test-race`" no longer names everything the job runs. It also runs `manifests-check`.
+
+"One gate that continuous integration never had" described `manifests-check` as absent from `ci.yaml`. It is now a step in the `test` job, so the gate this record added to the Makefile is also a gate continuous integration runs.
+
+The job list, "the `test` job runs ... `lint` runs ... `site` runs ... `release-config` runs ... `chart` runs", names five jobs and stops. `ci.yaml` also carries an `image` job, which runs `make image`.
+
+"One skew is left open. `.github/workflows/release.yml` still installs goreleaser through the action under a `~> v2` constraint" is no longer true. `release.yml` now reads the pin with `make -s print-GORELEASER_VERSION` and passes it to `goreleaser-action`, so the release job and `release-check` validate against the same pinned version.
