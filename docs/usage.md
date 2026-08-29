@@ -111,6 +111,8 @@ spec:
 
 That resource plus the Secrets it points at is the whole of horizon's configuration. There is no configuration file and the binary reads none. `spec.type` is `hetzner`, the only accepted value; `credentialsSecretRef`, `cloudInitSecretRef` and exactly one of `image` or the deprecated `imageSelector` are required by the schema; and `spec.watchdog` cross-validates `renewInterval`, `slack` and `maxLifetime` against each other. `nodeCredentialSecretRef` and `joinTokenSecretRef` are optional in the schema and required in practice: a lease is refused while the node credential is unset, and the provider build fails, naming the field, while the join token is unset and a rendered document still carries `${HORIZON_JOIN_TOKEN}`. A `ProviderConfig` is cluster-scoped, so each reference carries a name and a key but no namespace, and the controller resolves it in its own namespace, read from `POD_NAMESPACE` and falling back to the service account namespace file projected into the pod.
 
+The operator writes back to `ProviderConfig.status`. A `Ready` condition says whether the config can serve a lease, and it is false with a named reason when a referenced Secret does not resolve, when nothing guarantees teardown, when the resolved configuration cannot build a provider, or when the provider answers with no instance type at all. Readiness runs the same provider build the first lease runs, so a cloud-init that resolves but carries no pool label is reported here rather than passing and failing at admission. A `CataloguePublished` condition says whether the list in status is the whole list, and `status.instanceTypes` carries the types the provider offered at the last refresh, so the interface lists them wherever it runs rather than only inside the controller process. Status is written only when its content changes.
+
 **8. Apply a `CapacityLease` and watch the node register:**
 
 ```yaml
@@ -141,9 +143,27 @@ A stock `ubuntu-24.04` node registers within about 90 seconds of boot, carrying 
 
 ## Images and clusters that are not stock
 
+A burst node satisfies four requirements: a Kubernetes agent at the pinned version, the pool label and burst taint, an armed watchdog, and a path to the control plane. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
+
+It carries `horizon.dev/pool=reserved` and the burst taint. The provider build rejects a cloud-init missing the pool label, before any instance is created. The taint, `horizon.dev/burst=<lease>:NoSchedule`, is applied by the controller once it matches the node to its lease, since its value is the lease name and one cloud-init blob serves every lease a `ProviderConfig` provisions.
+
+Re-rendering pins nothing rendered earlier: the provider reads the blob behind `cloudInitSecretRef` and never regenerates it, so a Secret written before the version was pinned keeps installing the newest release on every node it boots until a fresh render is applied over it. Upgrading the control plane needs the same re-render.
+
 The three capability flags above compose, and each defaults to what the generator did before it existed, so a document rendered earlier is unchanged by their presence. An unusual image is not a reason to leave the generator.
 
 `horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--kubernetes-version`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
+
+Four sentinels are substituted when the provider builds the cloud-init: `${HORIZON_NODE_TOKEN}` and `${HORIZON_JOIN_TOKEN}` from their Secret references, `${HORIZON_VERSION}` from the controller's build stamp, `${HORIZON_MAX_LIFETIME}` from `spec.watchdog.maxLifetime`. Substitution is literal text replacement; anything else starting `${HORIZON_` left standing afterward fails the provider build rather than boot with a placeholder where a credential belongs.
+
+## How teardown is enforced
+
+Teardown is layered, so no single failure leaves a machine running and billing.
+
+A finalizer blocks lease deletion until the provider confirms the instance gone, not merely reports a successful delete call. Ownership and deadline labels are written in the same call that creates the instance, so nothing horizon creates is ever unlabelled or unaccounted for. An orphan collector sweeps every configured provider on a timer and reclaims what no live lease claims; a matching reconciler does the same for stranded `Node` objects. Launch and registration are each bounded by their own deadline, past which a stuck instance is released rather than left waiting. A lease is refused before acceptance if neither the provider nor its configuration can guarantee teardown, and the schema itself bounds `replicas`, `duration` and `teardownGrace`.
+
+`teardownGrace` is one deadline anchored at the instant teardown falls due, by expiry or by early deletion, and the workload restore wait and every instance's drain share it. It is not a fresh allowance per instance. Once it is spent, release proceeds without further grace, beyond at most one eviction retry already in flight.
+
+See [ADR 0017](adr/0017-capacity-lease-controller-over-cli-saga.md) for the crash-safety layers and their exact parameters, and [ADR 0018](adr/0018-provider-seam-around-instance-lifecycle.md) for the provider seam and the label set.
 
 ## The watchdog clock
 
