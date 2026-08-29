@@ -77,7 +77,7 @@ manifests-check: manifests generate
 	$(call assert_unchanged,$(GENERATED_PATHS),generated manifests are stale; run make manifests generate and commit the result)
 
 image:
-	docker build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
+	docker buildx build --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
 
 chart-lint:
 	diff -r $(CRD_DIR) $(CHART_CRD_DIR)
