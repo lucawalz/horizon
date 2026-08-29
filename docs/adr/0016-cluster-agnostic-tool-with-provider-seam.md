@@ -5,6 +5,8 @@ date: 2026-07-04
 
 # 0016. Make horizon a cluster-agnostic tool with a provider seam
 
+Superseded in part by [0018](0018-provider-seam-around-instance-lifecycle.md): the two-method provider interface below was widened around instance lifecycle, but the cluster-agnostic behaviour and the rejection of a plugin framework stand.
+
 ## Context
 
 The narrowing from [0006](0006-cluster-api-operator-pivot.md) through [0015](0015-standalone-burst-scaler-credential-model.md) left horizon as a standalone burst scaler, but it still assumed the one cluster it grew up in. Three assumptions remained.

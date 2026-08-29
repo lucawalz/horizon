@@ -5,6 +5,8 @@ date: 2026-06-16
 
 # 0012. Retire scaling thresholds and rename the GitOps path
 
+Superseded in part by [0016](0016-cluster-agnostic-tool-with-provider-seam.md): the `bedrock_path` to `repo_path` rename below did not survive the field's later removal, but the threshold retirement stands.
+
 ## Context
 
 The `thresholds` config block (`burst`, `scale_down`, `window`, `cooldown_minutes`, `max_burst_nodes`) is a remnant of the watch-daemon scaling loop retired in [0008](0008-retire-watch-daemon-and-wireguard.md). The in-cluster cluster-autoscaler owns scaling now, so only `burst` was still read, and only to color the dashboard CPU and memory gauges. The setup wizard also wrote zeroed thresholds, which would have mis-colored every gauge. Separately, the `bedrock_path` field name assumed the companion repo is named bedrock, at odds with horizon being provider-agnostic.

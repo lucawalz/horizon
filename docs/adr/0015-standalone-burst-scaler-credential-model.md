@@ -5,6 +5,8 @@ date: 2026-07-04
 
 # 0015. Narrow horizon to a standalone burst scaler
 
+Superseded in part by [0017](0017-capacity-lease-controller-over-cli-saga.md): the burst orchestration below was replaced by the lease controller, but the credential model stands.
+
 ## Context
 
 The narrowing that runs from [0006](0006-cluster-api-operator-pivot.md) through [0014](0014-narrow-horizon-to-on-demand-pool-scaler.md) left horizon as a worker-pool scaler for an existing cluster, but two ties to the surrounding environment remained.
