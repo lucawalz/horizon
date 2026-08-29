@@ -141,20 +141,6 @@ kubectl get capacityleases -w
 
 A stock `ubuntu-24.04` node registers within about 90 seconds of boot, carrying `horizon.dev/pool=reserved` from its own cloud-init and `horizon.dev/burst=batch-run:NoSchedule` once the controller matches it to the lease.
 
-## Images and clusters that are not stock
-
-A burst node satisfies four requirements: a Kubernetes agent at the pinned version, the pool label and burst taint, an armed watchdog, and a path to the control plane. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
-
-It carries `horizon.dev/pool=reserved` and the burst taint. The provider build rejects a cloud-init missing the pool label, before any instance is created. The taint, `horizon.dev/burst=<lease>:NoSchedule`, is applied by the controller once it matches the node to its lease, since its value is the lease name and one cloud-init blob serves every lease a `ProviderConfig` provisions.
-
-Re-rendering pins nothing rendered earlier: the provider reads the blob behind `cloudInitSecretRef` and never regenerates it, so a Secret written before the version was pinned keeps installing the newest release on every node it boots until a fresh render is applied over it. Upgrading the control plane needs the same re-render.
-
-The three capability flags above compose, and each defaults to what the generator did before it existed, so a document rendered earlier is unchanged by their presence. An unusual image is not a reason to leave the generator.
-
-`horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--kubernetes-version`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
-
-Four sentinels are substituted when the provider builds the cloud-init: `${HORIZON_NODE_TOKEN}` and `${HORIZON_JOIN_TOKEN}` from their Secret references, `${HORIZON_VERSION}` from the controller's build stamp, `${HORIZON_MAX_LIFETIME}` from `spec.watchdog.maxLifetime`. Substitution is literal text replacement; anything else starting `${HORIZON_` left standing afterward fails the provider build rather than boot with a placeholder where a credential belongs.
-
 ## How teardown is enforced
 
 Teardown is layered, so no single failure leaves a machine running and billing.
@@ -173,9 +159,23 @@ Every leased node runs a dead man switch of its own, configured by `spec.watchdo
 
 A machine already running keeps the backstop latched when it was created. Editing `spec.watchdog`, with `kubectl` or from the edit form the interface serves, therefore moves no deadline under a lease that is already holding capacity, and the change reaches the next machine instead. The lease detail reads the earliest backstop the machines of a lease latched, so the extension it offers is one the controller will not clamp.
 
-The controller is the first clock. Releasing a lease deletes the `CapacityLease`, which is how the controller is asked for a teardown: it drains the leased nodes, deletes their machines at the provider, and removes the lease once its finalizer completes. Nothing in the interface destroys a machine itself. Where the controller cannot act at all, the watchdog still powers each node off at its own deadline, which is the guarantee the two clocks exist for.
+The controller is the first clock. Releasing a lease deletes the `CapacityLease`, which is how the controller is asked for a teardown: it drains the leased nodes and deletes their machines at the provider. [How teardown is enforced](#how-teardown-is-enforced) covers the finalizer that holds that deletion open until the provider confirms it. Nothing in the interface destroys a machine itself. Where the controller cannot act at all, the watchdog still powers each node off at its own deadline, which is the guarantee the two clocks exist for.
 
 A `ProviderConfig` is held back by a finalizer of its own until no capacity lease names it, since horizon tears a lease down with the credentials that configuration resolves. Releasing those leases is what frees it; deleting the configuration first would leave their machines billing until each node's watchdog powers it off.
+
+## Images and clusters that are not stock
+
+A burst node satisfies four requirements: a Kubernetes agent at the pinned version, the pool label and burst taint, an armed watchdog, and a path to the control plane. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
+
+It carries `horizon.dev/pool=reserved` and the burst taint. The provider build rejects a cloud-init missing the pool label, before any instance is created. The taint, `horizon.dev/burst=<lease>:NoSchedule`, is applied by the controller once it matches the node to its lease, since its value is the lease name and one cloud-init blob serves every lease a `ProviderConfig` provisions.
+
+Re-rendering pins nothing rendered earlier: the provider reads the blob behind `cloudInitSecretRef` and never regenerates it, so a Secret written before the version was pinned keeps installing the newest release on every node it boots until a fresh render is applied over it. Upgrading the control plane needs the same re-render.
+
+The three capability flags above compose, and each defaults to what the generator did before it existed, so a document rendered earlier is unchanged by their presence. An unusual image is not a reason to leave the generator.
+
+`horizon cloud-init --passthrough` is the remaining step past that, and it emits nothing horizon generates: no join configuration, no pool label, and no watchdog files or unit. It writes only the files and commands named on the command line, for an adopter who owns the whole cloud-init and wants horizon out of it, not for an adopter whose image merely differs from a stock one. The flags that feed the generated content, `--flavor`, `--server`, `--kubernetes-version`, `--label`, `--taint`, `--flavor-config`, `--install-kubernetes`, `--install-watchdog-unit`, `--transient-watchdog-unit`, and `--binary-base-url`, are rejected under `--passthrough` rather than silently discarded. The rendered document is still checked for the `horizon.dev/pool=reserved` node label the provider build requires, so a passthrough document has to carry that label itself. Passthrough also drops the watchdog, and with it the teardown guarantee, which is the reason to reach for a capability flag first.
+
+Four sentinels are substituted when the provider builds the cloud-init: `${HORIZON_NODE_TOKEN}` and `${HORIZON_JOIN_TOKEN}` from their Secret references, `${HORIZON_VERSION}` from the controller's build stamp, `${HORIZON_MAX_LIFETIME}` from `spec.watchdog.maxLifetime`. Substitution is literal text replacement; anything else starting `${HORIZON_` left standing afterward fails the provider build rather than boot with a placeholder where a credential belongs.
 
 ## Web interface
 
