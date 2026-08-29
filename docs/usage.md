@@ -165,7 +165,7 @@ A `ProviderConfig` is held back by a finalizer of its own until no capacity leas
 
 ## Images and clusters that are not stock
 
-A burst node satisfies four requirements: a Kubernetes agent at the pinned version, the pool label and burst taint, an armed watchdog, and a path to the control plane. horizon generates the first three; the fourth is the adopter's network, and horizon has no opinion about it.
+A burst node satisfies four requirements: a Kubernetes agent at the pinned version, the pool label and burst taint, an armed watchdog, and a path to the control plane. horizon generates the first three; the fourth is the adopter's network, and horizon has no VPN, no firewall management and no opinion about how a leased server reaches the cluster beyond the `--server` URL it is given.
 
 It carries `horizon.dev/pool=reserved` and the burst taint. The provider build rejects a cloud-init missing the pool label, before any instance is created. The taint, `horizon.dev/burst=<lease>:NoSchedule`, is applied by the controller once it matches the node to its lease, since its value is the lease name and one cloud-init blob serves every lease a `ProviderConfig` provisions.
 
