@@ -7,8 +7,11 @@
 - [ ] Bug fix (`fix:`)
 - [ ] New feature (`feat:`)
 - [ ] Refactor (`refactor:`)
+- [ ] Performance (`perf:`)
+- [ ] Tests (`test:`)
 - [ ] Docs or maintenance (`docs:` / `chore:`)
 - [ ] CI or build (`ci:` / `build:`)
+- [ ] Release preparation, the chart version bump (`release:`)
 
 ## Changes
 

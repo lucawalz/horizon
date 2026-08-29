@@ -40,8 +40,8 @@ changelog:
       - "^test"
       - "^ci"
       - "^build"
-      - "^style"
       - "^refactor"
+      - "^release"
       - "Merge pull request"
       - "Merge branch"
   groups:
