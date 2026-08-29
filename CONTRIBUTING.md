@@ -29,13 +29,17 @@ internal/manager/   controller-runtime wiring
 internal/web/       web interface, json endpoints and the embedded bundle
                     site/ vite, react and typescript project, dist/ committed
 internal/oidc/      bearer token verification against the issuer's published key set
+internal/impersonate/ per-request cluster client that reaches the apiserver as the end user
 internal/controller/  lease reconciler, orphan collector, provider factory
+internal/catalogue/ instance types every provider config offers, kept in memory
 internal/k8s/       workload migration, placement restore, node drain
 internal/cloudinit/ cloud-init join document generator, one file per flavour
 internal/provider/  instance lifecycle interface, capabilities, label constants
                     hetzner/ Hetzner Cloud implementation
                     conformance/ contract suite every implementation must pass
                     fake/ in-memory implementation with a create and delete ledger
+internal/metrics/   the metric surface and the recorders that move it
+internal/testenv/   shared envtest control plane for the integration suites
 internal/version/   build stamp
 config/crd/bases/   generated custom resource definitions
 charts/horizon/     Helm chart for the in-cluster controller and the optional interface
@@ -46,7 +50,7 @@ docs/adr/           architecture decision records
 
 ## Testing
 
-`make verify` runs every gate CI runs, in ascending cost, and is the command to run before opening a PR and before tagging a release:
+`make verify` runs every gate CI runs except the image build, in ascending cost, and is the command to run before opening a PR and before tagging a release:
 
 ```bash
 make verify
@@ -70,6 +74,9 @@ make manifests-check
 
 # The web interface, including the check that dist/ matches a fresh build
 make site
+
+# The container image, the gate verify leaves out because it needs a container runtime
+make image
 ```
 
 `go test ./...` still exits zero, but the controller suite skips every case that needs an apiserver when it cannot find the envtest control plane binaries. `make test` downloads them into `bin/k8s` first and points the suite at them, so it is the only invocation that runs everything.
@@ -123,7 +130,9 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 - No period at end of subject line
 - Subject line only, no body, no bullet points
 
-**Allowed types**: `feat` `fix` `chore` `ci` `docs` `refactor` `perf` `test` `build`
+**Allowed types**: `feat` `fix` `chore` `ci` `docs` `refactor` `perf` `test` `build` `release`
+
+`release` is reserved for the chart version bump that precedes a tag, which [ADR 0020](docs/adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) makes part of the release contract.
 
 **Examples**:
 
