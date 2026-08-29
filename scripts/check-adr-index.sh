@@ -19,7 +19,8 @@ index_status() {
 }
 
 word_to_count() {
-  local word="${1,,}"
+  local word
+  word="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   local ones=(zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen)
   local tens=(zero ten twenty thirty forty fifty sixty seventy eighty ninety)
   local tens_word="$word"
