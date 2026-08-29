@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by 0017
 date: 2026-06-18
 ---
 
@@ -33,4 +33,4 @@ The operational uniformity has limits even within Cluster API. AWS EKS, adopted 
 
 For a platform whose purpose is fleet management, self-healing, and a GitOps-native substrate, the move is justified on those properties. For plain provisioning, Terraform would have been simpler, and that is the honest comparison: this choice buys reconciliation and uniformity at the price of a larger substrate.
 
-This record clarifies rather than reverses [0006](0006-cluster-api-operator-pivot.md) and [0010](0010-provider-agnostic-cluster-create-via-clusterclass.md); both stand. It builds on [0001](0001-drive-bedrock-terraform.md) and [0002](0002-pluggable-provider-interface.md) as the path not taken.
+This record clarifies rather than reverses [0006](0006-cluster-api-operator-pivot.md) and [0010](0010-provider-agnostic-cluster-create-via-clusterclass.md) as they stood when this record was written. 0010 has since been superseded by [0014](0014-narrow-horizon-to-on-demand-pool-scaler.md), and 0006 by [0018](0018-provider-seam-around-instance-lifecycle.md). It builds on [0001](0001-drive-bedrock-terraform.md) and [0002](0002-pluggable-provider-interface.md) as the path not taken.
