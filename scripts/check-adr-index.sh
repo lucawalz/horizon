@@ -92,7 +92,7 @@ for l in $linked; do
   fi
 done
 
-record_count="$(printf '%s\n' "$records" | grep -c .)"
+record_count="$(printf '%s\n' "$records" | grep -c . || true)"
 readme_count_word="$(grep -oE '[A-Za-z]+(-[A-Za-z]+)? architecture decision records' "$root_readme" | head -n1 | awk '{print $1}' || true)"
 readme_count=""
 if [ -n "$readme_count_word" ]; then
