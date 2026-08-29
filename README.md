@@ -202,7 +202,7 @@ A suspected vulnerability is the one thing that does not belong in a public issu
 
 ## Security
 
-Report a suspected vulnerability privately, through the "Report a vulnerability" form under the repository's Security tab, rather than by opening a public issue. Only `main` is maintained, and [SECURITY.md](SECURITY.md) states the credential model in full.
+Report a suspected vulnerability privately, through the "Report a vulnerability" form under the repository's Security tab, rather than by opening a public issue. [SECURITY.md](SECURITY.md) states the credential model and the supported release line in full.
 
 ## Roadmap
 
