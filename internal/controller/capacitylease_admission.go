@@ -36,7 +36,7 @@ func (r *CapacityLeaseReconciler) admit(ctx context.Context, lease *v1alpha1.Cap
 
 	sized, rejected := r.resolveInstanceType(lease, cfg.Name)
 	if rejected != nil {
-		return r.rejectLease(ctx, lease, attributed, sizingCondition(lease), rejected.cause,
+		return r.rejectLease(ctx, lease, attributed, sizingCondition(lease, rejected.reason), rejected.cause,
 			selectionFailedRecord(attributed, selectionOf(lease), rejected.reason))
 	}
 	if sized.instanceType == "" {
@@ -60,11 +60,15 @@ func requireOfferedRegion(prov provider.Provider, region string) error {
 	return fmt.Errorf("region %q is not one of the regions the provider offers: %v", region, offered)
 }
 
-func sizingCondition(lease *v1alpha1.CapacityLease) string {
-	if lease.Spec.Requirements != nil {
+func sizingCondition(lease *v1alpha1.CapacityLease, reason metrics.Reason) string {
+	switch {
+	case reason == metrics.ReasonInstanceTypeUnavailable:
+		return reasonInstanceTypeUnavailable
+	case lease.Spec.Requirements != nil:
 		return reasonUnsatisfiedRequirements
+	default:
+		return reasonUnknownInstanceType
 	}
-	return reasonUnknownInstanceType
 }
 
 // a provider config whose listing keeps failing never fills the cache, so a pinned type stays unconfirmed rather than unusable
@@ -85,18 +89,35 @@ func (r *CapacityLeaseReconciler) resolveInstanceType(lease *v1alpha1.CapacityLe
 		}
 	case required != nil:
 		return chooseInstanceType(offered, region, *required)
-	case !offersType(offered, lease.Spec.Size):
-		return sizing{}, &sizingRejection{
-			reason: metrics.ReasonNoMatch,
-			cause:  fmt.Errorf("instance type %q is not offered in region %q", lease.Spec.Size, region),
-		}
 	default:
-		return sizing{instanceType: lease.Spec.Size}, nil
+		return resolvePinnedType(offered, region, lease.Spec.Size)
 	}
 }
 
-func offersType(offered []provider.InstanceType, size string) bool {
-	return slices.ContainsFunc(offered, func(it provider.InstanceType) bool { return it.Name == size })
+func resolvePinnedType(offered []provider.InstanceType, region, size string) (sizing, *sizingRejection) {
+	it, ok := findInstanceType(offered, size)
+	switch {
+	case !ok:
+		return sizing{}, &sizingRejection{
+			reason: metrics.ReasonNoMatch,
+			cause:  fmt.Errorf("instance type %q is not offered in region %q", size, region),
+		}
+	case !it.Available:
+		return sizing{}, &sizingRejection{
+			reason: metrics.ReasonInstanceTypeUnavailable,
+			cause:  fmt.Errorf("instance type %q is offered in region %q but is currently unavailable", size, region),
+		}
+	default:
+		return sizing{instanceType: size}, nil
+	}
+}
+
+func findInstanceType(offered []provider.InstanceType, size string) (provider.InstanceType, bool) {
+	idx := slices.IndexFunc(offered, func(it provider.InstanceType) bool { return it.Name == size })
+	if idx < 0 {
+		return provider.InstanceType{}, false
+	}
+	return offered[idx], true
 }
 
 func chooseInstanceType(offered []provider.InstanceType, region string, required v1alpha1.SizeRequirements) (sizing, *sizingRejection) {

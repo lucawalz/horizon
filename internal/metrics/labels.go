@@ -44,9 +44,10 @@ const (
 type Reason string
 
 const (
-	ReasonNoMatch              Reason = "no_match"
-	ReasonCatalogueUnavailable Reason = "catalogue_unavailable"
-	ReasonRegionUnavailable    Reason = "region_unavailable"
+	ReasonNoMatch                 Reason = "no_match"
+	ReasonCatalogueUnavailable    Reason = "catalogue_unavailable"
+	ReasonRegionUnavailable       Reason = "region_unavailable"
+	ReasonInstanceTypeUnavailable Reason = "instance_type_unavailable"
 )
 
 type Result string

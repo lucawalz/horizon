@@ -70,12 +70,26 @@ func TestAcceptanceRejectsAnInstanceTypeOfferedOnlyInAnotherRegion(t *testing.T)
 	h.assertUnaccepted()
 }
 
-func TestAcceptanceAdmitsATypeThatIsOfferedButCurrentlyUnavailable(t *testing.T) {
+func TestAcceptanceRejectsAPinnedTypeThatIsOfferedButCurrentlyUnavailable(t *testing.T) {
 	h := newHarness(t)
 	h.catalogue = stubCatalogue{types: []provider.InstanceType{offeredType(testSize, testRegion, false)}}
 
+	if err := h.acceptancePass(); err == nil {
+		t.Fatal("acceptance admitted a pinned instance type that is currently unavailable")
+	}
+
+	h.assertConditionDetail(v1alpha1.ConditionAccepted, reasonInstanceTypeUnavailable, "currently unavailable")
+	h.assertUnaccepted()
+}
+
+func TestAcceptanceAdmitsAPinnedTypeThatIsDeprecatedButAvailable(t *testing.T) {
+	h := newHarness(t)
+	deprecated := offeredType(testSize, testRegion, true)
+	deprecated.Deprecated = true
+	h.catalogue = stubCatalogue{types: []provider.InstanceType{deprecated}}
+
 	if err := h.acceptancePass(); err != nil {
-		t.Fatalf("acceptance rejected an offered type that is merely unavailable: %v", err)
+		t.Fatalf("acceptance rejected a deprecated but available pinned type: %v", err)
 	}
 
 	h.assertCondition(v1alpha1.ConditionAccepted, metav1.ConditionTrue)
