@@ -6,7 +6,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/go-logr/logr v1.4.4
-	github.com/hetznercloud/hcloud-go/v2 v2.47.0
+	github.com/hetznercloud/hcloud-go/v2 v2.48.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
 	github.com/spf13/cobra v1.10.2
@@ -17,7 +17,7 @@ require (
 	k8s.io/client-go v0.37.0
 	k8s.io/klog/v2 v2.140.0
 	k8s.io/kubectl v0.37.0
-	sigs.k8s.io/controller-runtime v0.25.0
+	sigs.k8s.io/controller-runtime v0.25.1
 )
 
 require (
@@ -78,7 +78,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
