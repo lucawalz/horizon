@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/go-jose/go-jose/v4 v4.1.5
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/go-logr/logr v1.4.4
 	github.com/hetznercloud/hcloud-go/v2 v2.52.0
 	github.com/prometheus/client_golang v1.25.0
