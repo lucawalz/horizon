@@ -29,7 +29,8 @@ See [ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md) for the
 ## Capacity model
 
 Reserved capacity is the only path. An instance is operator-pinned: horizon creates it on demand against the Hetzner Cloud API and deletes it when the lease ends. [docs/usage.md](docs/usage.md#images-and-clusters-that-are-not-stock) carries the node join contract: the four requirements a burst node satisfies to register, and the sentinels substituted into its cloud-init.
-### Requirements
+
+## Requirements
 
 - A Kubernetes cluster at 1.29 or newer, and permission to install cluster-scoped custom resource definitions and RBAC into it.
 - A Hetzner Cloud API token and a cloud-init that joins the cluster and applies the `horizon.dev/pool=reserved` node label, each stored in a Secret in the controller's namespace. `horizon cloud-init` generates the second; see [docs/usage.md](docs/usage.md).

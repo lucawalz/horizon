@@ -21,7 +21,7 @@ flowchart LR
 
 horizon installs as a Helm chart into an existing cluster. Nothing else is deployed, and the cluster keeps running unchanged until a lease is created.
 
-The requirements, installing from a checkout and building from source are in [docs/design.md](docs/design.md#requirements).
+It needs Kubernetes 1.29 or newer, a Hetzner Cloud API token, a k3s join token and a boot image; the full requirements, installing from a checkout and building from source are in [docs/internals.md](docs/internals.md#requirements).
 
 ### Installing the controller
 
@@ -71,20 +71,20 @@ Getting an empty cluster to that point is eight steps: the chart, three Secrets,
 
 ## Why not Karpenter or cluster-autoscaler
 
-Karpenter and cluster-autoscaler size a cluster to its pending pods; horizon instead treats the deadline as the contract. A `CapacityLease` states how long capacity exists, and a finalizer, labels written in the create call, an orphan collector and a node-side watchdog make deletion the guaranteed outcome ([ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md)). The provider seam is drawn around one named instance rather than a count, so ownership and expiry attach to individual machines ([ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md)). Like those projects, horizon builds no machine images and renders the join cloud-init for stock ones instead ([ADR 0022](docs/adr/0022-generate-cloud-init-rather-than-build-images.md)). The full design is in [docs/design.md](docs/design.md).
+Karpenter and cluster-autoscaler size a cluster to its pending pods; horizon instead starts from a deadline. A `CapacityLease` states how long capacity exists, and layered defences (a finalizer, labels written in the create call, an orphan collector and a node-side watchdog) make deletion the contract ([ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md)). The provider seam is drawn around one named instance rather than a count, so ownership and expiry attach to individual machines ([ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md)). Like those projects, horizon builds no machine images and renders the join cloud-init for stock ones instead ([ADR 0022](docs/adr/0022-generate-cloud-init-rather-than-build-images.md)).
 
 ## Documentation
 
 | Document | What it covers |
 | --- | --- |
-| [docs/usage.md](docs/usage.md) | The eight-step path from an empty cluster to a registered node, how teardown is enforced, images and clusters that are not stock, and what the web interface serves, including `ProviderConfig` status. |
+| [docs/usage.md](docs/usage.md) | The eight-step path from an empty cluster to a registered node, images and clusters that are not stock, and what the web interface serves, including `ProviderConfig` status. |
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command and every flag, with its default. |
 | [docs/serving-the-interface.md](docs/serving-the-interface.md) | Serving the interface in a cluster, granting an impersonated operator its rights, and reading a refusal. |
 | [charts/horizon/README.md](charts/horizon/README.md) | Every chart value, and why the custom resource definitions live in `crds/` rather than `templates/`. |
 | [docs/adr/](docs/adr/) | Thirty-seven architecture decision records in MADR format, superseded ones included. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Repository layout, the test commands, the web interface bundle, and the branch and commit conventions. |
 | [SECURITY.md](SECURITY.md) | The credential model, how to report a vulnerability, and the supported release line. |
-| [docs/design.md](docs/design.md) | The project description, teardown enforcement, the capacity model, lease semantics, the web interface, and project housekeeping. |
+| [docs/internals.md](docs/internals.md) | The project description, teardown enforcement, the capacity model, lease semantics, the web interface, and project housekeeping. |
 
 ## License
 
