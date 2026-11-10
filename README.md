@@ -71,7 +71,7 @@ Getting an empty cluster to that point is eight steps: the chart, three Secrets,
 
 ## Why not Karpenter or cluster-autoscaler
 
-Karpenter and cluster-autoscaler size a cluster to its pending pods; horizon instead starts from a deadline. A `CapacityLease` states how long capacity exists, and layered defences (a finalizer, labels written in the create call, an orphan collector and a node-side watchdog) make deletion the contract ([ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md)). The provider seam is drawn around one named instance rather than a count, so ownership and expiry attach to individual machines ([ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md)). Like those projects, horizon builds no machine images and renders the join cloud-init for stock ones instead ([ADR 0022](docs/adr/0022-generate-cloud-init-rather-than-build-images.md)).
+Karpenter and cluster-autoscaler size a cluster to its pending pods; horizon instead starts from a deadline. A `CapacityLease` states how long capacity exists, and layered defences (a finalizer, labels written in the create call and an orphan collector) make deletion the contract ([ADR 0017](docs/adr/0017-capacity-lease-controller-over-cli-saga.md)), backed by a node-side watchdog on the machine itself ([ADR 0021](docs/adr/0021-node-side-dead-mans-switch-on-two-clocks.md)). The provider seam is drawn around one named instance rather than a count, so ownership and expiry attach to individual machines ([ADR 0018](docs/adr/0018-provider-seam-around-instance-lifecycle.md)). Like those projects, horizon builds no machine images and renders the join cloud-init for stock ones instead ([ADR 0022](docs/adr/0022-generate-cloud-init-rather-than-build-images.md)).
 
 ## Documentation
 
