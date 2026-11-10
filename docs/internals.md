@@ -1,6 +1,6 @@
-# Design
+# Internals
 
-Material moved out of the README: the project description, requirements, how teardown is enforced, the capacity model, the lease semantics, the web interface, and project housekeeping.
+Covers the project description, requirements, how teardown is enforced, the capacity model, the lease semantics, the web interface, and project housekeeping.
 
 ## Description
 
@@ -8,7 +8,7 @@ horizon is a Kubernetes operator. It adds temporary worker capacity to a cluster
 
 Renting capacity is easy. Guaranteeing it goes away is the engineering problem, and that is what the project exists to solve: the promise on offer is that nothing is still billing after the deadline.
 
-The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: three bare-metal nodes running NixOS and K3s, reconciled by Flux v2, with Tailscale carrying connectivity for nodes that are not on the home network. bedrock defines the cluster; horizon adds and removes temporary capacity on top of it. horizon is optional and never load-bearing: routine operation happens without it and the cluster keeps running when it is gone.
+The cluster horizon operates over lives in the companion [bedrock](https://github.com/lucawalz/bedrock) repository: three bare-metal nodes running NixOS and K3s, reconciled by Flux v2. bedrock defines the cluster; horizon adds and removes temporary capacity on top of it. horizon is optional and never load-bearing: routine operation happens without it and the cluster keeps running when it is gone.
 
 ### Features
 
@@ -38,7 +38,7 @@ Reserved capacity is the only path. An instance is operator-pinned: horizon crea
 - A k3s join token, stored in a Secret in the controller's namespace and named by `joinTokenSecretRef`. Every cloud-init `horizon cloud-init` generates needs it, and the provider build fails before any instance is created while the reference is unset.
 - A boot image in the Hetzner project, selected by exact id, exact name, or one or more labels.
 
-That resolves against the latest published chart. A checkout installs the working tree instead, which is ahead of the published chart while a release is being prepared:
+The README's `helm install` resolves against the latest published chart. A checkout installs the working tree instead, which is ahead of the published chart while a release is being prepared:
 
 ```
 helm install horizon ./charts/horizon --namespace horizon-system --create-namespace
@@ -52,10 +52,9 @@ make build
 
 `make install` builds and installs the binary into `~/.local/bin`, re-signing it on macOS. Override the destination with `PREFIX`, and remove it with `make uninstall`. The binary is the controller, so it is only useful where it can reach a cluster.
 
-## Usage
+## Lease semantics
 
-horizon carries six commands in one binary, and `horizon` with no subcommand prints help. Every flag, with its default and what it is for, is in [docs/cli-reference.md](cli-reference.md).
-
+Field rules for [the smallest example](../README.md#the-smallest-example):
 
 `spec.providerRef`, `spec.region`, `spec.replicas` and `spec.duration` are required, together with exactly one of `spec.size` or `spec.requirements`. `spec.size` pins an instance type by name; `spec.requirements` states a minimum core count, an optional memory floor, an architecture, an optional CPU type and a selection strategy, and horizon resolves the cheapest offered type that satisfies them. The provider reference, the region and whichever sizing field is set are immutable, so a lease cannot be repointed once it holds capacity. Adding `spec.workload.namespaces` migrates every namespace it names onto the leased nodes, narrowed to the workloads matched by the optional `spec.workload.selector`; omitting `spec.workload` adds bare capacity. `spec.duration` is mutable, and `status.expiresAt` is derived from it on every pass rather than stamped at acceptance, so editing it moves the deadline of a running lease. The derived deadline is held at the backstop each machine latched when it was created, because a leased server destroys itself at the `maxLifetime` baked into its cloud-init and nothing in the cluster can renew that; an `ExpiryClamped` condition reports when the backstop is what the deadline reads. Shortening a duration below the time already elapsed expires the lease at once, which spends the teardown grace before teardown begins and so releases the capacity without draining it first. `kubectl explain capacitylease.spec` and the generated definitions in `config/crd/bases/` carry the exhaustive field list.
 
@@ -87,9 +86,7 @@ The copy is named `<original>-burst-<hash>` and carries the original's labels pl
 
 Before moving anything, horizon classifies every targeted Deployment and StatefulSet and records the ones that cannot move without dropping traffic, in `status.migrationWarnings` and the `WorkloadMigratable` condition. It warns rather than refuses, because a lease that quietly declines to move a workload is worse than one that moves it noisily. Six shapes are flagged: a paused Deployment, a StatefulSet on `OnDelete`, and a StatefulSet with a rollout partition all leave their pods for the operator to cycle, so horizon evicts those pods itself rather than waiting for a rollout that will never come; a Deployment on `Recreate`, and one whose `maxSurge` resolves to zero, both take every replica down before bringing a replacement up; and a workload pinned by `spec.template.spec.nodeSelector` has that selector saved and cleared for the duration of the lease, because a selector naming the original nodes cannot be satisfied on burst capacity. Teardown restores the selector alongside the affinity and the tolerations.
 
-
 Printer columns carry replicas, region, phase, expiry, readiness, whether the node-side watchdog is armed, age and the resolved instance type, and `kubectl get -o wide` adds the instants the lease became ready and was released. `kubectl get`, k9s, Rancher and Headlamp are therefore all useful without a horizon-specific client, and the short name is `cl`.
-
 
 Deleting the lease releases the capacity early; leaving it alone releases it at `EXPIRES`. Either way the finalizer holds the deletion open until the provider confirms every instance gone.
 
@@ -115,7 +112,6 @@ horizon serve --oidc-issuer=https://sso.example.com/application/o/horizon/ \
 ```
 
 Every request has to carry a signed JWT, verified against the key set discovered from the issuer's own `/.well-known/openid-configuration` document. Authorisation is Kubernetes impersonation of the username and groups that token names, so the cluster's own RBAC decides what a caller reaches and the interface grants nothing on its own. The chart templates the mode behind `ui.enabled` and the default is off. [docs/serving-the-interface.md](serving-the-interface.md) covers what an identity provider has to publish and how to grant an impersonated operator its rights. The reasoning is in [ADR 0028](adr/0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md).
-
 
 ## Releases
 
