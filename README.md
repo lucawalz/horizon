@@ -5,7 +5,7 @@
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 
-A Kubernetes operator that leases temporary Hetzner Cloud capacity and guarantees the machines are gone when the lease expires.
+A Kubernetes operator that leases temporary Hetzner Cloud capacity and removes the machines when the lease expires.
 
 ```mermaid
 flowchart LR
