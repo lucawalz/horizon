@@ -17,6 +17,10 @@ flowchart LR
   orphan[Orphan collector] -->|sweep| hcloud
 ```
 
+## Description
+
+horizon adds temporary worker capacity to a cluster that already exists, holds it for a bounded period and removes it again. A `CapacityLease` states how much capacity, from which provider and region, and for how long; the controller provisions against it and releases everything once the deadline passes. [docs/internals.md](docs/internals.md) covers the capacity model, teardown enforcement and lease semantics.
+
 ## Installation
 
 horizon installs as a Helm chart into an existing cluster. Nothing else is deployed, and the cluster keeps running unchanged until a lease is created.
@@ -25,7 +29,7 @@ It needs Kubernetes 1.29 or newer, a Hetzner Cloud API token, a k3s join token a
 
 ### Installing the controller
 
-The controller is installed from the Helm chart, published as an OCI artifact by a release tag:
+The controller is installed from the Helm chart, which each release publishes as an OCI artifact:
 
 ```
 helm install horizon oci://ghcr.io/lucawalz/charts/horizon \
@@ -33,6 +37,10 @@ helm install horizon oci://ghcr.io/lucawalz/charts/horizon \
 ```
 
 [`charts/horizon/README.md`](charts/horizon/README.md) carries every value, what else the chart templates, and why the definitions live in `crds/` rather than `templates/`.
+
+### Release assets and image
+
+Each [release](https://github.com/lucawalz/horizon/releases) attaches the `horizon` binary as `horizon_<version>_<os>_<arch>.tar.gz` for darwin and linux on amd64 and arm64, with a checksums file. The controller image is published for linux amd64 and arm64 at `ghcr.io/lucawalz/horizon`, tagged with the full version, `<major>.<minor>` and `<major>`; the chart deploys it by default.
 
 ## Usage
 
@@ -86,10 +94,22 @@ Karpenter and cluster-autoscaler size a cluster to its pending pods; horizon ins
 | [SECURITY.md](SECURITY.md) | The credential model, how to report a vulnerability, and the supported release line. |
 | [docs/internals.md](docs/internals.md) | The project description, teardown enforcement, the capacity model, lease semantics, the web interface, and project housekeeping. |
 
+## Support
+
+Questions and bug reports go through the [issue forms](https://github.com/lucawalz/horizon/issues/new/choose). Suspected vulnerabilities are reported privately as described in [SECURITY.md](SECURITY.md). The shared support guidance is in [SUPPORT.md](https://github.com/lucawalz/.github/blob/main/SUPPORT.md).
+
+## Contributing
+
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the repository layout, the test commands and the branch and commit conventions, and participation follows the [code of conduct](https://github.com/lucawalz/.github/blob/main/CODE_OF_CONDUCT.md).
+
+## Authors and acknowledgment
+
+Written and maintained by [Luca Walz](https://github.com/lucawalz). The projects horizon builds on are credited in [docs/internals.md](docs/internals.md#authors-and-acknowledgment).
+
 ## License
 
 Released under the MIT License, Copyright (c) 2026 Luca Walz. The full text is in [LICENSE](LICENSE).
 
 ## Project status
 
-Actively developed alongside the [bedrock](https://github.com/lucawalz/bedrock) homelab it was written for, and published one version per release tag at `ghcr.io/lucawalz/charts/horizon` and `ghcr.io/lucawalz/horizon`.
+Actively developed alongside the [bedrock](https://github.com/lucawalz/bedrock) homelab it was written for, and published with every release as the chart `ghcr.io/lucawalz/charts/horizon` and the image `ghcr.io/lucawalz/horizon`.
