@@ -95,7 +95,7 @@ npm ci
 npm run build
 ```
 
-`make site` runs the same sequence the `site` job runs and fails when the rebuilt bundle differs from what is committed. That job is not a required check, so a stale `dist` is reported rather than blocked and rebuilding stays the author's job.
+`make site` runs the same sequence the `site` job runs and fails when the rebuilt bundle differs from what is committed. The `ci-gate` check requires that job, so a stale `dist` blocks the merge and rebuilding stays the author's job.
 
 That check is a byte comparison against a bundler, and it only holds while its inputs are pinned. `package-lock.json` pins the dependency graph and `.nvmrc` pins the Node version, which the local build and the CI job read from the same file. Building on another version can produce a difference that has nothing to do with the change.
 
@@ -153,4 +153,4 @@ Significant design choices are documented as ADRs in [`docs/adr/`](docs/adr/). A
 3. Fill in the PR template completely
 4. CI must pass before merging
 
-Branch protection on `main` requires only `test` and `chart`. `lint`, `release-config`, `image` and `site` report their result and cannot block a merge, and `.github/workflows/dependabot-automerge.yaml` merges any minor or patch Dependabot update once the required checks pass, so an npm bump can land without `site` having compared the committed `dist` against a fresh build.
+The `main` ruleset requires the single `ci-gate` check, which passes only when every CI job passes, so `test`, `lint`, `site`, `release-config`, `chart`, `image`, zizmor, CodeQL and the PR title check all block a merge. `.github/workflows/dependabot-automerge.yaml` merges any minor or patch Dependabot update once `ci-gate` passes.

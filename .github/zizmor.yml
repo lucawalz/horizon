@@ -1,0 +1,4 @@
+rules:
+  dangerous-triggers:
+    ignore:
+      - needs-info.yaml

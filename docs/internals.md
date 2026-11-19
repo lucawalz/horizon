@@ -121,7 +121,7 @@ The image is distroless and runs as uid 65532. The archive binaries and the imag
 
 ## Support
 
-Bug reports, feature requests and questions all go to the [issue tracker](https://github.com/lucawalz/horizon/issues). Two templates are offered, [bug report](../.github/ISSUE_TEMPLATE/bug_report.md) and [feature request](../.github/ISSUE_TEMPLATE/feature_request.md), and filling one in saves a round trip. There is no chat room and no mailing list.
+Bug reports, feature requests and questions all go to the [issue tracker](https://github.com/lucawalz/horizon/issues). The tracker offers a bug report form and a feature request form, and filling one in saves a round trip. There is no chat room and no mailing list.
 
 A refusal from the in-cluster interface, `401`, `403` or `501`, is decoded in [docs/serving-the-interface.md](serving-the-interface.md#reading-a-refusal).
 

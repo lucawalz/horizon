@@ -12,8 +12,16 @@ No secret is stored in this repository. Configuration examples use placeholders.
 
 ## Reporting a vulnerability
 
-Report a suspected vulnerability privately through the "Report a vulnerability" form under the repository's Security tab, rather than opening a public issue. A maintainer will respond there.
+Report a suspected vulnerability privately through the "Report a vulnerability" form in the repository's Security tab, at `https://github.com/lucawalz/horizon/security/advisories/new`. Do not open a public issue, pull request or discussion for a suspected vulnerability.
+
+A useful report names the affected version or commit, describes the impact, and includes steps or a proof of concept that reproduce the problem.
+
+## Response
+
+- Acknowledgement within 7 days of the report.
+- Coordinated disclosure within 90 days of the report, earlier when a fix ships sooner.
+- The reporter is credited in the published advisory unless they ask otherwise.
 
 ## Supported versions
 
-Fixes land on `main` and reach consumers in the next release. Only the latest release line, currently `0.12.x`, receives them, and the floating `0` and `0.12` image tags move with it. Earlier tags are not backported.
+Fixes land on `main` and reach consumers in the next release. Only the latest release line receives them, and the floating major and minor image tags, such as `0` and `0.12`, move with it. Earlier tags are not backported.

@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
@@ -33,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: make adr-check
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
@@ -44,6 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: internal/web/site/.nvmrc
@@ -55,6 +61,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
@@ -65,6 +73,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
       - run: make chart-lint
 
@@ -72,21 +82,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - run: make image
         env:
           VERSION: ${{ github.sha }}
 
-  notify:
-    needs: [test, lint, site, release-config, chart, image]
-    if: failure() && github.event.pull_request.user.login == 'dependabot[bot]'
-    runs-on: ubuntu-latest
+  zizmor:
+    uses: lucawalz/.github/.github/workflows/zizmor.yml@512d402b682a017ae2629ee41f794686a8d1468c # v0.1.0
     permissions:
-      pull-requests: write
+      contents: read
+
+  pr-title:
+    if: github.event_name == 'pull_request'
+    uses: lucawalz/.github/.github/workflows/pr-title.yml@512d402b682a017ae2629ee41f794686a8d1468c # v0.1.0
+    permissions:
+      contents: read
+      pull-requests: read
+
+  codeql:
+    uses: lucawalz/.github/.github/workflows/codeql.yml@512d402b682a017ae2629ee41f794686a8d1468c # v0.1.0
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      languages: go,javascript-typescript,actions
+
+  ci-gate:
+    if: always()
+    needs: [test, lint, site, release-config, chart, image, zizmor, pr-title, codeql]
+    runs-on: ubuntu-latest
+    permissions: {}
     steps:
-      - run: |
-          gh pr edit "$PR_URL" --add-assignee lucawalz
-          gh pr comment "$PR_URL" --edit-last --create-if-none --body "Dependabot update failed CI - manual review required."
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}
+          allowed-skips: pr-title

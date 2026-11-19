@@ -1,0 +1,19 @@
+name: needs-info
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "41 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  needs-info:
+    uses: lucawalz/.github/.github/workflows/needs-info.yml@512d402b682a017ae2629ee41f794686a8d1468c # v0.1.0
+    permissions:
+      contents: read
+      issues: write
