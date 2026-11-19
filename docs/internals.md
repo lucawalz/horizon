@@ -115,7 +115,7 @@ Every request has to carry a signed JWT, verified against the key set discovered
 
 ## Releases
 
-`charts/horizon/Chart.yaml` is the source of truth for the released version; bumping it is a deliberate commit that precedes the tag. Pushing a `v*` tag builds the linux amd64 and arm64 image, packages the chart, and only then publishes the GitHub release, in that order, so a published release always advertises an image and a chart that exist. See [ADR 0020](adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) for the full contract.
+release-please derives each version from the Conventional Commit PR titles merged since the last release and writes it into `charts/horizon/Chart.yaml` in its release PR. Merging that PR tags the release, GoReleaser attaches the archives to a draft release, the archives are attested, and the release is published. Publishing triggers the build of the linux amd64 and arm64 image and the chart push, so the image and the chart follow the release by the length of that run. See [ADR 0038](adr/0038-version-releases-from-conventional-commits-with-release-please.md) for the full contract.
 
 The image is distroless and runs as uid 65532. The archive binaries and the image binary are built with `-trimpath` and the same linker flags.
 

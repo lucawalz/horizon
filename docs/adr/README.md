@@ -23,7 +23,7 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0017. Replace the CLI burst saga with an in-cluster CapacityLease controller](0017-capacity-lease-controller-over-cli-saga.md) (accepted)
 - [0018. Redesign the provider seam around instance lifecycle and capabilities](0018-provider-seam-around-instance-lifecycle.md) (accepted)
 - [0019. Replace the terminal interface with a web interface and printer columns](0019-replace-terminal-interface-with-web-and-printer-columns.md) (superseded by 0025)
-- [0020. Make Chart.yaml the source of truth for the release version](0020-chart-yaml-as-the-release-version-source-of-truth.md) (accepted)
+- [0020. Make Chart.yaml the source of truth for the release version](0020-chart-yaml-as-the-release-version-source-of-truth.md) (superseded by 0038)
 - [0021. Guarantee teardown with a node-side dead man's switch on two clocks](0021-node-side-dead-mans-switch-on-two-clocks.md) (accepted)
 - [0022. Generate cloud-init rather than build a node image](0022-generate-cloud-init-rather-than-build-images.md) (accepted)
 - [0023. Observe the armed watchdog from the control plane](0023-observe-the-armed-watchdog-from-the-control-plane.md) (accepted)
@@ -41,3 +41,4 @@ The arc runs from a Terraform driver, through a Cluster API operator, to a stand
 - [0035. Replicate a workload as a lease-owned copy](0035-replicate-a-workload-as-a-lease-owned-copy.md) (accepted)
 - [0036. Edit and delete a provider config, behind a controller finalizer rather than a handler check](0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md) (accepted)
 - [0037. Delete a node object with the machine it names](0037-delete-a-node-object-with-the-machine-it-names.md) (accepted)
+- [0038. Version releases from Conventional Commits with release-please](0038-version-releases-from-conventional-commits-with-release-please.md) (accepted)

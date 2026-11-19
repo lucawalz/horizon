@@ -50,7 +50,7 @@ docs/adr/           architecture decision records
 
 ## Testing
 
-`make verify` runs every gate CI runs except the image build, in ascending cost, and is the command to run before opening a PR and before tagging a release:
+`make verify` runs every gate CI runs except the image build, in ascending cost, and is the command to run before opening a PR:
 
 ```bash
 make verify
@@ -114,7 +114,6 @@ Format: `<type>/<description>`
 | `feat/` | `feature/` | New features | `feat/orphan-collector-sweep` |
 | `fix/` | `bugfix/` | Bug fixes | `fix/lease-finalizer-ordering` |
 | `hotfix/` | - | Urgent fixes | `hotfix/lease-teardown-failure` |
-| `release/` | - | Release preparation, the Chart.yaml version bump | `release/v0.2.0` |
 | `chore/` | - | Non-code tasks (deps, docs) | `chore/update-dependencies` |
 
 Rules: lowercase letters, numbers, and hyphens only, with no uppercase, underscores, spaces, or consecutive hyphens.
@@ -130,9 +129,7 @@ horizon follows [Conventional Commits](https://www.conventionalcommits.org/).
 - No period at end of subject line
 - Subject line only, no body, no bullet points
 
-**Allowed types**: `feat` `fix` `chore` `ci` `docs` `refactor` `perf` `test` `build` `release`
-
-`release` is reserved for the chart version bump that precedes a tag, which [ADR 0020](docs/adr/0020-chart-yaml-as-the-release-version-source-of-truth.md) makes part of the release contract.
+**Allowed types**: `feat` `fix` `chore` `ci` `docs` `refactor` `perf` `test` `build`
 
 **Examples**:
 
@@ -141,6 +138,12 @@ feat(controller): collect orphaned nodes and expired provider instances
 fix(hetzner): name the crd image selector field in create errors
 chore(deps): bump k8s client-go to v0.36
 ```
+
+## Releases
+
+Releases are cut by [release-please](https://github.com/googleapis/release-please). Pull requests are squash-merged with the PR title as the commit subject, so the Conventional Commit PR titles merged since the last release decide the next version: `fix` and `perf` give a patch release, `feat` a minor one, and while horizon is below 1.0.0 a breaking change marked with `!` also gives a minor one. Types left out of the changelog, such as `chore`, `docs` and `ci`, open no release on their own.
+
+Every merge to `main` keeps one release PR up to date. It carries the changelog and the new `version` and `appVersion` in `charts/horizon/Chart.yaml`. Merging it creates the tag, GoReleaser attaches the archives and checksums, the archives are attested, and the published release triggers `.github/workflows/publish.yml`, which pushes the image and the chart. Tags are never pushed and the chart version is never edited by hand. [ADR 0038](docs/adr/0038-version-releases-from-conventional-commits-with-release-please.md) records why.
 
 ## Architectural decisions
 

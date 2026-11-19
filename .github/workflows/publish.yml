@@ -1,9 +1,8 @@
-name: release
+name: publish
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -18,15 +17,14 @@ env:
   CHART_REGISTRY: oci://ghcr.io/lucawalz/charts
 
 jobs:
-  release:
+  publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
       - id: chart
         name: tag matches the chart version
@@ -35,7 +33,7 @@ jobs:
           case "$GITHUB_REF" in
             refs/tags/v*) ;;
             *)
-              echo "release runs only on a v-prefixed tag ref, got $GITHUB_REF" >&2
+              echo "publish runs only on a v-prefixed tag ref, got $GITHUB_REF" >&2
               exit 1
               ;;
           esac
@@ -84,16 +82,3 @@ jobs:
           helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin <<<"$REGISTRY_TOKEN"
           helm package charts/horizon
           helm push "horizon-${CHART_VERSION}.tgz" "$CHART_REGISTRY"
-
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - id: tools
-        run: echo "goreleaser=$(make -s print-GORELEASER_VERSION)" >> "$GITHUB_OUTPUT"
-      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          version: ${{ steps.tools.outputs.goreleaser }}
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

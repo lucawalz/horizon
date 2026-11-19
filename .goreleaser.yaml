@@ -35,28 +35,8 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
 
 changelog:
-  use: git
-  sort: asc
-  filters:
-    exclude:
-      - "^chore"
-      - "^docs"
-      - "^test"
-      - "^ci"
-      - "^build"
-      - "^refactor"
-      - "^release"
-      - "Merge pull request"
-      - "Merge branch"
-  groups:
-    - title: Features
-      regexp: '^feat'
-      order: 0
-    - title: Bug fixes
-      regexp: '^fix'
-      order: 1
-    - title: Performance
-      regexp: '^perf'
-      order: 2
-    - title: Others
-      order: 999
+  disable: true
+
+release:
+  draft: true
+  use_existing_draft: true
