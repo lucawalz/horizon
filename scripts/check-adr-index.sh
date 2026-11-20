@@ -10,7 +10,7 @@ record_status() {
   awk '
     /^## Status[[:space:]]*$/ { in_status = 1; next }
     in_status && NF { print; exit }
-  ' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/\[([0-9]+)\. [^]]*\]\([^)]*\)/\1/g'
+  ' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | tr '[:upper:]' '[:lower:]' | sed -E 's/\[([0-9]+)\. [^]]*\]\([^)]*\)/\1/g'
 }
 
 index_status() {
