@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-25
----
+# 32. Identify a lease's migrated workloads by lease UID
 
-# 0032. Identify a lease's migrated workloads by lease UID
+Date: 2026-08-25
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -12,6 +13,13 @@ date: 2026-08-25
 This is the same shape of defect ADR 0031 fixed one layer down, where a node carried the category label `horizon.dev/pool=reserved` and no owner, so a second lease could not tell its own capacity apart. A migrated workload carries a category and no owner, so a second lease cannot tell its own workloads apart.
 
 Three consequences followed. `restoreWorkloads` filtered on annotation presence alone, so one lease's teardown restored another lease's workloads while that lease was still Active, and the other lease never re-migrated because its `WorkloadMigrated` condition was already True. `migrateWorkloads` skipped an already-annotated workload but still reported it, so a lease wrote another lease's workloads into its own `status.migratedWorkloads`. And both eviction paths swept every non-DaemonSet pod in the namespace except those matched by a self-rolling workload the call itself touched, so one lease's migrate and restore evicted another lease's running pods.
+
+### Options considered
+
+- Record the owning lease inside the placement annotation's JSON. Rejected. Ownership then cannot be answered by a label selector, and it becomes undecidable when the annotation fails to parse, which is an already-handled error case, forcing a choice between abandoning a workload and restoring one that may belong to someone else.
+- Replace the `horizon.dev/burst-placement` value `"true"` with the lease UID. Rejected. It collapses the category and the identity into one label and loses the ability to ask whether a workload is on burst capacity at all, which is the same conflation ADR 0031 rejected on the node side.
+- Tolerate an unowned marker rather than adopt it, claiming it without writing an owner. Rejected, and adoption was taken instead. The accounting that first favoured tolerating it counted only the cost of the extra metadata write and treated the ambiguous state as unreachable in practice. Both halves were wrong once the readiness gate became ownership scoped. A claimed workload that carries no owner contributes no selector to that gate, so the lease reports its move done, never reaches ready, and waits until it expires; and any other lease's teardown is still free to restore it while this lease holds it, which is the defect this record exists to close. The state is also reachable from any lease that was Active and migrated when the operator rolled forward, not only from a release predating this record.
+- Leave the markers alone and have each lease consult the other leases it overlaps with. Rejected. It treats the symptom at teardown rather than fixing the marker both verbs key on, and it needs a lease lister keyed by workload namespace that does not exist.
 
 ## Decision
 
@@ -28,13 +36,6 @@ Eviction inverts from a skip list to a target list: each path evicts the pods of
 `ClassifyMigratability` gains the lease identity and a reason naming a workload held by another lease, so the conflict reaches `status.migrationWarnings` before a move is attempted rather than leaving a lease waiting on a readiness gate it can never satisfy.
 
 The asymmetry between the two verbs is deliberate and is the fail-safe direction for each. Migrate must never claim what it cannot prove it owns, because the cost is a false success. Restore must never abandon a workload no lease can claim, because the cost is a workload pinned to a dead lease's affinity, unrecoverable without hand editing, whereas a redundant restore is at worst an extra rollout.
-
-## Options considered
-
-- Record the owning lease inside the placement annotation's JSON. Rejected. Ownership then cannot be answered by a label selector, and it becomes undecidable when the annotation fails to parse, which is an already-handled error case, forcing a choice between abandoning a workload and restoring one that may belong to someone else.
-- Replace the `horizon.dev/burst-placement` value `"true"` with the lease UID. Rejected. It collapses the category and the identity into one label and loses the ability to ask whether a workload is on burst capacity at all, which is the same conflation ADR 0031 rejected on the node side.
-- Tolerate an unowned marker rather than adopt it, claiming it without writing an owner. Rejected, and adoption was taken instead. The accounting that first favoured tolerating it counted only the cost of the extra metadata write and treated the ambiguous state as unreachable in practice. Both halves were wrong once the readiness gate became ownership scoped. A claimed workload that carries no owner contributes no selector to that gate, so the lease reports its move done, never reaches ready, and waits until it expires; and any other lease's teardown is still free to restore it while this lease holds it, which is the defect this record exists to close. The state is also reachable from any lease that was Active and migrated when the operator rolled forward, not only from a release predating this record.
-- Leave the markers alone and have each lease consult the other leases it overlaps with. Rejected. It treats the symptom at teardown rather than fixing the marker both verbs key on, and it needs a lease lister keyed by workload namespace that does not exist.
 
 ## Consequences
 

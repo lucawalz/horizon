@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-03
----
+# 21. Guarantee teardown with a node-side dead man's switch on two clocks
 
-# 0021. Guarantee teardown with a node-side dead man's switch on two clocks
+Date: 2026-08-03
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -12,6 +13,22 @@ date: 2026-08-03
 Every teardown path horizon had before this change runs inside the operator. The finalizer, the confirmed delete, the launch and registration timeouts and the orphan collector are independent of each other in the sense [0017](0017-capacity-lease-controller-over-cli-saga.md) intended, and each closes a different race. They nonetheless share one dependency: all four need the operator process, the API server and the network at the same moment. That is the combination most likely to fail together, and it is the combination a leaked server usually implies. Adding a fifth cluster-side layer raises the chance that something notices in the ordinary case and leaves the class of failure untouched.
 
 The custom resources already carried the vocabulary for the missing layer without the mechanism behind it. `ProviderConfig.spec.watchdog` declares `renewInterval`, `slack` and `maxLifetime`, cross-validated against each other by the schema, and `CapacityLease.status.watchdogDeadline` is declared in the lease status. Nothing reads the first and nothing writes the second.
+
+### Evidence
+
+The design was proven on real hardware on 2026-08-03. A leased server deleted itself at its deadline with the operator scaled to zero, the cluster unreachable from the node, and the node's wall clock stepped back three hours. A second run started the agent with an invalid token: it failed the startup identity proof and exited non-zero at boot, rather than arming and reporting a guarantee it could not keep.
+
+### Options considered
+
+- Push the deadline to the node over SSH or a small API on the machine. Rejected: it requires the operator to be alive at exactly the moment it might not be, which is the failure this layer exists to survive, and it requires inbound reachability to a firewalled machine.
+- Rely on a provider-side TTL. It does not exist on Hetzner. AWS ends billing on an in-guest shutdown with `InstanceInitiatedShutdownBehavior` set to terminate, and Google Compute Engine enforces `maxRunDuration` with `instanceTerminationAction` set to delete; both are server-side and neither needs a credential on the machine. That three-tier asymmetry, recorded in [0018](0018-provider-seam-around-instance-lifecycle.md), is why this record exists for Hetzner alone.
+- Keep the guarantee cluster-side only. The status quo, and a single point of failure by construction. The measured baseline in [0017](0017-capacity-lease-controller-over-cli-saga.md) was a leaked server on five of five `SIGKILL` runs.
+- Ship a separate `horizon-agent` binary. Rejected: a second release artifact, a second version to keep in step with the operator, and duplicate copies of `FormatExpiry` and the Hetzner client. GoReleaser already publishes a static linux/amd64 tarball and a checksums file from the one build.
+- Embed the agent in user-data. Hetzner caps `user_data` at 32 KiB and the stripped static binary measures 35 MB, three orders of magnitude over.
+- Self-terminate by in-guest shutdown, as on AWS. Hetzner keeps billing a powered-off server, so this stops nothing.
+- Give the node a delete-capable Kubernetes credential so it can remove its own `Node` object. NodeRestriction refuses a kubelet delete on its own node, measured, and deregistering would not stop the bill in any case.
+- Run one clock instead of two. The wall clock alone is defeated by a clock step or an edited annotation. The monotonic clock alone cannot express a renewable lease, only a fixed maximum.
+- Fall back to a local `poweroff` after repeated delete failures. Rejected twice over: it does not stop Hetzner billing, and it kills the only process still in a position to fix the problem.
 
 ## Decision
 
@@ -31,22 +48,6 @@ The delete-capable token reaches the machine through `nodeCredentialSecretRef`, 
 
 Delivery is cloud-init first. The agent is fetched and started by the user-data that boots the machine, and is baked into the node image only once the semantics have settled and stopped changing.
 
-## Options considered
-
-- Push the deadline to the node over SSH or a small API on the machine. Rejected: it requires the operator to be alive at exactly the moment it might not be, which is the failure this layer exists to survive, and it requires inbound reachability to a firewalled machine.
-- Rely on a provider-side TTL. It does not exist on Hetzner. AWS ends billing on an in-guest shutdown with `InstanceInitiatedShutdownBehavior` set to terminate, and Google Compute Engine enforces `maxRunDuration` with `instanceTerminationAction` set to delete; both are server-side and neither needs a credential on the machine. That three-tier asymmetry, recorded in [0018](0018-provider-seam-around-instance-lifecycle.md), is why this record exists for Hetzner alone.
-- Keep the guarantee cluster-side only. The status quo, and a single point of failure by construction. The measured baseline in [0017](0017-capacity-lease-controller-over-cli-saga.md) was a leaked server on five of five `SIGKILL` runs.
-- Ship a separate `horizon-agent` binary. Rejected: a second release artifact, a second version to keep in step with the operator, and duplicate copies of `FormatExpiry` and the Hetzner client. GoReleaser already publishes a static linux/amd64 tarball and a checksums file from the one build.
-- Embed the agent in user-data. Hetzner caps `user_data` at 32 KiB and the stripped static binary measures 35 MB, three orders of magnitude over.
-- Self-terminate by in-guest shutdown, as on AWS. Hetzner keeps billing a powered-off server, so this stops nothing.
-- Give the node a delete-capable Kubernetes credential so it can remove its own `Node` object. NodeRestriction refuses a kubelet delete on its own node, measured, and deregistering would not stop the bill in any case.
-- Run one clock instead of two. The wall clock alone is defeated by a clock step or an edited annotation. The monotonic clock alone cannot express a renewable lease, only a fixed maximum.
-- Fall back to a local `poweroff` after repeated delete failures. Rejected twice over: it does not stop Hetzner billing, and it kills the only process still in a position to fix the problem.
-
-## Evidence
-
-The design was proven on real hardware on 2026-08-03. A leased server deleted itself at its deadline with the operator scaled to zero, the cluster unreachable from the node, and the node's wall clock stepped back three hours. A second run started the agent with an invalid token: it failed the startup identity proof and exited non-zero at boot, rather than arming and reporting a guarantee it could not keep.
-
 ## Consequences
 
 A delete-capable project token now lives on an ephemeral machine, so the dedicated-project mitigation recorded in [0018](0018-provider-seam-around-instance-lifecycle.md) becomes load-bearing rather than advisory. It is not in place today. The token is scoped to the shared project and is the same token the operator uses, which is the honest state of the deployment. The reasoning for accepting that for now is recorded rather than assumed: the project holds no other servers, `Delete` refuses any instance that does not carry `horizon.dev/managed-by=horizon`, and the node image is reproducible from a content hash, so rebuilding it elsewhere is cheap. Moving to a dedicated project means rebuilding the image there rather than transferring it, because Hetzner supports moving a snapshot between projects only as a Console action and exposes no API for it.
@@ -65,7 +66,7 @@ The watchdog's delete retries back off from 5 seconds, doubling, capped at a min
 
 This record extends [0018](0018-provider-seam-around-instance-lifecycle.md) and supersedes nothing. It adds the layer that record's capability reporting was designed to describe, and it implements the refusal that record specified.
 
-## Update 2026-08-24
+### Update 2026-08-24
 
 "The schema already caps a lease `duration` at 8h and `maxLifetime` at 24h, so the bound is consistent with the resources by construction rather than by convention" was wrong. The two caps are ceilings, not a relation, and the schema validates each field against its own bounds and never against the other. A `ProviderConfig` may set `maxLifetime` as low as 5m while a `CapacityLease` against it asks for 8h, and both are admitted. The lease then outlives the machine: the server destroys itself at the backstop while the cluster still reports the lease as live.
 

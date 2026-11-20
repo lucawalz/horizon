@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-25
----
+# 34. Target a set of namespaces rather than one
 
-# 0034. Target a set of namespaces rather than one
+Date: 2026-08-25
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -16,6 +17,16 @@ A workload reference in `status.migratedWorkloads` and `status.migrationWarnings
 Eviction accumulated the selectors of the workloads that do not roll themselves into one flat list and matched it against pod labels alone, with no namespace attached. Across a set that would let a common label such as `app=web` in one namespace govern eviction in another, silently and with nothing logged.
 
 Eviction was reached only when the pass that ran it had patched something, and it returned on the first eviction error. A PodDisruptionBudget that refuses one pod therefore left the rest of its namespace untouched, and on every retry each workload already carried the placement annotation, so nothing was patched and the eviction call was never reached again. A half-migrated namespace was permanent rather than transient.
+
+### Options considered
+
+- Keep `namespace` and add `namespaces` beside it. Rejected. Two fields expressing one idea need a rule deciding which wins, and every reader has to handle both shapes for the life of the API.
+- Match the selector against namespaces rather than workloads. Rejected. Namespace labels are usually owned by whoever provisions the namespace, not by whoever runs the workload, so a lease could not narrow itself to the workloads it actually wants without asking for a namespace relabel.
+- Apply the selector on the restore path as well, for symmetry. Rejected. A workload whose labels changed while it was on burst capacity would then never be restored, leaving it pinned to a lease that no longer exists, which is the failure ADR 0032 exists to prevent.
+- Keep the workload reference unqualified and rely on `status.migratedWorkloads` alone. Rejected. The duplicate key breaks the status write outright rather than merely reading ambiguously, so no amount of care elsewhere makes a second namespace expressible.
+- Let a failing namespace fail the whole migration. Rejected. It discards the progress the other namespaces made and gives an operator no way to tell a total failure from a partial one, while teardown still has to put back what did move.
+- Requeue rather than retry a refused eviction in place. Rejected as the sole mechanism, because the two eviction paths would then disagree about what a disruption budget costs. The reachability fix means a requeue does retry now; the capped in-pass window is what makes a transient refusal clear without waiting for one.
+- Spend the whole teardown grace on the in-pass retry. Rejected. The grace reaches 15m at the schema cap and is spent per namespace, so five namespaces refusing one pod each would hold the only reconcile worker for over an hour. Every other lease stops renewing its node watchdog for that long, which is enough for another lease's machines to fire their dead man's switch mid-lease.
 
 ## Decision
 
@@ -42,16 +53,6 @@ Eviction is gated on whether any pod of a claimed workload is not yet on one of 
 One retry window covers a whole `Migrate` call rather than each namespace in turn, and it is capped far below the teardown grace. The controller runs a single reconcile worker, so an in-pass wait freezes every other lease, including the node watchdog renewal that keeps their machines from self-destructing. The window therefore buys a quick second attempt and nothing more: a refusal that outlasts it is finished by the requeue that the reachability fix above makes work.
 
 The selector applies to migration and classification only. Restore and both gates read every workload in the namespaces they are given, because restore keys on the placement annotation and the owner label, and a workload whose labels changed while it sat on burst capacity must still be put back.
-
-## Options considered
-
-- Keep `namespace` and add `namespaces` beside it. Rejected. Two fields expressing one idea need a rule deciding which wins, and every reader has to handle both shapes for the life of the API.
-- Match the selector against namespaces rather than workloads. Rejected. Namespace labels are usually owned by whoever provisions the namespace, not by whoever runs the workload, so a lease could not narrow itself to the workloads it actually wants without asking for a namespace relabel.
-- Apply the selector on the restore path as well, for symmetry. Rejected. A workload whose labels changed while it was on burst capacity would then never be restored, leaving it pinned to a lease that no longer exists, which is the failure ADR 0032 exists to prevent.
-- Keep the workload reference unqualified and rely on `status.migratedWorkloads` alone. Rejected. The duplicate key breaks the status write outright rather than merely reading ambiguously, so no amount of care elsewhere makes a second namespace expressible.
-- Let a failing namespace fail the whole migration. Rejected. It discards the progress the other namespaces made and gives an operator no way to tell a total failure from a partial one, while teardown still has to put back what did move.
-- Requeue rather than retry a refused eviction in place. Rejected as the sole mechanism, because the two eviction paths would then disagree about what a disruption budget costs. The reachability fix means a requeue does retry now; the capped in-pass window is what makes a transient refusal clear without waiting for one.
-- Spend the whole teardown grace on the in-pass retry. Rejected. The grace reaches 15m at the schema cap and is spent per namespace, so five namespaces refusing one pod each would hold the only reconcile worker for over an hour. Every other lease stops renewing its node watchdog for that long, which is enough for another lease's machines to fire their dead man's switch mid-lease.
 
 ## Consequences
 

@@ -89,7 +89,7 @@ Karpenter and cluster-autoscaler size a cluster to its pending pods; horizon ins
 | [docs/cli-reference.md](docs/cli-reference.md) | Every command and every flag, with its default. |
 | [docs/serving-the-interface.md](docs/serving-the-interface.md) | Serving the interface in a cluster, granting an impersonated operator its rights, and reading a refusal. |
 | [charts/horizon/README.md](charts/horizon/README.md) | Every chart value, and why the custom resource definitions live in `crds/` rather than `templates/`. |
-| [docs/adr/](docs/adr/) | Thirty-eight architecture decision records in MADR format, superseded ones included. |
+| [docs/adr/](docs/adr/) | Thirty-eight architecture decision records in Nygard format, superseded ones included. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Repository layout, the test commands, the web interface bundle, and the branch and commit conventions. |
 | [SECURITY.md](SECURITY.md) | The credential model, how to report a vulnerability, and the supported release line. |
 | [docs/internals.md](docs/internals.md) | The project description, teardown enforcement, the capacity model, lease semantics, the web interface, and project housekeeping. |

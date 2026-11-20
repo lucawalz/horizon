@@ -1,13 +1,19 @@
----
-status: superseded by 0017
-date: 2026-06-15
----
+# 7. Add on-demand capacity through MachineDeployments in two modes
 
-# 0007. Add on-demand capacity through MachineDeployments in two modes
+Date: 2026-06-15
+
+## Status
+
+Superseded by [17. Replace the CLI burst saga with an in-cluster CapacityLease controller](0017-capacity-lease-controller-over-cli-saga.md)
 
 ## Context
 
 A burst needs extra worker capacity, and sometimes a whole extra cluster. Cluster API expresses both through the same primitive: a MachineDeployment is a scalable pool of machines, and a Cluster groups pools under a control plane. With CAPH and cluster-api-k3s as the substrate (see [0006](0006-cluster-api-operator-pivot.md)), horizon can drive capacity by reading and scaling those objects rather than provisioning nodes itself. Two situations differ enough to need separate handling: extending the existing home cluster, whose control plane horizon does not manage, and standing up a fresh, fully managed cluster.
+
+### Options considered
+
+- Separate code paths for nodes and clusters. Clearer at each call site, but it duplicates the MachineDeployment read, scale, and wait logic that both modes share.
+- One pool engine with mode selected by target, chosen. Mode A scales an existing pool under an external control plane, Mode B renders a managed cluster, and both reuse the same MachineDeployment operations.
 
 ## Decision
 
@@ -20,11 +26,6 @@ Mode B, on-demand clusters, creates a separate CAPI-managed cluster through `clu
 Workload placement is contract, not mechanism owned by horizon. Nodes are labeled `horizon.dev/pool=<value>` at join time by bedrock's KThreesConfigTemplate, and that label remains the contract for what counts as burst capacity at all; bedrock owns applying it. `burst` migrates a workload by rewriting node affinity onto the lease-uid label carried by the node granted to that lease, so a workload lands only on that lease's own nodes rather than any node the pool label marks as burst capacity. horizon labels a node with its lease identity at adoption, but the pool label itself stays bedrock's to write; horizon never touches it.
 
 Durable pools and clusters can be rendered into the bedrock git tree (manifest rendering plus a kustomization write) so Flux reconciles them as GitOps. horizon writes the tree but never commits or pushes it.
-
-## Options considered
-
-- Separate code paths for nodes and clusters. Clearer at each call site, but it duplicates the MachineDeployment read, scale, and wait logic that both modes share.
-- One pool engine with mode selected by target, chosen. Mode A scales an existing pool under an external control plane, Mode B renders a managed cluster, and both reuse the same MachineDeployment operations.
 
 ## Consequences
 

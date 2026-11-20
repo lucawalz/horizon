@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-02
----
+# 18. Redesign the provider seam around instance lifecycle and capabilities
 
-# 0018. Redesign the provider seam around instance lifecycle and capabilities
+Date: 2026-08-02
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -20,6 +21,13 @@ AWS terminates an instance on an in-guest shutdown when `InstanceInitiatedShutdo
 Google Compute Engine enforces `maxRunDuration` with `instanceTerminationAction` set to delete, server-side, on ordinary instances. No agent and no credential are needed.
 
 The same requirement therefore costs nothing on one provider, a server-side deadline on another, and a security compromise on a third. That is a capability difference, not a cosmetic one, and an interface that cannot express it forces the controller to hard-code provider knowledge it was supposed to abstract.
+
+### Options considered
+
+- Keep the two-method interface and special-case the lease logic above it. Rejected: the controller would need to know which provider it was talking to in order to know how teardown is enforced, which is the coupling the seam exists to prevent.
+- Model the interface on Cluster API's infrastructure contract. Well specified and battle-tested, but it assumes the surrounding Cluster API object graph and its versioned contracts, which is disproportionate here.
+- Adopt a general multi-cloud provisioning library rather than writing adapters. Rejected because no maintained Go equivalent exists. The nearest candidate was archived in July 2025 with no successor, and the Go Cloud Development Kit covers storage and messaging but not compute. Every comparable project writes per-provider adapters, which is roughly two to four hundred lines each.
+- Report capabilities as documentation rather than as a value in the interface. Rejected: an unenforced capability is a comment, and the difference here has a security consequence that should fail closed.
 
 ## Decision
 
@@ -40,13 +48,6 @@ Hetzner is the first implementation, and is chosen first precisely because it is
 Configuration is a single `ProviderConfig` resource carrying mutually exclusive typed blocks, one per provider, with a discriminator field and a validation rule requiring exactly one to be set. Each block holds only what that provider needs: Hetzner takes a token reference, an image selector, SSH keys and a node-credential reference, while a provider that self-terminates without credentials would have no node-credential field at all. Credentials are always references to Secrets and never inline values.
 
 Karpenter's alternative, a separate resource per provider, exists to support providers shipped out of tree by other authors. That is not the situation here, and one resource with typed blocks is simpler to install and to validate. If out-of-tree providers ever matter, splitting the blocks into separate resources is a mechanical migration rather than a redesign.
-
-## Options considered
-
-- Keep the two-method interface and special-case the lease logic above it. Rejected: the controller would need to know which provider it was talking to in order to know how teardown is enforced, which is the coupling the seam exists to prevent.
-- Model the interface on Cluster API's infrastructure contract. Well specified and battle-tested, but it assumes the surrounding Cluster API object graph and its versioned contracts, which is disproportionate here.
-- Adopt a general multi-cloud provisioning library rather than writing adapters. Rejected because no maintained Go equivalent exists. The nearest candidate was archived in July 2025 with no successor, and the Go Cloud Development Kit covers storage and messaging but not compute. Every comparable project writes per-provider adapters, which is roughly two to four hundred lines each.
-- Report capabilities as documentation rather than as a value in the interface. Rejected: an unenforced capability is a comment, and the difference here has a security consequence that should fail closed.
 
 ## Consequences
 

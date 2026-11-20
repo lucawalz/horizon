@@ -1,10 +1,10 @@
----
-status: accepted
-date: 2026-08-22
-amended: 2026-08-24
----
+# 27. Let the web interface create and release leases, behind a typed writer and a cross-origin guard
 
-# 0027. Let the web interface create and release leases, behind a typed writer and a cross-origin guard
+Date: 2026-08-22
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -15,6 +15,19 @@ They gate the in-cluster serving mode, which does not exist. What does exist is 
 What loopback does introduce is the failure mode the three requirements were never about. Any page in the operator's browser can reach `http://127.0.0.1:8973`. A form post from a page on the public internet carries none of the attacker's credentials and does not need to: the request runs with whatever the local server already trusts, which here is the caller's kubeconfig. Reads are harmless. A create is a machine that costs money, and a delete is a lease released early.
 
 The other half of the context is the product claim. The project's thesis is that capacity is described rather than named, and until now the only way to exercise it was to write YAML. The `status.selection` stanza landed the same day and records what a policy chose, what it beat, how many candidates were offered, how many qualified and why the rest were rejected. None of it was reachable from the interface.
+
+### Options considered
+
+- Widen `Options.Client` to `client.Client`. Rejected. The read-only guarantee is currently enforced by the type system rather than by convention, and that is a deliberate design statement worth more than one saved field.
+- Take a `--read-only` flag instead of an optional writer. A flag is a runtime value an embedder cannot rely on, and the property that matters is that a process without write capability cannot acquire one.
+- A CSRF token minted by the server and embedded in the shell. It works, and it costs a token store, a rotation story and a second failure mode, to protect a surface that already knows every legitimate request is same-origin. The header and fetch metadata pair gives the same answer with no state.
+- Trust `Origin` alone. Rejected: it is absent on some same-origin requests, and treating an absent header as a pass is the direction that fails open.
+- Compare `Origin` against the request's own `Host`, with no anchor. That is what the first implementation did and it is bypassable by rebinding, as above. A comparison in which both sides come from the same request proves only that the request agrees with itself.
+- Permit an extra origin by flag or option, so the dev server can mutate. Rejected: a permanent switch whose only effect is to weaken the guard, in exchange for a convenience during development. The external origin above is not that switch. It replaces the anchor in a mode that has no loopback origin to begin with, rather than admitting a second origin beside one that already works, and no setting anywhere turns the guard off.
+- Read the origin from `X-Forwarded-Host` and `X-Forwarded-Proto` behind the proxy. Rejected: those headers are written by whatever last handled the request, so any workload that can route to the pod supplies its own anchor and the guard is back to comparing a request against itself.
+- Check `Sec-Fetch-Site` alone. Rejected: it is a modern-browser header, and a request from something that is not a browser carries none. Requiring the custom header as well means a non-browser client has to be deliberate.
+- Build the create form as an editor for the whole spec, with an update path. Rejected: `providerRef`, `region`, `size` and `requirements` are all immutable by CEL, so an edit form would be a form whose fields the apiserver refuses.
+- Offer a catalogue picker in the form, fed by `/api/machines`. It is the natural next step and it is not this step. A local dashboard holds no catalogue at all, so the picker would be empty in exactly the mode this interface runs in.
 
 ## Decision
 
@@ -76,19 +89,6 @@ The endpoint deletes the `CapacityLease`. The controller's finalizer turns that 
 
 The lease detail route carries `status.selection`: the strategy, the chosen type and its hourly rate, the runner-up, how many candidates were offered and how many qualified, and the tally of why the rest were rejected. A lease that named `spec.size` has none, because naming a type is not a policy decision, and that is rendered as a stated absence rather than an empty panel.
 
-## Options considered
-
-- Widen `Options.Client` to `client.Client`. Rejected. The read-only guarantee is currently enforced by the type system rather than by convention, and that is a deliberate design statement worth more than one saved field.
-- Take a `--read-only` flag instead of an optional writer. A flag is a runtime value an embedder cannot rely on, and the property that matters is that a process without write capability cannot acquire one.
-- A CSRF token minted by the server and embedded in the shell. It works, and it costs a token store, a rotation story and a second failure mode, to protect a surface that already knows every legitimate request is same-origin. The header and fetch metadata pair gives the same answer with no state.
-- Trust `Origin` alone. Rejected: it is absent on some same-origin requests, and treating an absent header as a pass is the direction that fails open.
-- Compare `Origin` against the request's own `Host`, with no anchor. That is what the first implementation did and it is bypassable by rebinding, as above. A comparison in which both sides come from the same request proves only that the request agrees with itself.
-- Permit an extra origin by flag or option, so the dev server can mutate. Rejected: a permanent switch whose only effect is to weaken the guard, in exchange for a convenience during development. The external origin above is not that switch. It replaces the anchor in a mode that has no loopback origin to begin with, rather than admitting a second origin beside one that already works, and no setting anywhere turns the guard off.
-- Read the origin from `X-Forwarded-Host` and `X-Forwarded-Proto` behind the proxy. Rejected: those headers are written by whatever last handled the request, so any workload that can route to the pod supplies its own anchor and the guard is back to comparing a request against itself.
-- Check `Sec-Fetch-Site` alone. Rejected: it is a modern-browser header, and a request from something that is not a browser carries none. Requiring the custom header as well means a non-browser client has to be deliberate.
-- Build the create form as an editor for the whole spec, with an update path. Rejected: `providerRef`, `region`, `size` and `requirements` are all immutable by CEL, so an edit form would be a form whose fields the apiserver refuses.
-- Offer a catalogue picker in the form, fed by `/api/machines`. It is the natural next step and it is not this step. A local dashboard holds no catalogue at all, so the picker would be empty in exactly the mode this interface runs in.
-
 ## Consequences
 
 `horizon dashboard` is no longer read-only, and the README, the command help and the repository map say so. The interface can now spend money, which it could not before, and the mitigation is the one that was already there: it binds loopback, it authenticates as the caller, and the apiserver applies the same RBAC it applies to `kubectl`.
@@ -105,11 +105,11 @@ The header name is written once in Go and once in TypeScript, and a bundle that 
 
 A lease name that no object could carry is refused locally with `400` rather than forwarded. Client-go rejects such a name before it builds a request, and that error carries no API status, so it previously became a `502` and an error log for what is the caller's typo. The same rule applies to the read route, which had the same shape.
 
-## Update 2026-08-24
+### Update 2026-08-24
 
 "The form carries no catalogue, because a local dashboard holds none" and "a local dashboard holds no catalogue at all" were both accurate the day this record was written: `horizon dashboard` was the only process serving the interface, and the catalogue lived in the controller's memory, reachable by nothing else. [0028](0028-serve-the-interface-in-cluster-behind-a-verified-token-and-impersonation.md) added `horizon serve` afterward and wired it to the same absent catalogue as `horizon dashboard`, without this record being revisited. Both statements above therefore now apply to `horizon serve` as much as to `horizon dashboard`, and they hold regardless of where either process runs: the catalogue is held in the controller's own memory, behind a mutex, with no ConfigMap, Secret or other surface any other process can read. Making the Machines route work needs the catalogue published somewhere a reader outside the controller can reach, which is a separate piece of work.
 
-## Update 2026-08-24, the writer seam widens by one typed verb
+### Update 2026-08-24, the writer seam widens by one typed verb
 
 `LeaseWriter` was `Create` and `Delete` and nothing else, and the property recorded above rests on exactly that: an embedder that supplies only a reader cannot be made to write. Extending a running lease needs a third verb, and the shape of that verb is what decides whether the property survives.
 
@@ -131,12 +131,12 @@ The lease detail route carries `backstopAt`, the earliest lifetime backstop latc
 
 The documented user role in `docs/serving-the-interface.md` gains `patch` on `capacityleases`. Without it an in-cluster interface serving a user bound to that role answers the apiserver's own `403` to an extension, naming the user, the resource and the missing verb, which is legible but is a refusal nobody intended.
 
-## Update 2026-08-25, the writer reaches further than this record claims
+### Update 2026-08-25, the writer reaches further than this record claims
 
 "It cannot be made to move any other field of a `CapacityLease`, to touch any other kind of object, or to write to a lease's status" is true of `Extend` and false of the other two verbs. `Create` and `Delete` take a bare `client.Object`, so either one will create or delete any object the caller's RBAC reaches, a `ProviderConfig` or a Secret included. What holds the property today is that the two handlers behind those verbs pass a lease, which is a fact about two call sites rather than about the type, and a reader of this record would reasonably have believed otherwise.
 
 [0033](0033-create-a-provider-config-from-the-interface.md) found this while deciding how the interface should create a `ProviderConfig`, and added a second seam whose single method takes the object itself rather than a `client.Object`, so that seam does carry the guarantee this one describes. `LeaseWriter` is unchanged and the statement above stands corrected rather than restated: the guarantee is currently held by convention for two of its three verbs.
 
-## Update 2026-08-26, the catalogue lands
+### Update 2026-08-26, the catalogue lands
 
 The catalogue this record said a local dashboard holds none of is now published. [0029](0029-publish-provider-config-readiness-and-its-catalogue.md) writes the resolved instance types onto `ProviderConfig.status`, the separate piece of work the update above named and left undone. Both `horizon dashboard` and `horizon serve` can read that status without reaching into the controller's own memory, so the machine picker offered as an option and declined above for lack of a source to feed it now has one.

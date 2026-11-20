@@ -1,21 +1,18 @@
----
-status: superseded by 0016
-date: 2026-06-16
----
-
-# 0012. Retire scaling thresholds and rename the GitOps path
+# 12. Retire scaling thresholds and rename the GitOps path
 
 Superseded in part by [0016](0016-cluster-agnostic-tool-with-provider-seam.md): the `bedrock_path` to `repo_path` rename below did not survive the field's later removal, but the threshold retirement stands.
+
+Date: 2026-06-16
+
+## Status
+
+Superseded by [16. Make horizon a cluster-agnostic tool with a provider seam](0016-cluster-agnostic-tool-with-provider-seam.md)
 
 ## Context
 
 The `thresholds` config block (`burst`, `scale_down`, `window`, `cooldown_minutes`, `max_burst_nodes`) is a remnant of the watch-daemon scaling loop retired in [0008](0008-retire-watch-daemon-and-wireguard.md). The in-cluster cluster-autoscaler owns scaling now, so only `burst` was still read, and only to color the dashboard CPU and memory gauges. The setup wizard also wrote zeroed thresholds, which would have mis-colored every gauge. Separately, the `bedrock_path` field name assumed the companion repo is named bedrock, at odds with horizon being provider-agnostic.
 
-## Decision
-
-The entire threshold config is removed. The dashboard colors the CPU and memory gauges from fixed usage bands, yellow at 75 percent and red at 90 percent, rather than from any configured score. The `bedrock_path` field is renamed to `repo_path`, and a non-empty retired `bedrock_path` is rejected at load time alongside `infra_path`.
-
-## Options considered
+### Options considered
 
 - Keep the thresholds but seed sane defaults so the wizard stops writing zeros. It preserves the schema, but it keeps a block no operator tunes and that no longer governs scaling.
 - Remove the thresholds entirely, chosen. The config shrinks to what horizon actually reads.
@@ -23,6 +20,10 @@ The entire threshold config is removed. The dashboard colors the CPU and memory 
 - Color the gauges from fixed usage bands, chosen. The display cue is consistent and needs no config.
 - Leave the `bedrock_path` name. It matches the homelab instance, but it bakes a specific companion repo into a provider-agnostic tool.
 - Rename to a generic `repo_path`, chosen. The field names the GitOps work tree without naming a particular repository.
+
+## Decision
+
+The entire threshold config is removed. The dashboard colors the CPU and memory gauges from fixed usage bands, yellow at 75 percent and red at 90 percent, rather than from any configured score. The `bedrock_path` field is renamed to `repo_path`, and a non-empty retired `bedrock_path` is rejected at load time alongside `infra_path`.
 
 ## Consequences
 

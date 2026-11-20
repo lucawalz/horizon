@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-26
----
+# 36. Edit and delete a provider config, behind a controller finalizer rather than a handler check
 
-# 0036. Edit and delete a provider config, behind a controller finalizer rather than a handler check
+Date: 2026-08-26
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -12,6 +13,19 @@ date: 2026-08-26
 Deleting is the dangerous one, and it is dangerous in a way no seam can fix. Horizon tears a lease down with the credentials the configuration resolves. Delete the configuration while a lease still names it and the controller has nothing to call the provider with: the machines keep running and keep billing until the node-side dead man's switch of [0021](0021-node-side-dead-mans-switch-on-two-clocks.md) fires, which is the mechanism that exists precisely so that a broken control plane costs an hour rather than a month. That is the worst outcome this system has, and the interface was one `kubectl delete` away from it long before this record.
 
 Editing is the one that reads dangerous and is not. It once was: lowering `maxLifetime` moved every derived deadline, and a deadline in the past spends the whole teardown budget before teardown starts. The fix latched the backstop per instance at creation, and `latchBackstop` still returns early the moment an instance records one, so no later edit moves a machine that is already running in either direction. Blocking edits for that reason would now be guarding against a hazard the controller has already closed, at the cost of the one operation an operator most needs during a long lease, which is rotating a credential that has been compromised or has expired.
+
+### Options considered
+
+- Refuse the delete in the web handler and add no finalizer. Rejected. It protects nothing against `kubectl`, and this project's own rules call that patching the symptom. The handler check that remains is about the honesty of the response, not about the guarantee.
+- Refuse the delete at the apiserver with a validating webhook. It would hold for every client, and it costs a webhook server, a certificate, a failure policy and a new way for the cluster to break when horizon is down. A finalizer is already how the lease teardown guarantee is expressed here, and it needs none of that.
+- Refuse only while an Active lease is bound. Rejected. A lease being torn down is the one that most needs the credentials, and a lease not yet accepted will need them within a reconcile.
+- Block edits while any lease is bound, symmetrically with delete. Rejected. It would make credential rotation impossible for the length of a lease, which is the operational need this verb exists for, and the hazard it would be guarding against was closed when the backstop was latched per instance.
+- Add a general `Update` or `Patch` verb to the seam. Rejected for the third time, and for the reason [0027](0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) and [0033](0033-create-a-provider-config-from-the-interface.md) both gave: one verb of that shape hands every holder of the seam the ability to move any field of any object the caller's RBAC reaches.
+- `PATCH` with a partial body, so a form could send only what changed. Rejected. A form that renders every field cannot tell an emptied field from an untouched one, so a partial body would make clearing a reference impossible through the only client this endpoint has.
+- Take the optimistic lock in the handler, by reading the configuration and passing the revision to the writer. Rejected. That is the shape the extension endpoint had before it was corrected, and it holds only for the callers that remember to do it.
+- Carry the spec on a provider config detail route instead of on the summary. The machines route already answers with every configuration and the interface already polls it, so a second route would be a second thing to keep in step.
+- Reshape an unrepresentable configuration into what the form can hold, and submit that. Rejected. It is a silent rewrite of fields the operator never saw, in the one operation where the whole body is authoritative.
+- Round a watchdog lifetime into whole minutes for the form. Rejected for the same reason: it changes a stored value as a side effect of opening an edit form.
 
 ## Decision
 
@@ -40,19 +54,6 @@ The field is null where the stored configuration holds something that shape cann
 **The lease summary names the configuration it is bound to.** `leaseSummary` gains `providerRef`, so the edit page lists the bound leases from the lease list it can already read, and shows the consequence before either control is used rather than after the apiserver refuses.
 
 **The user-facing role gains `patch` and `delete` on `providerconfigs`, and not `update`.** The replacement reaches the apiserver as a merge patch under a resourceVersion, so `update` is a verb nothing exercises, and granting it would widen the role past what the interface can do. That is the same shape as the `patch` on `capacityleases` that the extension needed.
-
-## Options considered
-
-- Refuse the delete in the web handler and add no finalizer. Rejected. It protects nothing against `kubectl`, and this project's own rules call that patching the symptom. The handler check that remains is about the honesty of the response, not about the guarantee.
-- Refuse the delete at the apiserver with a validating webhook. It would hold for every client, and it costs a webhook server, a certificate, a failure policy and a new way for the cluster to break when horizon is down. A finalizer is already how the lease teardown guarantee is expressed here, and it needs none of that.
-- Refuse only while an Active lease is bound. Rejected. A lease being torn down is the one that most needs the credentials, and a lease not yet accepted will need them within a reconcile.
-- Block edits while any lease is bound, symmetrically with delete. Rejected. It would make credential rotation impossible for the length of a lease, which is the operational need this verb exists for, and the hazard it would be guarding against was closed when the backstop was latched per instance.
-- Add a general `Update` or `Patch` verb to the seam. Rejected for the third time, and for the reason [0027](0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) and [0033](0033-create-a-provider-config-from-the-interface.md) both gave: one verb of that shape hands every holder of the seam the ability to move any field of any object the caller's RBAC reaches.
-- `PATCH` with a partial body, so a form could send only what changed. Rejected. A form that renders every field cannot tell an emptied field from an untouched one, so a partial body would make clearing a reference impossible through the only client this endpoint has.
-- Take the optimistic lock in the handler, by reading the configuration and passing the revision to the writer. Rejected. That is the shape the extension endpoint had before it was corrected, and it holds only for the callers that remember to do it.
-- Carry the spec on a provider config detail route instead of on the summary. The machines route already answers with every configuration and the interface already polls it, so a second route would be a second thing to keep in step.
-- Reshape an unrepresentable configuration into what the form can hold, and submit that. Rejected. It is a silent rewrite of fields the operator never saw, in the one operation where the whole body is authoritative.
-- Round a watchdog lifetime into whole minutes for the form. Rejected for the same reason: it changes a stored value as a side effect of opening an edit form.
 
 ## Consequences
 

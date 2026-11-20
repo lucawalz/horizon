@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-02
----
+# 17. Replace the CLI burst saga with an in-cluster CapacityLease controller
 
-# 0017. Replace the CLI burst saga with an in-cluster CapacityLease controller
+Date: 2026-08-02
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -16,6 +17,13 @@ This was measured before changing anything, against the real `core.Burst` and th
 The control result is the important one. The rollback is not missing and it is not wrong. It is cleanup that cannot survive the class of failure it exists to handle, which is a property of where it lives rather than of how it is written. No amount of care inside a linear function fixes it, because the function is not running when the failure happens.
 
 Two related defects share the same root. Nothing deletes the Kubernetes `Node` object when a server goes away, so scale-down strands node records; the workaround is a CronJob in bedrock that deletes any reserved node whose Ready condition is not true, which races a node that is still joining. And orchestration is reachable only through the terminal prompt, so there is no way to invoke a burst from a script, from CI, or from a test. Measuring the leak above required writing a throwaway `main` that calls `core.Burst` directly.
+
+### Options considered
+
+- Keep the saga and harden it. Persist progress to a file, or trap signals and unwind. Rejected: a signal handler does not run on `SIGKILL`, a state file is a third store that can disagree with both the cluster and the provider, and neither survives the machine going away. The measurement shows the failure is structural rather than a gap in coverage.
+- Implement Karpenter's `CloudProvider` interface and import it as a library. This yields the resource model, the lifecycle machine, the finalizer, the garbage collector and expiry without writing them. Rejected on two grounds: a Hetzner provider for Karpenter already exists, so the path is largely occupied, and Karpenter's core is demand-driven, bringing a scheduler, bin-packing, price-aware instance selection and consolidation that a duration-bounded lease does not need. The mechanisms are worth copying; the dependency is not.
+- Return to Cluster API, which models machines and their lifecycle properly. Rejected as already tried and retired. Its model assumes ownership of the cluster lifecycle including the control plane, and the surrounding weight of providers, contracts and management-cluster separation is disproportionate for adding capacity to a cluster that already exists.
+- Keep orchestration in the command line but add a headless invocation so it can at least be scripted and tested. Rejected as insufficient: it addresses the testability defect and leaves the leak untouched, since a scripted process can be killed exactly as an interactive one can.
 
 ## Decision
 
@@ -40,13 +48,6 @@ Saved workload placement moves out of process memory and onto the workloads them
 Orphan reconciliation absorbs the bedrock CronJob, which is then deleted. The reconciler deletes a `Node` when its owning lease is gone and every configured provider reports the instance absent, and never on the Ready condition, which removes the race against a joining node. Nothing records which provider owns a given `Node`, and by the time this path runs the lease that knew is already gone, so absence cannot be attributed to one provider and must be proven against all of them. Two consequences follow deliberately. With no provider configured there is no witness at all, so nothing is deleted. And a provider that cannot be built makes absence unprovable, so the `Node` survives and the work requeues. A stranded `Node` object costs nothing; deleting a live one because configuration briefly disappeared costs a great deal.
 
 Phase appears in status for readability and is never used as control flow. [0005](0005-resumable-phase-state-machine.md) already recorded that a phase state machine is the wrong shape for this problem, and that finding stands; a derived phase is a display field, not a resumption mechanism.
-
-## Options considered
-
-- Keep the saga and harden it. Persist progress to a file, or trap signals and unwind. Rejected: a signal handler does not run on `SIGKILL`, a state file is a third store that can disagree with both the cluster and the provider, and neither survives the machine going away. The measurement shows the failure is structural rather than a gap in coverage.
-- Implement Karpenter's `CloudProvider` interface and import it as a library. This yields the resource model, the lifecycle machine, the finalizer, the garbage collector and expiry without writing them. Rejected on two grounds: a Hetzner provider for Karpenter already exists, so the path is largely occupied, and Karpenter's core is demand-driven, bringing a scheduler, bin-packing, price-aware instance selection and consolidation that a duration-bounded lease does not need. The mechanisms are worth copying; the dependency is not.
-- Return to Cluster API, which models machines and their lifecycle properly. Rejected as already tried and retired. Its model assumes ownership of the cluster lifecycle including the control plane, and the surrounding weight of providers, contracts and management-cluster separation is disproportionate for adding capacity to a cluster that already exists.
-- Keep orchestration in the command line but add a headless invocation so it can at least be scripted and tested. Rejected as insufficient: it addresses the testability defect and leaves the leak untouched, since a scripted process can be killed exactly as an interactive one can.
 
 ## Consequences
 

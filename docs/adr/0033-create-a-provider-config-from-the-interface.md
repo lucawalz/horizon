@@ -1,10 +1,10 @@
----
-status: accepted
-date: 2026-08-25
-amended: 2026-08-26
----
+# 33. Create a provider config from the interface, behind a second narrow writer
 
-# 0033. Create a provider config from the interface, behind a second narrow writer
+Date: 2026-08-25
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -13,6 +13,16 @@ Configuring a provider was `kubectl` only. The interface listed every `ProviderC
 [0027](0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) built the write half of the interface and stated the property the shape rests on: an embedder that supplies only a reader cannot be made to write, and what a process holding the writer may do is legible in the type of the writer. Adding a second write surface is a test of that property rather than an application of it, because the obvious way to add one is to reuse the seam that already exists.
 
 The seam does not hold as tightly as that record claims. `LeaseWriter.Create` and `LeaseWriter.Delete` take a bare `client.Object`, so either one will create or delete a `ProviderConfig`, a Secret, or anything else the caller's RBAC reaches. Only `Extend` is pinned to a `CapacityLease` by its signature. What keeps the seam honest today is that the two handlers behind those verbs happen to pass a lease, which is a property of two call sites rather than of the type. Reusing `LeaseWriter` for provider configs would have made that gap load-bearing and left the record describing a guarantee the code does not give.
+
+### Options considered
+
+- Reuse `LeaseWriter.Create`, which already accepts any object. Rejected. It works today and it is the loophole above, so using it would turn a gap into a dependency and leave the seam unable to say what a process holding it may do.
+- Add a general `Update` or `Patch` verb and build an edit form. Rejected for the same reason [0027](0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) rejected a general update: one verb of that shape hands every holder of a writer the ability to move any field of any object the caller's RBAC reaches.
+- Create the referenced Secrets from the form. Rejected. It needs `create secrets` in the controller's own namespace, which is the largest grant the interface would have asked for, to save a `kubectl create secret`.
+- Render the cloud-init document over HTTP so the form can produce it. Rejected. It is a fifth write-shaped surface outside the scope of this change, and the document is pasted or referenced instead.
+- Restate the watchdog rules in the browser so a refusal never reaches the operator. Rejected. Two of the three compare fields against each other, no native control expresses them, and a client-side copy of a CEL rule drifts from the rule it copies.
+- Add a provider config detail route to carry the reason. Rejected. The machines route already carries a summary per configuration and the form already polls it, so a second route would have been a second thing to keep in step for one field.
+- Leave the operator role as copy-paste YAML and only add the verb to it. Rejected. Nothing renders it, nothing lints it, and its verbs had already drifted once from what the interface can do.
 
 ## Decision
 
@@ -30,16 +40,6 @@ The seam does not hold as tightly as that record claims. `LeaseWriter.Create` an
 
 **The user-facing role becomes a chart manifest.** It existed only as YAML pasted inside prose in `docs/serving-the-interface.md`, which is how it came to be a role nothing rendered and nothing checked. The chart renders it as `templates/interface-operator-clusterrole.yaml` under the same `ui.rbac.create` gate as the interface's own role, it gains `create` on `providerconfigs`, and the documentation links the manifest instead of restating it. It is named after the release with `-interface-operator` appended rather than `horizon-lease-operator`, because the role reaches past leases now and the old name would have said otherwise. No binding is rendered: the identities an install should trust are not knowable at packaging time, so the role grants nothing until an adopter binds it.
 
-## Options considered
-
-- Reuse `LeaseWriter.Create`, which already accepts any object. Rejected. It works today and it is the loophole above, so using it would turn a gap into a dependency and leave the seam unable to say what a process holding it may do.
-- Add a general `Update` or `Patch` verb and build an edit form. Rejected for the same reason [0027](0027-mutating-web-interface-behind-a-typed-writer-and-a-cross-origin-guard.md) rejected a general update: one verb of that shape hands every holder of a writer the ability to move any field of any object the caller's RBAC reaches.
-- Create the referenced Secrets from the form. Rejected. It needs `create secrets` in the controller's own namespace, which is the largest grant the interface would have asked for, to save a `kubectl create secret`.
-- Render the cloud-init document over HTTP so the form can produce it. Rejected. It is a fifth write-shaped surface outside the scope of this change, and the document is pasted or referenced instead.
-- Restate the watchdog rules in the browser so a refusal never reaches the operator. Rejected. Two of the three compare fields against each other, no native control expresses them, and a client-side copy of a CEL rule drifts from the rule it copies.
-- Add a provider config detail route to carry the reason. Rejected. The machines route already carries a summary per configuration and the form already polls it, so a second route would have been a second thing to keep in step for one field.
-- Leave the operator role as copy-paste YAML and only add the verb to it. Rejected. Nothing renders it, nothing lints it, and its verbs had already drifted once from what the interface can do.
-
 ## Consequences
 
 The interface can now configure a provider, which was the last step of the eight in `docs/usage.md` that had no path through the browser. The Secrets it points at are still made with `kubectl`, and that is deliberate rather than unfinished.
@@ -52,7 +52,7 @@ An adopter who applied the role from the old documentation has an unmanaged `hor
 
 The form offers a single provider type and an image named rather than selected, so a configuration that needs `imageSelector`, a numeric image id, or a provider horizon does not yet support is still written with `kubectl`. Every one of those is refused by the apiserver with its own message when the form cannot express it, rather than accepted and silently reshaped.
 
-## Update 2026-08-26, the detail route is added for what the summary cannot carry
+### Update 2026-08-26, the detail route is added for what the summary cannot carry
 
 "Add a provider config detail route to carry the reason. Rejected" was the right answer to the question it was asked. The reason and the message of `Ready` are one field each, the machines route already carries a summary per configuration, and a second route for them would have been a second thing to keep in step.
 
@@ -68,7 +68,7 @@ The user-facing role is unchanged. It already granted `get`, `list` and `watch` 
 
 The interface's route for creating a configuration moves from `/configs/new` to `/new-config`. The detail page is at `/configs/{name}`, so leaving the create page inside that prefix would have made `new` a name no configuration could be viewed under, and the leases half of the interface already keeps its create page out of the resource prefix at `/new`.
 
-## Update 2026-08-26, the seam gains the two verbs this record declined
+### Update 2026-08-26, the seam gains the two verbs this record declined
 
 "Create only. No edit, no delete" held until the two acts it declined together were separated. [0036](0036-edit-and-delete-a-provider-config-behind-a-controller-finalizer.md) adds `Replace` and `Delete` to `ProviderConfigWriter`, both naming what they reach in the signature rather than taking a `client.Object`, so the property this record established is unchanged. The general `Update` question stays answered the same way and no verb of that shape was added.
 

@@ -1,15 +1,22 @@
----
-status: accepted
-date: 2026-06-19
----
+# 14. Narrow horizon to an on-demand pool scaler
 
-# 0014. Narrow horizon to an on-demand pool scaler
+Date: 2026-06-19
+
+## Status
+
+Accepted
 
 ## Context
 
 horizon grew a cluster lifecycle alongside its pool scaling. [0010](0010-provider-agnostic-cluster-create-via-clusterclass.md) added a `cluster create` path that rendered a topology Cluster from a ClusterClass, with a clusterctl flavor fallback, plus `cluster list` and `cluster delete` to round out the lifecycle. In practice the home cluster is declared once and lives in the bedrock git tree, where Flux reconciles it. Standing a cluster up from the CLI duplicated that responsibility, and the two-mode capacity model that defines horizon, the reserved and elastic worker pools on an existing cluster, never depended on it.
 
 The lifecycle surface also carried weight out of proportion to its use. It pulled a flavor processor, a topology builder, a variable encoder, a managed-cluster dashboard panel, and a set of setup-wizard fields for class defaults, none of which the scaling, burst, drain, status, or backup paths touch. Keeping it meant maintaining a second way to do what bedrock already does declaratively.
+
+### Options considered
+
+- Keep the cluster lifecycle in horizon. The status quo. It duplicates a responsibility bedrock already owns declaratively and carries a flavor processor, a topology builder, and a dashboard panel that the scaling paths never use.
+- Keep only `cluster list` and `cluster delete` as read and teardown helpers. Lighter than the full lifecycle, but it leaves a half-feature: listing and deleting clusters the CLI no longer creates, against objects Flux owns, with a dashboard panel to maintain for them.
+- Remove the lifecycle and route cluster creation through bedrock GitOps, chosen. horizon does one thing, scale pools on an existing cluster, and cluster declaration lives in one place, the git tree Flux reconciles.
 
 ## Decision
 
@@ -20,12 +27,6 @@ The pool paths stay whole: scale up and down, burst, drain, the status dashboard
 The ExternalControlPlane controller stays. The home control plane is externally managed, so Cluster API never marks it initialized on its own, and the controller latches that status so Hetzner workers bootstrap against it. Pool scaling depends on this; cluster creation did not introduce it and removing cluster creation does not retire it.
 
 Cluster creation moves to bedrock GitOps. A new or replacement cluster is declared in the bedrock tree and reconciled by Flux, the same path the permanent cluster already follows, rather than rendered from the horizon CLI.
-
-## Options considered
-
-- Keep the cluster lifecycle in horizon. The status quo. It duplicates a responsibility bedrock already owns declaratively and carries a flavor processor, a topology builder, and a dashboard panel that the scaling paths never use.
-- Keep only `cluster list` and `cluster delete` as read and teardown helpers. Lighter than the full lifecycle, but it leaves a half-feature: listing and deleting clusters the CLI no longer creates, against objects Flux owns, with a dashboard panel to maintain for them.
-- Remove the lifecycle and route cluster creation through bedrock GitOps, chosen. horizon does one thing, scale pools on an existing cluster, and cluster declaration lives in one place, the git tree Flux reconciles.
 
 ## Consequences
 

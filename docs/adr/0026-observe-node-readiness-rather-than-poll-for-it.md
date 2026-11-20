@@ -1,9 +1,12 @@
----
-status: accepted
-date: 2026-08-22
----
+# 26. Observe node readiness rather than poll for it
 
-# 0026. Observe node readiness rather than poll for it
+Date: 2026-08-22
+
+## Status
+
+Accepted
+
+None. This extends [0017](0017-capacity-lease-controller-over-cli-saga.md), which stays `accepted`. It changes how the controller observes node readiness and how it reports the wait; it replaces no part of the lease lifecycle that record defines.
 
 ## Context
 
@@ -12,6 +15,15 @@ The lease controller registered for `CapacityLease` objects only. `SetupWithMana
 That has a measured consequence, and the way it was found is the reason this record exists. The measurement campaign has thirty burst runs of time to ready. The distribution is bimodal, nineteen runs at 60 or 61 seconds and eleven at 90, 91 or 94, and every one of the thirty values lands within one second above a multiple of thirty. That bimodality was carried as a physical finding for two sessions, described as two populations of boot behaviour, before anyone checked the instrument that produced it. The check is one table. The Hetzner-side timings from the same artefacts are unimodal and not quantised at all: `initializing` at a median of 6 seconds, `starting` at 12, `running` at 22, each with a tight range. The gap from `running` to recorded ready is 34 to 45 seconds in the fast group and 62 to 69 seconds in the slow one, with nothing in between. A physical process that produces a thirty-second gap with no intermediate values, on an instrument whose grid is exactly thirty seconds, is the grid.
 
 The second symptom has the same cause. `reconcileNodes` already distinguished three waiting stages and discarded each one with a bare `continue`: the instance entry is not yet `Created`, so no server exists at the provider; the entry is `Created` but `matchNode` returns nil, so the server exists and no `Node` object has registered; a `Node` exists but is not Ready, so k3s joined and the kubelet has not come up. All three collapsed into a single `InstancesReady=False` with reason `WaitingForNodes` and the message `%d of %d nodes ready`. `nodeRegistrationTimeout` is fifteen minutes, and when it fires the lease jumps to `Degraded` with the machine already released. For those fifteen minutes the entire diagnostic surface was one unchanging count, and the operator could not tell a provider that had not created a server from a machine whose cloud-init had failed.
+
+### Options considered
+
+- Shrink `leasePollInterval`. Rejected: it trades API server load for resolution and leaves the reading a poll artefact at a finer grid. The bimodality would become less obvious without becoming less wrong.
+- Use `Owns(&corev1.Node{})` rather than `Watches`. A `Node` is created by its own kubelet, is cluster-scoped, and is adopted by a lease after the fact. There is no owner reference and there could not be one.
+- Match nodes in the watch by the adoption label alone, and skip the list. Rejected: the label is written during adoption, so the case the watch exists to catch, a node that has just registered, does not carry it.
+- Derive `ReadyAt` from the provider's creation timestamp plus a boot estimate. That is a model, not an observation, and it would reintroduce the same class of error the measurement exposed.
+- Drop the requeue once the watch exists. Rejected: the expiry deadline, the watchdog renewal and both stall timeouts run off the same requeue, and a watch that misses an event would leave a lease holding billable capacity with nothing scheduled to notice.
+- Recompute the published time to ready figures from the existing artefacts. Not possible. The artefacts record `readyAt` as the controller wrote it, so the quantisation is baked into the data rather than into the analysis.
 
 ## Decision
 
@@ -51,15 +63,6 @@ No printer column is added. A per-instance stage cannot be expressed in a printe
 
 `horizon_lease_ready_seconds` used a fifteen-second grid, which loses sub-thirty-second resolution a second time even once the poll grid is gone. The buckets are now 5, 10, 15, 20, 30, 45, 60, 75, 90, 120, 180, 300 and 600 seconds. The region the fix opens up is resolved, and the 75-second boundary is kept rather than dropped, because it is the one that separates the campaign's two observed modes at 60 and 90 seconds; a grid that merged them would have made the published result harder to compare against, not easier.
 
-## Options considered
-
-- Shrink `leasePollInterval`. Rejected: it trades API server load for resolution and leaves the reading a poll artefact at a finer grid. The bimodality would become less obvious without becoming less wrong.
-- Use `Owns(&corev1.Node{})` rather than `Watches`. A `Node` is created by its own kubelet, is cluster-scoped, and is adopted by a lease after the fact. There is no owner reference and there could not be one.
-- Match nodes in the watch by the adoption label alone, and skip the list. Rejected: the label is written during adoption, so the case the watch exists to catch, a node that has just registered, does not carry it.
-- Derive `ReadyAt` from the provider's creation timestamp plus a boot estimate. That is a model, not an observation, and it would reintroduce the same class of error the measurement exposed.
-- Drop the requeue once the watch exists. Rejected: the expiry deadline, the watchdog renewal and both stall timeouts run off the same requeue, and a watch that misses an event would leave a lease holding billable capacity with nothing scheduled to notice.
-- Recompute the published time to ready figures from the existing artefacts. Not possible. The artefacts record `readyAt` as the controller wrote it, so the quantisation is baked into the data rather than into the analysis.
-
 ## Consequences
 
 The published dataset stays as published. It was gathered under the poll and is quantised to thirty seconds, and this change does not retrospectively improve it. The defensible reading is that true time to ready lies in (30, 60] seconds for nineteen of thirty runs and in (60, 90] for eleven, and the instrument cannot say where inside those intervals. The medians and the null result on location are unaffected, because the same grid applied to every run. Any future measurement taken after this change is taken on a different instrument, and comparing the two directly compares instruments as much as machines.
@@ -77,7 +80,3 @@ The third signal watches for the annotation appearing and disappearing rather th
 What is still invisible is unchanged. The stage says which side of the boundary a machine is on, not what is happening inside it. The `horizon.dev/watchdog-armed` annotation from [0023](0023-observe-the-armed-watchdog-from-the-control-plane.md) remains the only in-machine signal the control plane gets, and it arrives only after the node has joined, which is after the stage that most often stalls.
 
 The wider lesson is the one the campaign taught rather than anything in this code: an implementer's report is a claim and an artefact is evidence. A bimodal distribution whose modes sit exactly one sampling period apart is a statement about the sampler until something independent of the sampler says otherwise.
-
-## Supersession
-
-None. This extends [0017](0017-capacity-lease-controller-over-cli-saga.md), which stays `accepted`. It changes how the controller observes node readiness and how it reports the wait; it replaces no part of the lease lifecycle that record defines.

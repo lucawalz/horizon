@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-25
----
+# 31. Identify a lease's nodes by lease UID
 
-# 0031. Identify a lease's nodes by lease UID
+Date: 2026-08-25
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -13,6 +14,12 @@ The pool label cannot be retired to fix this. It answers a question other reader
 
 What the pool label cannot do is answer whose node. It was never meant to; it identifies a category, not an owner.
 
+### Options considered
+
+- Suffix or template the pool label's value per lease. Rejected. It would break the fixed assignment `internal/cli/cloudinit.go` validates and the node image bakes in, which both need `horizon.dev/pool=reserved` to be a single constant, not a namespaced value.
+- Key everything, including the toleration, on the lease UID. Rejected. The burst taint already carries the lease name as its value, so valuing the toleration with the UID would mean writing a second identifier onto every taint and toleration pair for no gain.
+- Leave the pool label as the sole ownership signal and add a second admission check elsewhere. Rejected. It treats the symptom at the point workloads land rather than fixing the label that scheduling itself keys on, and it leaves the toleration still tolerating any lease's taint.
+
 ## Decision
 
 Ownership moves to `horizon.dev/lease-uid`, a label already written on each node at adoption, one that carries a value unique to the lease that holds it. Node affinity keys on this label instead of the pool label, so a migrated workload can only schedule onto a node its own lease acquired.
@@ -20,12 +27,6 @@ Ownership moves to `horizon.dev/lease-uid`, a label already written on each node
 The burst taint keeps its existing value, the lease name, and the injected toleration now matches it with `Operator: Equal` instead of `Operator: Exists`. Node affinity uses the UID and the toleration uses the name because each already carries the value that fits it: the taint has always been valued with the lease name, so the toleration mirrors that value rather than introducing a second identifier, while the UID is what the affinity needs because a lease name can be reused once a lease ends and a UID cannot.
 
 The readiness gates that decide whether a workload has landed on, or left, burst capacity now select nodes by the same `horizon.dev/lease-uid` label rather than by the pool label, so a lease reports itself ready only once its workload sits on nodes it actually holds.
-
-## Options considered
-
-- Suffix or template the pool label's value per lease. Rejected. It would break the fixed assignment `internal/cli/cloudinit.go` validates and the node image bakes in, which both need `horizon.dev/pool=reserved` to be a single constant, not a namespaced value.
-- Key everything, including the toleration, on the lease UID. Rejected. The burst taint already carries the lease name as its value, so valuing the toleration with the UID would mean writing a second identifier onto every taint and toleration pair for no gain.
-- Leave the pool label as the sole ownership signal and add a second admission check elsewhere. Rejected. It treats the symptom at the point workloads land rather than fixing the label that scheduling itself keys on, and it leaves the toleration still tolerating any lease's taint.
 
 ## Consequences
 

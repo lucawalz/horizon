@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-26
----
+# 37. Delete a node object with the machine it names
 
-# 0037. Delete a node object with the machine it names
+Date: 2026-08-26
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -15,6 +16,20 @@ The second gap blocks a live lease. A 60 minute lease held a joined node and an 
 
 The sweeper cannot close the second gap. That node carries a lease uid, its lease is live, so the stranded test correctly answers that it is not stranded.
 
+### Evidence
+
+Both defects come from a live run against the cluster and real cloud machines on 2026-08-26, not from reading the code. The first was a released lease whose node object outlived it by 52 minutes with the pool label and no lease uid. The second was a watchdog destruction with the operator scaled to zero, after which the lease provisioned a replacement and then waited on the dead machine's node object until it was released by hand.
+
+Both are held by regression tests. An unadopted node whose instance is gone is now swept; an unadopted node whose instance still exists is retained, which is the guard that protects a node in the middle of joining; and a ready node with no lease and no instance is still retained, which is the guard that keeps that first test from becoming a licence to delete anything unlabelled. For the lease loop, an instance destroyed behind the controller's back loses its node before the replacement is created, and a fresh node registering under the same name brings the lease to ready.
+
+### Options considered
+
+- Decide staleness from the node's `spec.providerID`, deleting a node whose identifier names a machine other than the one the lease now holds. Rejected on measurement. K3s stamps `k3s://<node-name>` on every node, confirmed against the cluster, and horizon never passes a cloud provider identifier to the kubelet, so the value names the node and not the machine. It reads the same on a dead machine and on its replacement, which is exactly the pair it would have to separate, and a rule that deleted a node whose identifier did not match an instance would fire on every healthy node instead. `matchesProviderID` keeps its place in node matching, where a provider-scoped identifier costs nothing on a node that happens to carry one, but it cannot carry this decision.
+- Compare the node's creation timestamp against the instance's. Rejected. It reads the API server's clock against the provider's, which the controller already treats as untrusted relative to each other, and it infers from two timestamps what the provider can be asked directly.
+- Leave the stale node and let the replacement's kubelet take it over. It does not take it over. The replacement never registered in the twelve minutes it was watched, and k3s keeps a node password secret per node name, `<name>.node-password.k3s` in `kube-system`, verified present on the cluster, against which a rejoining agent is validated. A new machine claiming a used name is refused for as long as that secret and the node object it belongs to survive.
+- Hand the second case to the orphan sweeper as well. Rejected. The node is not stranded there: its lease is live and its slot holds a machine. Deciding which machine a live lease's node belongs to means rebuilding the lease loop's own record of it inside a controller that deliberately knows nothing about lease internals.
+- Stop replacing a machine the watchdog destroyed. Rejected, for the reasons recorded above.
+
 ## Decision
 
 Delete a node object as soon as the machine it names is known to be gone, on every path that reaches that conclusion, and judge an unadopted node by the same stranded test as an adopted one.
@@ -24,20 +39,6 @@ The orphan sweeper no longer requires the adoption label to consider a node at a
 The lease loop closes its own gap. Confirming an instance absent at the provider was the one path that concluded a machine was gone without removing the node it had recorded. It now does what the release path has always done, and deletes the node the entry names under the same ownership guard: horizon refuses to delete a node that does not carry the lease uid it expects.
 
 Replacing the destroyed machine is kept rather than suppressed. The lease is a promise of a number of machines for a duration, and 56 minutes of that duration remained. The controller already separates the two cases it needs to: an instance retired for failing to launch or to register records the failure on its entry, and an entry carrying a failure is not a slot to refill, so the lease degrades instead of looping, while an instance that simply vanished records no failure and its slot refills. Making the refill depend on guessing that the watchdog rather than something else destroyed the machine would silently shrink a lease below its replica count with nothing reporting it, which is the failure mode [0017](0017-capacity-lease-controller-over-cli-saga.md) and [0021](0021-node-side-dead-mans-switch-on-two-clocks.md) both push away from. The replacement latches its own backstop, per the update on [0021](0021-node-side-dead-mans-switch-on-two-clocks.md), and `status.expiresAt` is derived from the instances the lease holds rather than stamped once, so a replaced machine cannot extend the lease.
-
-## Options considered
-
-- Decide staleness from the node's `spec.providerID`, deleting a node whose identifier names a machine other than the one the lease now holds. Rejected on measurement. K3s stamps `k3s://<node-name>` on every node, confirmed against the cluster, and horizon never passes a cloud provider identifier to the kubelet, so the value names the node and not the machine. It reads the same on a dead machine and on its replacement, which is exactly the pair it would have to separate, and a rule that deleted a node whose identifier did not match an instance would fire on every healthy node instead. `matchesProviderID` keeps its place in node matching, where a provider-scoped identifier costs nothing on a node that happens to carry one, but it cannot carry this decision.
-- Compare the node's creation timestamp against the instance's. Rejected. It reads the API server's clock against the provider's, which the controller already treats as untrusted relative to each other, and it infers from two timestamps what the provider can be asked directly.
-- Leave the stale node and let the replacement's kubelet take it over. It does not take it over. The replacement never registered in the twelve minutes it was watched, and k3s keeps a node password secret per node name, `<name>.node-password.k3s` in `kube-system`, verified present on the cluster, against which a rejoining agent is validated. A new machine claiming a used name is refused for as long as that secret and the node object it belongs to survive.
-- Hand the second case to the orphan sweeper as well. Rejected. The node is not stranded there: its lease is live and its slot holds a machine. Deciding which machine a live lease's node belongs to means rebuilding the lease loop's own record of it inside a controller that deliberately knows nothing about lease internals.
-- Stop replacing a machine the watchdog destroyed. Rejected, for the reasons recorded above.
-
-## Evidence
-
-Both defects come from a live run against the cluster and real cloud machines on 2026-08-26, not from reading the code. The first was a released lease whose node object outlived it by 52 minutes with the pool label and no lease uid. The second was a watchdog destruction with the operator scaled to zero, after which the lease provisioned a replacement and then waited on the dead machine's node object until it was released by hand.
-
-Both are held by regression tests. An unadopted node whose instance is gone is now swept; an unadopted node whose instance still exists is retained, which is the guard that protects a node in the middle of joining; and a ready node with no lease and no instance is still retained, which is the guard that keeps that first test from becoming a licence to delete anything unlabelled. For the lease loop, an instance destroyed behind the controller's back loses its node before the replacement is created, and a fresh node registering under the same name brings the lease to ready.
 
 ## Consequences
 

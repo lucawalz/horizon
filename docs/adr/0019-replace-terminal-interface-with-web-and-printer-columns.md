@@ -1,11 +1,12 @@
----
-status: superseded by 0025
-date: 2026-08-02
----
-
-# 0019. Replace the terminal interface with a web interface and printer columns
+# 19. Replace the terminal interface with a web interface and printer columns
 
 Implemented in part. The web interface is served read-only on loopback by `horizon dashboard`, which lists leases, renders one lease in full, and shows the instance type catalogue behind a machine picker. Nothing in it mutates, so the wizard's job of writing credentials and provider configuration is still undone, and the in-cluster mode is still unbuilt along with the forward authentication, the network policy and the access review it requires; the chart ships no plumbing for it, so the decision below that the chart enables that mode by default describes an intent rather than the shipped behaviour. The catalogue behind the machine picker is filled by the operator inside the cluster, and a local dashboard reports that it holds no copy rather than rendering an empty table. The API tracer named below does not exist in any command. [0025](0025-replace-server-rendered-interface-with-embedded-spa.md) supersedes the choice of stack below, replacing the server-rendered templates and the vendored htmx with an embedded single-page application; it also drops the API tracer and overturns the chart default described above, which costs nothing precisely because that default was never shipped behaviour. The rest of the decision stands and is re-established as the remaining parts land.
+
+Date: 2026-08-02
+
+## Status
+
+Superseded by [25. Replace the server-rendered web interface with an embedded single-page application](0025-replace-server-rendered-interface-with-embedded-spa.md)
 
 ## Context
 
@@ -20,6 +21,13 @@ Meanwhile k9s, at roughly a third of kubectl's installs, already renders arbitra
 An argument was considered and discarded during this review: that a local terminal interface is needed because it keeps working when the operator is deleted, which is the moment of interest for a tool about teardown. The survey shows this reasoning is post-hoc. Argo CD separates its API server from its controller because they have different scaling models, and Longhorn because its manager is a DaemonSet and its interface is a separate application. No project documents survivability as the driver. A web interface served locally, or as a separate deployment, inherits the same independence without a second implementation.
 
 The cautionary precedent is MinIO's operator, which embedded a console interface and then removed it, the maintainers noting that it had gone unmaintained for years and that operators providing interfaces is uncommon practice. Strimzi and KubeVirt both archived their attempts.
+
+### Options considered
+
+- Keep the read-only dashboard and add the web interface alongside it. Rejected: every status field would then have two renderers, two sets of documentation and two demonstration scripts, permanently, for one maintainer. The published pattern is that the terminal side survives only as a thin renderer over shared state, never as a peer.
+- Keep the terminal application and ship no web interface. Defensible, and terminal-first infrastructure projects exist. Rejected because it does not serve people evaluating the tool, and because the terminal experience users actually want is k9s, which good printer columns deliver for free.
+- Ship no interface at all and rely on printer columns alone. This is the majority pattern among operators. Rejected as too austere for a tool whose central artifact is a countdown, where seeing remaining time and cost at a glance is most of the value.
+- Move the terminal application to a separate repository as unsupported, following Podman. Rejected as bookkeeping: it keeps the artifact and the maintenance question without keeping a user.
 
 ## Decision
 
@@ -38,13 +46,6 @@ The API tracer survives as a flag on the watch and dashboard commands. It is 48 
 The web interface also absorbs the wizard's job. A user without a git-driven cluster needs a way to supply provider credentials and machine settings that is not hand-writing a custom resource, so the interface creates the Secret and the provider configuration on their behalf. Credentials are write-only: entered once, stored in a Secret, and never rendered back. Where a provider configuration carries the ownership labels of a git reconciler, the interface refuses to edit it and says why, so that two systems do not take turns reverting each other. bedrock reached the same boundary for Rancher in its own record 0070.
 
 In-cluster serving makes authentication mandatory rather than optional, because an exposed interface that creates leases is an endpoint that provisions billable machines. Three requirements follow and none is skippable: forward authentication in front of the interface, a network policy restricting the service to the proxy so that a spoofed identity header is not a complete bypass, and an access review for the authenticated user before any mutation so the interface cannot be used to exceed what that person could do directly. Local serving needs none of these, because its authentication is the caller's existing cluster credentials.
-
-## Options considered
-
-- Keep the read-only dashboard and add the web interface alongside it. Rejected: every status field would then have two renderers, two sets of documentation and two demonstration scripts, permanently, for one maintainer. The published pattern is that the terminal side survives only as a thin renderer over shared state, never as a peer.
-- Keep the terminal application and ship no web interface. Defensible, and terminal-first infrastructure projects exist. Rejected because it does not serve people evaluating the tool, and because the terminal experience users actually want is k9s, which good printer columns deliver for free.
-- Ship no interface at all and rely on printer columns alone. This is the majority pattern among operators. Rejected as too austere for a tool whose central artifact is a countdown, where seeing remaining time and cost at a glance is most of the value.
-- Move the terminal application to a separate repository as unsupported, following Podman. Rejected as bookkeeping: it keeps the artifact and the maintenance question without keeping a user.
 
 ## Consequences
 

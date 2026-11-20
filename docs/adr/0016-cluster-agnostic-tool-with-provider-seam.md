@@ -1,11 +1,12 @@
----
-status: superseded by 0018
-date: 2026-07-04
----
-
-# 0016. Make horizon a cluster-agnostic tool with a provider seam
+# 16. Make horizon a cluster-agnostic tool with a provider seam
 
 Superseded in part by [0018](0018-provider-seam-around-instance-lifecycle.md): the two-method provider interface below was widened around instance lifecycle, but the cluster-agnostic behaviour and the rejection of a plugin framework stand.
+
+Date: 2026-07-04
+
+## Status
+
+Superseded by [18. Redesign the provider seam around instance lifecycle and capabilities](0018-provider-seam-around-instance-lifecycle.md)
 
 ## Context
 
@@ -16,6 +17,12 @@ Startup required Cluster API. The setup wizard's detection step listed MachineDe
 Configuration was seeded with values specific to bedrock. When a field was empty the loader filled it with `caph-system`, `burst`, `hel1`, `cpx22`, and the `caph-image-name` image label. Those are one deployment's names, imposed silently on any other, and the setup wizard never asked for the reserved-node credentials at all, so a freshly initialized config could not provision.
 
 The orchestration core imported the Hetzner package directly. The Hetzner SDK itself was already isolated, but `core` depended on the internal hcloud wrapper's types and on node-label constants it defined, so a second provider could not be added without editing the scale and burst paths.
+
+### Options considered
+
+- Keep detection fatal and document that horizon needs a Cluster API cluster. Rejected: it contradicts the standalone goal, and the dashboard already degrades gracefully, so only the wizard needed to.
+- Abstract every cluster read behind a plugin system so the tool is platform-neutral in full. Rejected as speculative: the reads already tolerate absence, and a plugin framework is weight the tool does not need. The seam is drawn only where a real second implementation would attach, the reserved-node provider.
+- Draw the provider interface around the whole Hetzner surface, including image and SSH-key lookup. Rejected: those are reached only through scaling, so the interface stays two methods and the provider-internal detail stays internal.
 
 ## Decision
 
@@ -28,12 +35,6 @@ Configuration carries only cluster-agnostic defaults. The bedrock-specific names
 The core depends on a small `provider` interface with two methods, list reserved servers and scale the reserved count to a target, plus a neutral server type and horizon's own node-label constants. The Hetzner package implements that interface with its server spec bound in at construction, and it is the single Hetzner construction site, injected once at the command boundary. The core no longer imports the Hetzner package. A second provider is a new implementation of the same interface selected at that one boundary, with no change to the scale or burst orchestration.
 
 The retired GitOps path field is removed. It was carried since [0012](0012-retire-scaling-thresholds-and-rename-repo-path.md) but nothing consumed it once cluster creation left horizon, so it is deleted along with its wizard field and validation.
-
-## Options considered
-
-- Keep detection fatal and document that horizon needs a Cluster API cluster. Rejected: it contradicts the standalone goal, and the dashboard already degrades gracefully, so only the wizard needed to.
-- Abstract every cluster read behind a plugin system so the tool is platform-neutral in full. Rejected as speculative: the reads already tolerate absence, and a plugin framework is weight the tool does not need. The seam is drawn only where a real second implementation would attach, the reserved-node provider.
-- Draw the provider interface around the whole Hetzner surface, including image and SSH-key lookup. Rejected: those are reached only through scaling, so the interface stays two methods and the provider-internal detail stays internal.
 
 ## Consequences
 

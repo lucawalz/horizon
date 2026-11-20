@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-20
----
+# 24. Validate the release configuration before the tag
 
-# 0024. Validate the release configuration before the tag
+Date: 2026-08-20
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -19,6 +20,14 @@ The release job resolved its toolchain with `go-version: stable` while continuou
 
 `.goreleaser.yaml` also carried a `release.header` describing v0.5.0's breaking change to `horizon cloud-init`. Prose about one release living in permanent configuration is stale from the moment that release ships. Left in place it would have republished v0.5.0's breaking change in v0.6.0's notes as though it were new, and no check anywhere compares release notes against the commits they cover.
 
+### Options considered
+
+- Add a step that compares the `release.header` against the commit range since the previous tag and fails when it looks stale. Rejected: there is no reliable signal for what counts as stale prose, and a check that cannot state its own pass condition is worse than a convention. Removing the field removes the failure mode outright.
+- Move `goreleaser check` into the release job, before the image and chart pushes. Rejected as insufficient rather than wrong. It would prevent a half-published release, but only by failing the run after the tag is already pushed, which still costs a deleted and re-pushed tag. Validating on the pull request costs nothing and catches the defect a day earlier.
+- Run the full `goreleaser release --snapshot` in continuous integration to exercise the build as well as the parse. Rejected: it duplicates the `image` job's build cost on every pull request to catch a narrower class of defect than `check` already catches, and the archives it would produce are discarded.
+- Pin the release job to an explicit Go version rather than reading `go.mod`. Rejected: it reintroduces the divergence in a slower-moving form, because the pin and `go.mod` drift apart silently at the next toolchain bump.
+- Require continuous integration to be green on the tagged commit before the release job proceeds. Rejected for this repository. It couples two workflows through the check API for a guarantee that a person reading the run list already has, and it makes a re-run after an unrelated flake require a second green run before the release can retry.
+
 ## Decision
 
 The release configuration is validated on every pull request rather than at tag time. A `release-config` job in continuous integration runs `goreleaser check`, which parses and validates the configuration without building or publishing anything. A malformed configuration now fails on the pull request that introduces it.
@@ -26,14 +35,6 @@ The release configuration is validated on every pull request rather than at tag 
 The release job resolves its Go toolchain from `go-version-file: go.mod`, matching continuous integration. The `go mod tidy -diff` check that runs in both places now runs under the same toolchain in both places, so passing it once means something about passing it again.
 
 `.goreleaser.yaml` carries no `release.header`. The generated changelog, grouped from commit messages, describes the release. A header is added deliberately in the commit that bumps `Chart.yaml` when a release genuinely breaks something, and removed once that release has shipped. Keeping per-release prose in permanent configuration guarantees it is wrong for every release after the one it was written for.
-
-## Options considered
-
-- Add a step that compares the `release.header` against the commit range since the previous tag and fails when it looks stale. Rejected: there is no reliable signal for what counts as stale prose, and a check that cannot state its own pass condition is worse than a convention. Removing the field removes the failure mode outright.
-- Move `goreleaser check` into the release job, before the image and chart pushes. Rejected as insufficient rather than wrong. It would prevent a half-published release, but only by failing the run after the tag is already pushed, which still costs a deleted and re-pushed tag. Validating on the pull request costs nothing and catches the defect a day earlier.
-- Run the full `goreleaser release --snapshot` in continuous integration to exercise the build as well as the parse. Rejected: it duplicates the `image` job's build cost on every pull request to catch a narrower class of defect than `check` already catches, and the archives it would produce are discarded.
-- Pin the release job to an explicit Go version rather than reading `go.mod`. Rejected: it reintroduces the divergence in a slower-moving form, because the pin and `go.mod` drift apart silently at the next toolchain bump.
-- Require continuous integration to be green on the tagged commit before the release job proceeds. Rejected for this repository. It couples two workflows through the check API for a guarantee that a person reading the run list already has, and it makes a re-run after an unrelated flake require a second green run before the release can retry.
 
 ## Consequences
 

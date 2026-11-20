@@ -1,9 +1,20 @@
----
-status: accepted
-date: 2026-08-21
----
+# 25. Replace the server-rendered web interface with an embedded single-page application
 
-# 0025. Replace the server-rendered web interface with an embedded single-page application
+Date: 2026-08-21
+
+## Status
+
+Accepted
+
+This record supersedes [0019](0019-replace-terminal-interface-with-web-and-printer-columns.md), and 0019's status records that. The scope is narrower than a status line can express, which is why it is set out here.
+
+Replaced: how the interface is built. Server-rendered `html/template` and a vendored htmx become a Vite single-page application, built ahead of time and embedded from a committed `dist`.
+
+Dropped: the API tracer, and the chart enabling the in-cluster mode by default. Both are argued in the Decision.
+
+Standing: printer columns on the custom resource, the non-interactive watch command, keeping the command line small, the web interface absorbing the first-run wizard's job, and the three in-cluster authentication requirements being requirements rather than hardening. All five are restated in the Decision so that a superseded record does not orphan them.
+
+0019 is kept rather than deleted. Its reasoning about templ is wrong and is corrected in the Context above rather than edited on the page where it was written, because the argument that was later overturned is the useful part of a superseded record.
 
 ## Context
 
@@ -29,6 +40,35 @@ What decides it is the body of existing answers. shadcn/ui ships every update an
 
 Radix Colors is a separate package and is unaffected by any of this. Its latest stable release is 3.0.0 from 2023-10-02, with nothing since. It is a frozen palette rather than a dormant library, and being frozen is exactly the property that lets it survive a change of primitive base.
 
+### Evidence
+
+The external observations below were made on 2026-08-21. They are counts, cadences and release dates, all of which move, and they are written down so that a later reader can see what was true when the decision was made rather than re-derive it and reach a different conclusion.
+
+PocketBase commits its `ui/dist` directory and carries the build-tag pair this record copies: `//go:embed all:dist` under `//go:build !no_ui`, and a `no_ui` file that leaves the filesystem nil.
+
+Beszel is a Go binary embedding a React and Vite frontend for self-hosted infrastructure monitoring, at roughly 24.5k stars, built from shadcn/ui components on Radix Primitives. It ignores `dist` in two `.gitignore` files and rebuilds it in every release and Docker workflow.
+
+Radix Primitives published nine stable versions to npm in 2026, from 1.5.0 on 2026-06-06 to 1.6.7 on 2026-07-24, two of them minors, with a matching git tag `1.6.7` dated 2026-07-25. The repository has published no GitHub Releases at any point in its history, which is where the mistaken impression that it stopped releasing comes from. Its commits ran 0 in April, 21 in May, 90 in June and more than 100 in July.
+
+Base UI has released roughly monthly through 2026, from v1.1.0 to v1.7.0, and became shadcn/ui's default base on 2 July 2026. Interactive `shadcn init` still offers Radix as a choice with Base UI preselected; an explicit `--base` flag is needed only non-interactively. React Aria became a first-class base on 17 July 2026, selectable as `--base aria` anywhere the other two are.
+
+shadcn/ui's announcement of the Base UI default states that Radix is not being deprecated, that every update and every new component ships for both libraries, and that Radix is still used in production.
+
+Weekly npm downloads stand at roughly 10.1M for Radix Primitives against 8.6M for Base UI.
+
+`@radix-ui/colors` is at 3.0.0, published 2023-10-02, with no release since.
+
+### Options considered
+
+- Keep the server-rendered templates and htmx. Rejected: what exists is a class vocabulary, not a component vocabulary. `internal/web/assets/style.css` does carry reusable classes, `.badge`, `.pill`, `.notice`, `.summary`, `.picker`, `.stamp`, `.phase` with a modifier per phase, and shared table rules, and the templates do factor out partials. They are untyped CSS classes with nothing to enforce their use, and the whole interface holds three interactive controls, one select, one input and one button, all inside the single form in `machines.html`. There is no menu, dialog, combobox or table primitive, so every view past these three builds its own, which is the cost a copied-in primitive set pays once.
+- Adopt templ and keep server rendering. Rejected, but not for the reason 0019 gave. templ delivers type-safe markup and would fix the least painful part of the current interface, while leaving the component and interaction layer exactly where it is. The correction above is about the reasoning, not the outcome.
+- Build `dist` in the `Dockerfile` and in the release rather than committing it, as Beszel does. Rejected: it puts a Node toolchain in the compile path in two places at once, and `go build` from a clean checkout stops producing a working binary. That is the single-binary claim, and it is worth more than a clean diff.
+- Depend on a component library instead of copying primitives in. Rejected: the interface is small, and its components need project-specific behaviour more than they need upstream defaults. Copied components are read, edited and versioned like the rest of the repository, and no upgrade changes what renders without a review.
+- Build on Base UI. It is shadcn/ui's default, it is actively maintained, it has released roughly monthly through 2026, and it is a genuinely defensible choice rather than a straw one. Rejected on risk asymmetry against a near deadline: Radix carries a far larger body of existing answers, and this interface needs to be finished more than it needs to be current. If Base UI becomes the mainstream, the exit is re-copying the owned component files, because shadcn components are copied in rather than depended on.
+- Build on React Aria, which shadcn/ui made a first-class base on 17 July 2026, selectable wherever the other two are. Rejected on the same asymmetry and more sharply, because it is the most recent of the three bases and the one with the least written around it. Its depth of interaction and accessibility behaviour is real and is not what decides this interface, which is three views of tables and one picker.
+- Serve the interface as a separate artifact rather than embedding it. Rejected: it turns one binary into a binary plus a static site with a deployment story of its own, for a project whose promise is that there is one thing to install and that it leaves nothing behind.
+- Keep shadcn's default tokens instead of a token layer. Rejected: the defaults are recognisable as themselves, and adopting them would make the interface look like a scaffold rather than like the project.
+
 ## Decision
 
 The web interface becomes a single-page application, built ahead of time and embedded in the binary.
@@ -53,35 +93,6 @@ Two of 0019's decisions do not survive, and they are settled here rather than le
 
 0019's decision that the chart enables the in-cluster mode by default is overturned. The chart templates nothing for that mode, so the decision has never been more than intent, and the intent points the wrong way: an endpoint that creates billable capacity should not be on by default, least of all before the three requirements that gate it exist. When the mode lands it is opt-in and the chart's default stays off.
 
-## Options considered
-
-- Keep the server-rendered templates and htmx. Rejected: what exists is a class vocabulary, not a component vocabulary. `internal/web/assets/style.css` does carry reusable classes, `.badge`, `.pill`, `.notice`, `.summary`, `.picker`, `.stamp`, `.phase` with a modifier per phase, and shared table rules, and the templates do factor out partials. They are untyped CSS classes with nothing to enforce their use, and the whole interface holds three interactive controls, one select, one input and one button, all inside the single form in `machines.html`. There is no menu, dialog, combobox or table primitive, so every view past these three builds its own, which is the cost a copied-in primitive set pays once.
-- Adopt templ and keep server rendering. Rejected, but not for the reason 0019 gave. templ delivers type-safe markup and would fix the least painful part of the current interface, while leaving the component and interaction layer exactly where it is. The correction above is about the reasoning, not the outcome.
-- Build `dist` in the `Dockerfile` and in the release rather than committing it, as Beszel does. Rejected: it puts a Node toolchain in the compile path in two places at once, and `go build` from a clean checkout stops producing a working binary. That is the single-binary claim, and it is worth more than a clean diff.
-- Depend on a component library instead of copying primitives in. Rejected: the interface is small, and its components need project-specific behaviour more than they need upstream defaults. Copied components are read, edited and versioned like the rest of the repository, and no upgrade changes what renders without a review.
-- Build on Base UI. It is shadcn/ui's default, it is actively maintained, it has released roughly monthly through 2026, and it is a genuinely defensible choice rather than a straw one. Rejected on risk asymmetry against a near deadline: Radix carries a far larger body of existing answers, and this interface needs to be finished more than it needs to be current. If Base UI becomes the mainstream, the exit is re-copying the owned component files, because shadcn components are copied in rather than depended on.
-- Build on React Aria, which shadcn/ui made a first-class base on 17 July 2026, selectable wherever the other two are. Rejected on the same asymmetry and more sharply, because it is the most recent of the three bases and the one with the least written around it. Its depth of interaction and accessibility behaviour is real and is not what decides this interface, which is three views of tables and one picker.
-- Serve the interface as a separate artifact rather than embedding it. Rejected: it turns one binary into a binary plus a static site with a deployment story of its own, for a project whose promise is that there is one thing to install and that it leaves nothing behind.
-- Keep shadcn's default tokens instead of a token layer. Rejected: the defaults are recognisable as themselves, and adopting them would make the interface look like a scaffold rather than like the project.
-
-## Evidence
-
-The external observations below were made on 2026-08-21. They are counts, cadences and release dates, all of which move, and they are written down so that a later reader can see what was true when the decision was made rather than re-derive it and reach a different conclusion.
-
-PocketBase commits its `ui/dist` directory and carries the build-tag pair this record copies: `//go:embed all:dist` under `//go:build !no_ui`, and a `no_ui` file that leaves the filesystem nil.
-
-Beszel is a Go binary embedding a React and Vite frontend for self-hosted infrastructure monitoring, at roughly 24.5k stars, built from shadcn/ui components on Radix Primitives. It ignores `dist` in two `.gitignore` files and rebuilds it in every release and Docker workflow.
-
-Radix Primitives published nine stable versions to npm in 2026, from 1.5.0 on 2026-06-06 to 1.6.7 on 2026-07-24, two of them minors, with a matching git tag `1.6.7` dated 2026-07-25. The repository has published no GitHub Releases at any point in its history, which is where the mistaken impression that it stopped releasing comes from. Its commits ran 0 in April, 21 in May, 90 in June and more than 100 in July.
-
-Base UI has released roughly monthly through 2026, from v1.1.0 to v1.7.0, and became shadcn/ui's default base on 2 July 2026. Interactive `shadcn init` still offers Radix as a choice with Base UI preselected; an explicit `--base` flag is needed only non-interactively. React Aria became a first-class base on 17 July 2026, selectable as `--base aria` anywhere the other two are.
-
-shadcn/ui's announcement of the Base UI default states that Radix is not being deprecated, that every update and every new component ships for both libraries, and that Radix is still used in production.
-
-Weekly npm downloads stand at roughly 10.1M for Radix Primitives against 8.6M for Base UI.
-
-`@radix-ui/colors` is at 3.0.0, published 2023-10-02, with no release since.
-
 ## Consequences
 
 The repository now carries a JavaScript toolchain, a lockfile and a pinned Node version, and changing the interface means installing dependencies and running a build. That cost is real and it falls entirely on interface work. It does not reach the Go build, the container image, the release, or anyone building from a checkout, which is the reason the output is committed.
@@ -95,15 +106,3 @@ Nothing is copied in yet, so nothing is owned yet. The first component to arrive
 Choosing Radix takes the larger body of existing answers over the library shadcn/ui now preselects, and it accepts that the default points elsewhere. If the centre of gravity moves to Base UI, the migration is a re-copy of the owned component files rather than a dependency swap, and the token layer and the frozen Radix Colors palette survive it either way.
 
 A JSON API now exists where the server previously rendered state straight into markup. It is the surface the mutating half of 0019 attaches to when that half lands, and it is also a surface that has to stay read-only until the three in-cluster requirements are met, because it is reachable from wherever the interface is.
-
-## Supersession
-
-This record supersedes [0019](0019-replace-terminal-interface-with-web-and-printer-columns.md), and 0019's status records that. The scope is narrower than a status line can express, which is why it is set out here.
-
-Replaced: how the interface is built. Server-rendered `html/template` and a vendored htmx become a Vite single-page application, built ahead of time and embedded from a committed `dist`.
-
-Dropped: the API tracer, and the chart enabling the in-cluster mode by default. Both are argued in the Decision.
-
-Standing: printer columns on the custom resource, the non-interactive watch command, keeping the command line small, the web interface absorbing the first-run wizard's job, and the three in-cluster authentication requirements being requirements rather than hardening. All five are restated in the Decision so that a superseded record does not orphan them.
-
-0019 is kept rather than deleted. Its reasoning about templ is wrong and is corrected in the Context above rather than edited on the page where it was written, because the argument that was later overturned is the useful part of a superseded record.

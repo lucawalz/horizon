@@ -6,12 +6,11 @@ adr_dir="$repo_root/docs/adr"
 index="$adr_dir/README.md"
 root_readme="$repo_root/README.md"
 
-front_matter_status() {
+record_status() {
   awk '
-    NR == 1 && $0 != "---" { exit }
-    NR > 1 && $0 == "---" { exit }
-    /^status:/ { sub(/^status:[[:space:]]*/, ""); print; exit }
-  ' "$1"
+    /^## Status[[:space:]]*$/ { in_status = 1; next }
+    in_status && NF { print; exit }
+  ' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/\[([0-9]+)\. [^]]*\]\([^)]*\)/\1/g'
 }
 
 index_status() {
@@ -84,10 +83,10 @@ for l in $linked; do
   if [ ! -f "$adr_dir/$l" ]; then
     continue
   fi
-  recorded="$(front_matter_status "$adr_dir/$l")"
+  recorded="$(record_status "$adr_dir/$l")"
   indexed="$(index_status "$l")"
   if [ -z "$recorded" ]; then
-    status_drift="$status_drift$l declares no status in its front matter"$'\n'
+    status_drift="$status_drift$l declares no status"$'\n'
   elif [ "$recorded" != "$indexed" ]; then
     status_drift="$status_drift$l records \"$recorded\" but the index says \"$indexed\""$'\n'
   fi

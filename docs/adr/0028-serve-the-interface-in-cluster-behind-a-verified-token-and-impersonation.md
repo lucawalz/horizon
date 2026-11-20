@@ -1,9 +1,10 @@
----
-status: accepted
-date: 2026-08-23
----
+# 28. Serve the interface in-cluster behind a verified token and Kubernetes impersonation
 
-# 0028. Serve the interface in-cluster behind a verified token and Kubernetes impersonation
+Date: 2026-08-23
+
+## Status
+
+Accepted
 
 ## Context
 
@@ -14,6 +15,23 @@ date: 2026-08-23
 Serving the same routes from inside the cluster changes both halves of that sentence at once. The listener is routable, so whoever reaches the socket is any workload that can route to the pod, which in a cluster is a large and mostly unenumerated set. The credential is the pod's ServiceAccount rather than a person's kubeconfig, so authenticating as the caller no longer names anybody: without a further decision every request would be made under one identity, and that identity would have to hold every permission any caller might ever need. The endpoint spends money at both ends, since a create is a machine that is billed and a delete is a lease released early, so neither direction is safe to leave to whoever arrives first.
 
 The third of 0025's requirements needs restating rather than implementing. An access review describes a shape, and it is the weaker of the two shapes available. A `SubjectAccessReview` asks the apiserver whether an identity would be permitted to do something, and the process then does it under its own credential, so the question and the act are two separate calls with the application's own permissions behind the second one. Impersonation asks the same question by making the apiserver answer it in the ordinary way, on the request that performs the act, with no window between the two and no path that skips the check. What follows therefore does not implement the review that 0025 named. It implements what that review was standing in for.
+
+### Evidence
+
+The observations below were made on 23 August 2026 against Authentik as deployed on the bedrock cluster. They describe one identity provider at one version, and they are written down so that a later reader can see what was tested rather than re-derive it and reach a different conclusion.
+
+An Authentik proxy provider issues `X-authentik-jwt` signed with HS256, keyed on the provider's client secret. Its published key set is empty, because `ProxyProviderSerializer` does not expose `signing_key`, so nothing the issuer publishes can verify that token and only the shared secret can.
+
+An Authentik OAuth2 provider does publish a real key set. That is the arrangement the interface was built against, with `oauth2-proxy` obtaining a token from such a provider and forwarding it to the interface.
+
+### Options considered
+
+- Trust identity headers injected by a proxy, such as a forwarded user and group list. Rejected: a header is worth exactly as much as the last hop that could have written it, and inside a cluster that is any workload able to route to the pod. Nothing at the listener distinguishes a request that came through the proxy from one that did not, so the entire authentication would rest on a network policy being correct in every cluster the chart is ever installed into.
+- Verify Authentik's `X-authentik-jwt` header, issued by a proxy provider doing forward authentication. This was the original design, and it was tested on 23 August 2026 and abandoned. A proxy provider signs that token HS256 with the provider's client secret and publishes an empty key set, because `ProxyProviderSerializer` does not expose `signing_key`, so there is no published key to verify against. The only way to verify the token is for the application to hold the same shared secret, which is precisely the symmetric case the algorithm allowlist exists to refuse: a verifier holding the signing key can mint what it verifies, and the identity provider stops being the only thing that can vouch for an identity. A standalone OAuth2 provider does publish a real key set, which is why `oauth2-proxy` sits in front of the interface instead and forwards a token from such a provider.
+- Accept a key set URL beside the issuer, for a provider whose discovery document is awkward to reach. Rejected: two settings from two places, with nothing checking that they describe the same issuer, is not a misconfiguration an adopter would ever see. It is a working system verifying tokens signed by whoever owns the second setting.
+- Authenticate with the Kubernetes front-proxy and client certificate pattern. Rejected here as it was before: it rests on a certificate signed by a CA the apiserver has been configured to trust, and that configuration is a cluster-level setting an adopter on a managed control plane may not be able to change at all.
+- Let the interface act as its own privileged ServiceAccount and decide for itself who may do what. Rejected: it moves the authorisation boundary out of the cluster and into the application. The pod would have to hold every permission any caller might need, and horizon's own code would be the only thing between a caller and all of them, so a bug in that code becomes a privilege escalation rather than a broken page. An adopter asking who may release a lease would have to read horizon to find out, instead of reading their own RBAC.
+- Carry the authentication settings in a custom resource rather than in process arguments. Rejected for these settings specifically. Whoever can write the object could repoint the issuer at one they control and mint tokens the interface trusts, so authentication would collapse into write access on a custom resource, with the impersonation permission following it. Process arguments are set by whoever deploys the workload, which is already the boundary the impersonation permission assumes. `ProviderConfig` remains a custom resource and is unaffected, because it is domain configuration the controller reconciles rather than the thing deciding who may reach the controller at all.
 
 ## Decision
 
@@ -64,23 +82,6 @@ Unrestricted, `impersonate` on users and groups admits every identity in the clu
 `ui.enabled` defaults to `false`. 0025 overturned 0019's decision that the chart enables the in-cluster mode by default, and the default stays off now that the mode exists rather than reverting once it does. An endpoint that creates billable capacity and impersonates cluster identities is opt-in for as long as it exists.
 
 Enabling it without an issuer or an audience is a render failure naming whichever is missing, because an interface that cannot verify a token would serve cluster impersonation to whoever asked. A NetworkPolicy restricting ingress to named namespaces is templated by default with `traefik` as its only entry, and an empty list admits nothing rather than everything. Egress is left alone deliberately: the interface needs the apiserver and the issuer, whose addresses differ from cluster to cluster, and a rule built on a guess would fail closed on a path the chart cannot verify.
-
-## Options considered
-
-- Trust identity headers injected by a proxy, such as a forwarded user and group list. Rejected: a header is worth exactly as much as the last hop that could have written it, and inside a cluster that is any workload able to route to the pod. Nothing at the listener distinguishes a request that came through the proxy from one that did not, so the entire authentication would rest on a network policy being correct in every cluster the chart is ever installed into.
-- Verify Authentik's `X-authentik-jwt` header, issued by a proxy provider doing forward authentication. This was the original design, and it was tested on 23 August 2026 and abandoned. A proxy provider signs that token HS256 with the provider's client secret and publishes an empty key set, because `ProxyProviderSerializer` does not expose `signing_key`, so there is no published key to verify against. The only way to verify the token is for the application to hold the same shared secret, which is precisely the symmetric case the algorithm allowlist exists to refuse: a verifier holding the signing key can mint what it verifies, and the identity provider stops being the only thing that can vouch for an identity. A standalone OAuth2 provider does publish a real key set, which is why `oauth2-proxy` sits in front of the interface instead and forwards a token from such a provider.
-- Accept a key set URL beside the issuer, for a provider whose discovery document is awkward to reach. Rejected: two settings from two places, with nothing checking that they describe the same issuer, is not a misconfiguration an adopter would ever see. It is a working system verifying tokens signed by whoever owns the second setting.
-- Authenticate with the Kubernetes front-proxy and client certificate pattern. Rejected here as it was before: it rests on a certificate signed by a CA the apiserver has been configured to trust, and that configuration is a cluster-level setting an adopter on a managed control plane may not be able to change at all.
-- Let the interface act as its own privileged ServiceAccount and decide for itself who may do what. Rejected: it moves the authorisation boundary out of the cluster and into the application. The pod would have to hold every permission any caller might need, and horizon's own code would be the only thing between a caller and all of them, so a bug in that code becomes a privilege escalation rather than a broken page. An adopter asking who may release a lease would have to read horizon to find out, instead of reading their own RBAC.
-- Carry the authentication settings in a custom resource rather than in process arguments. Rejected for these settings specifically. Whoever can write the object could repoint the issuer at one they control and mint tokens the interface trusts, so authentication would collapse into write access on a custom resource, with the impersonation permission following it. Process arguments are set by whoever deploys the workload, which is already the boundary the impersonation permission assumes. `ProviderConfig` remains a custom resource and is unaffected, because it is domain configuration the controller reconciles rather than the thing deciding who may reach the controller at all.
-
-## Evidence
-
-The observations below were made on 23 August 2026 against Authentik as deployed on the bedrock cluster. They describe one identity provider at one version, and they are written down so that a later reader can see what was tested rather than re-derive it and reach a different conclusion.
-
-An Authentik proxy provider issues `X-authentik-jwt` signed with HS256, keyed on the provider's client secret. Its published key set is empty, because `ProxyProviderSerializer` does not expose `signing_key`, so nothing the issuer publishes can verify that token and only the shared secret can.
-
-An Authentik OAuth2 provider does publish a real key set. That is the arrangement the interface was built against, with `oauth2-proxy` obtaining a token from such a provider and forwarding it to the interface.
 
 ## Consequences
 

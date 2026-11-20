@@ -1,15 +1,24 @@
----
-status: accepted
-date: 2026-08-25
----
+# 35. Replicate a workload as a lease-owned copy
 
-# 0035. Replicate a workload as a lease-owned copy
+Date: 2026-08-25
+
+## Status
+
+Accepted
 
 ## Context
 
 A lease with `spec.workload` moved every matched Deployment and StatefulSet onto the leased nodes and put it back at expiry. That is the right shape for capacity a workload has to be carried onto, such as a batch run that needs a bigger machine than the cluster owns. It is the wrong shape for a workload that has to keep serving from where it already runs and only wants more of itself for a few hours.
 
 Moving is also disruptive by construction. Burst nodes are tainted, so a pod reaches one only if its template carries the toleration, and editing `spec.template` mints a new ReplicaSet and rolls every replica. [0032](0032-identify-a-leases-migrated-workloads-by-lease-uid.md) and the migratability classifier exist because that rollout is safe only for a workload with `RollingUpdate` and real surge capacity, and many are not that shape. A lease that only wants extra replicas pays the whole cost of a move to get them.
+
+### Options considered
+
+- Raise `spec.replicas` on the original and let the scheduler place the new pods on burst capacity. Rejected. A bare replica bump does not roll pods, but new pods reach a tainted node only if the template tolerates the taint, and editing the template rolls every replica, twice over the life of the lease. A guaranteed split between home and burst additionally needs a topology spread over a key the scheduler can see on both sides, and home nodes carry no pool label at all, so adopting horizon would first require labelling every existing node.
+- Isolate the copy behind its own labels so nothing selecting the original reaches it. Rejected, and not available either. Superset matching means anything selecting the original matches a copy carrying the original's labels plus one, and stripping the original's labels from the copy would take the shared Service with it, which is the mechanism the mode is built on.
+- Reuse `WorkloadMigrated` as the progress condition for replicate mode. Rejected. Nothing is migrated, and a condition that reads Migrated=True on a lease that never wrote to a workload is a false report in the field an operator reads first.
+- Let the owner reference alone clean the copy up. Rejected. Garbage collection fires on lease deletion, and a lease that expires keeps its object, so the copy would outlive the nodes it is pinned to and sit Pending until someone deleted the lease by hand.
+- Warn about an autoscaled workload and copy it anyway. Rejected. Every other warning describes a cost the operator can accept, while this one describes the original being scaled down under load, and the copy is the thing that causes it.
 
 ## Decision
 
@@ -34,14 +43,6 @@ Replicate mode reports its own condition, `WorkloadReplicable`, and emits no `Wo
 Four shapes are skipped rather than copied: an HPA-targeted workload, a workload carrying a `DoNotSchedule` topology spread constraint, a StatefulSet, and a workload whose selector already carries this lease's burst-copy label. Each is named in `status.migrationWarnings` with its reason while its neighbours are replicated as usual, and each names move mode as the way to burst that workload instead. The line between a skip and a warning is where the damage lands: a skip is for a shape where the copy harms the original, and a warning is for a shape where the cost falls on the copy or on an accounting an operator can accept. A PodDisruptionBudget that selects the original is warned about rather than skipped: its accounting is wrong for the life of the lease rather than broken outright, and the teardown drain already forces past a stale budget.
 
 Move mode now skips any workload carrying `horizon.dev/burst-copy`. `Migrate` lists every Deployment in a target namespace with no matcher, so without the skip a second lease in move mode would save a placement onto another lease's copy, stamp its own owner label on it, and own a restore of an object that is deleted out from under it at the other lease's expiry.
-
-## Options considered
-
-- Raise `spec.replicas` on the original and let the scheduler place the new pods on burst capacity. Rejected. A bare replica bump does not roll pods, but new pods reach a tainted node only if the template tolerates the taint, and editing the template rolls every replica, twice over the life of the lease. A guaranteed split between home and burst additionally needs a topology spread over a key the scheduler can see on both sides, and home nodes carry no pool label at all, so adopting horizon would first require labelling every existing node.
-- Isolate the copy behind its own labels so nothing selecting the original reaches it. Rejected, and not available either. Superset matching means anything selecting the original matches a copy carrying the original's labels plus one, and stripping the original's labels from the copy would take the shared Service with it, which is the mechanism the mode is built on.
-- Reuse `WorkloadMigrated` as the progress condition for replicate mode. Rejected. Nothing is migrated, and a condition that reads Migrated=True on a lease that never wrote to a workload is a false report in the field an operator reads first.
-- Let the owner reference alone clean the copy up. Rejected. Garbage collection fires on lease deletion, and a lease that expires keeps its object, so the copy would outlive the nodes it is pinned to and sit Pending until someone deleted the lease by hand.
-- Warn about an autoscaled workload and copy it anyway. Rejected. Every other warning describes a cost the operator can accept, while this one describes the original being scaled down under load, and the copy is the thing that causes it.
 
 ## Consequences
 

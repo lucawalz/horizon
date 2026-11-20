@@ -1,22 +1,23 @@
----
-status: superseded by 0007
-date: 2026-05-02
----
+# 4. Migrate a workload with a backup, an affinity rewrite, and an eviction
 
-# 0004. Migrate a workload with a backup, an affinity rewrite, and an eviction
+Date: 2026-05-02
+
+## Status
+
+Superseded by [7. Add on-demand capacity through MachineDeployments in two modes](0007-on-demand-pools-via-machinedeployments.md)
 
 ## Context
 
 A burst is only useful if the heavy workload actually lands on the new cloud node. horizon has to move a running namespace from the local nodes onto the burst node it just provisioned. True live migration of arbitrary Kubernetes workloads, with their volumes and in-flight state, is hard and not something a small controller should reimplement. The cluster already runs Velero for backups, and the Kubernetes scheduler already knows how to place pods.
 
-## Decision
-
-Migration reuses both. First horizon takes a Velero backup scoped to the target namespace, the same namespace-scoped backup the cluster runs for disaster recovery. Then it labels the burst node, rewrites required node affinity onto every deployment and statefulset in the namespace to point at that label, saving each original affinity first, and evicts the namespace's pods, skipping daemonset pods. The scheduler reschedules the evicted pods, and the affinity sends them to the burst node. Rolling back restores the saved affinity, removes the node label, and evicts again so the pods return.
-
-## Options considered
+### Options considered
 
 - Live migration of running pods. It would preserve in-flight state, but it is complex and does not generalize to arbitrary workloads, well beyond what this controller should own.
 - Backup, affinity rewrite, and eviction, chosen. It composes a real backup tool with the scheduler, and the namespace backup doubles as both a safety net and the restore primitive.
+
+## Decision
+
+Migration reuses both. First horizon takes a Velero backup scoped to the target namespace, the same namespace-scoped backup the cluster runs for disaster recovery. Then it labels the burst node, rewrites required node affinity onto every deployment and statefulset in the namespace to point at that label, saving each original affinity first, and evicts the namespace's pods, skipping daemonset pods. The scheduler reschedules the evicted pods, and the affinity sends them to the burst node. Rolling back restores the saved affinity, removes the node label, and evicts again so the pods return.
 
 ## Consequences
 

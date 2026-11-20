@@ -1,9 +1,10 @@
----
-status: superseded by 0038
-date: 2026-08-02
----
+# 20. Make Chart.yaml the source of truth for the release version
 
-# 0020. Make Chart.yaml the source of truth for the release version
+Date: 2026-08-02
+
+## Status
+
+Superseded by [38. Version releases from Conventional Commits with release-please](0038-version-releases-from-conventional-commits-with-release-please.md)
 
 ## Context
 
@@ -16,6 +17,14 @@ The workflow also created the GitHub release first, before the image build and t
 The only trigger was a tag push. A run that failed halfway could be retried only by deleting and re-pushing the tag, which is how the repository ended up with a deleted `v0.1.0` tag and a deleted release, and with a stale local tag 121 commits behind main. Two tags pushed in quick succession would also have raced on the same GHCR package.
 
 Separately, GoReleaser ran `go mod tidy` as a before hook. That hook rewrites `go.mod` and `go.sum` in the workspace that `docker/build-push-action` later uses as its build context, so the image was built from whatever tidy left behind rather than from the committed lockfile. Tidy is a no-op at the current commit, verified by running it against a scratch copy of the tree, but a hook that can silently mutate the dependency tree between the commit and the image is a supply-chain problem regardless of whether it happens to be inert today.
+
+### Options considered
+
+- Keep the workflow overrides and treat the tag as authoritative, adding a step that rewrites `Chart.yaml` before packaging. Rejected: the tree still disagrees with the published chart at every commit that is not a tag, and a workflow that edits tracked files during a release is harder to reason about than one that reads them.
+- Split GoReleaser so the release is created after the other pushes, using `--skip=publish` and then a second invocation. Rejected as unnecessary. There is no ordering constraint between GoReleaser and the other publishers, so moving the step is sufficient. A split would also have meant either building twice, since `--clean` discards `dist` and the open-source distribution has no resume command, or hand-rolling the release with `gh release create` over `dist/CHANGELOG.md` and losing GoReleaser's own release handling.
+- Create the release as a draft first and undraft it at the end. Rejected: a failed run leaves a stale draft to clean up by hand, and the release object still exists before its artifacts do.
+- Remove the tidy hook outright. Rejected: nothing else in the repository checks that the lockfile is tidy, and `-diff` keeps that check at no cost.
+- Have the continuous integration gate require `version` and `appVersion` to be equal. Rejected: it would forbid the chart-only revision that dropping the override was meant to allow.
 
 ## Decision
 
@@ -32,14 +41,6 @@ The GoReleaser hook becomes `go mod tidy -diff`, which reports what tidy would c
 The `chart` job in continuous integration asserts that the image the chart resolves by default equals the repository from `values.yaml` joined to the `appVersion` from `Chart.yaml`. This ties the three files that decide the default image together, so a pinned `image.tag`, a changed fallback in `_helpers.tpl`, or an edited repository all fail on the pull request rather than at release time.
 
 bedrock consumes the published chart from `oci://ghcr.io/lucawalz/charts/horizon` at a pinned version rather than the tree in this repository. A GitOps reconciler needs an immutable, versioned artifact it can roll back to, and the tree at `main` is neither. Pointing bedrock at a path in a sibling repository would also couple the cluster to this repository's working state, so an unfinished commit here would reconcile into the cluster. The published chart is only trustworthy as a pinning target if it is self-describing, which is the practical reason `Chart.yaml` has to be authoritative rather than a placeholder the workflow overwrites.
-
-## Options considered
-
-- Keep the workflow overrides and treat the tag as authoritative, adding a step that rewrites `Chart.yaml` before packaging. Rejected: the tree still disagrees with the published chart at every commit that is not a tag, and a workflow that edits tracked files during a release is harder to reason about than one that reads them.
-- Split GoReleaser so the release is created after the other pushes, using `--skip=publish` and then a second invocation. Rejected as unnecessary. There is no ordering constraint between GoReleaser and the other publishers, so moving the step is sufficient. A split would also have meant either building twice, since `--clean` discards `dist` and the open-source distribution has no resume command, or hand-rolling the release with `gh release create` over `dist/CHANGELOG.md` and losing GoReleaser's own release handling.
-- Create the release as a draft first and undraft it at the end. Rejected: a failed run leaves a stale draft to clean up by hand, and the release object still exists before its artifacts do.
-- Remove the tidy hook outright. Rejected: nothing else in the repository checks that the lockfile is tidy, and `-diff` keeps that check at no cost.
-- Have the continuous integration gate require `version` and `appVersion` to be equal. Rejected: it would forbid the chart-only revision that dropping the override was meant to allow.
 
 ## Consequences
 
