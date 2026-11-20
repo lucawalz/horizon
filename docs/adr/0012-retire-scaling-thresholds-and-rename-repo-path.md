@@ -1,12 +1,12 @@
 # 12. Retire scaling thresholds and rename the GitOps path
 
-Superseded in part by [0016](0016-cluster-agnostic-tool-with-provider-seam.md): the `bedrock_path` to `repo_path` rename below did not survive the field's later removal, but the threshold retirement stands.
-
 Date: 2026-06-16
 
 ## Status
 
 Superseded by [16. Make horizon a cluster-agnostic tool with a provider seam](0016-cluster-agnostic-tool-with-provider-seam.md)
+
+Superseded in part by [0016](0016-cluster-agnostic-tool-with-provider-seam.md): the `bedrock_path` to `repo_path` rename below did not survive the field's later removal, but the threshold retirement stands.
 
 ## Context
 

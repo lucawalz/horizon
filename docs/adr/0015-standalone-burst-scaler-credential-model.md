@@ -1,12 +1,12 @@
 # 15. Narrow horizon to a standalone burst scaler
 
-Superseded in part by [0017](0017-capacity-lease-controller-over-cli-saga.md): the burst orchestration below was replaced by the lease controller, but the credential model stands.
-
 Date: 2026-07-04
 
 ## Status
 
 Superseded by [17. Replace the CLI burst saga with an in-cluster CapacityLease controller](0017-capacity-lease-controller-over-cli-saga.md)
+
+Superseded in part by [0017](0017-capacity-lease-controller-over-cli-saga.md): the burst orchestration below was replaced by the lease controller, but the credential model stands.
 
 ## Context
 

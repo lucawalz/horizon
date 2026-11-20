@@ -1,12 +1,12 @@
 # 16. Make horizon a cluster-agnostic tool with a provider seam
 
-Superseded in part by [0018](0018-provider-seam-around-instance-lifecycle.md): the two-method provider interface below was widened around instance lifecycle, but the cluster-agnostic behaviour and the rejection of a plugin framework stand.
-
 Date: 2026-07-04
 
 ## Status
 
 Superseded by [18. Redesign the provider seam around instance lifecycle and capabilities](0018-provider-seam-around-instance-lifecycle.md)
+
+Superseded in part by [0018](0018-provider-seam-around-instance-lifecycle.md): the two-method provider interface below was widened around instance lifecycle, but the cluster-agnostic behaviour and the rejection of a plugin framework stand.
 
 ## Context
 

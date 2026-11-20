@@ -1,12 +1,12 @@
 # 10. Make cluster create provider-agnostic through a ClusterClass topology
 
-Superseded by [0014](0014-narrow-horizon-to-on-demand-pool-scaler.md).
-
 Date: 2026-06-16
 
 ## Status
 
 Superseded by [14. Narrow horizon to an on-demand pool scaler](0014-narrow-horizon-to-on-demand-pool-scaler.md)
+
+Superseded by [0014](0014-narrow-horizon-to-on-demand-pool-scaler.md).
 
 ## Context
 
