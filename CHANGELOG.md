@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/lucawalz/horizon/compare/v0.13.0...v0.13.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **scripts:** read the adr status heading the same way in both checks ([21063fd](https://github.com/lucawalz/horizon/commit/21063fd1ef67bd7a47335689e04fe1bf57b9a4e1))
+* **web:** update vulnerable transitive packages in the site lockfile ([9b9f21e](https://github.com/lucawalz/horizon/commit/9b9f21e8fdefe0b9f007dffc1e075721c447101a))
+
 ## [0.13.0](https://github.com/lucawalz/horizon/compare/v0.12.4...v0.13.0) (2026-11-19)
 
 
