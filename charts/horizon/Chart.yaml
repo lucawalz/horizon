@@ -4,8 +4,8 @@ description: >-
   Leases on-demand cloud capacity for a Kubernetes cluster and destroys it when
   the lease expires
 type: application
-version: 0.13.0
-appVersion: 0.13.0
+version: 0.13.1
+appVersion: 0.13.1
 kubeVersion: '>=1.29.0-0'
 home: https://github.com/lucawalz/horizon
 sources:
